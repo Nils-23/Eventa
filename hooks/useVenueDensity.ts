@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import * as Location from 'expo-location';
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { ref, onValue } from 'firebase/database';
+import Toast from 'react-native-toast-message';
 import { firestore, realtimeDB } from '../services/firebase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -15,6 +17,7 @@ export interface VenueWithDensity {
   userCount: number;
   activityLevel: ActivityLevel;
   activityColor: string;
+  distanceKm: number | null; // null if user location unknown
 }
 
 interface RawLocation {
@@ -76,6 +79,8 @@ function toActivityColor(level: ActivityLevel): string {
 function computeDensity(
   venues: RawVenue[],
   locations: Record<string, RawLocation>,
+  userLat: number | null,
+  userLng: number | null,
 ): VenueWithDensity[] {
   const now = Date.now();
 
@@ -96,12 +101,18 @@ function computeDensity(
         ) <= VENUE_RADIUS_METERS,
     ).length;
 
+    const distanceKm =
+      userLat !== null && userLng !== null
+        ? Math.round(haversineMeters(userLat, userLng, venue.latitude, venue.longitude)) / 1000
+        : null;
+
     const activityLevel = toActivityLevel(userCount);
     return {
       ...venue,
       userCount,
       activityLevel,
       activityColor: toActivityColor(activityLevel),
+      distanceKm,
     };
   });
 
@@ -116,16 +127,35 @@ export const useVenueDensity = () => {
 
   // Keep mutable refs so both listeners always have the latest snapshot
   // without creating new subscriptions on every state change
-  const venuesRef = { current: [] as RawVenue[] };
-  const locationsRef = { current: {} as Record<string, RawLocation> };
+  const venuesRef = useRef<RawVenue[]>([]);
+  const locationsRef = useRef<Record<string, RawLocation>>({});
+  const userPosRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
 
   const recalculate = () => {
-    const result = computeDensity(venuesRef.current, locationsRef.current);
+    const result = computeDensity(
+      venuesRef.current,
+      locationsRef.current,
+      userPosRef.current.lat,
+      userPosRef.current.lng,
+    );
     setVenues(result);
     setIsLoading(false);
   };
 
   useEffect(() => {
+    // ── 0️⃣  User location watcher ──────────────────────────────────────────
+    let locationSub: Location.LocationSubscription | null = null;
+    Location.getForegroundPermissionsAsync().then(({ status }) => {
+      if (status !== 'granted') return;
+      Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 20 },
+        (loc) => {
+          userPosRef.current = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+          recalculate();
+        },
+      ).then((sub) => { locationSub = sub; });
+    });
+
     // ── 1️⃣  Firestore venues listener ─────────────────────────────────────
     const venueQuery = query(collection(firestore, 'venues'));
     const unsubVenues = onSnapshot(
@@ -137,7 +167,14 @@ export const useVenueDensity = () => {
         }));
         recalculate();
       },
-      (err) => console.error('[useVenueDensity] Firestore error:', err),
+      (err) => {
+        console.error('[useVenueDensity] Firestore error:', err);
+        Toast.show({
+          type: 'error',
+          text1: 'Sync Error',
+          text2: 'Could not fetch venues. Check your connection.',
+        });
+      },
     );
 
     // ── 2️⃣  Realtime DB locations listener ────────────────────────────────
@@ -150,10 +187,18 @@ export const useVenueDensity = () => {
           : {};
         recalculate();
       },
-      (err) => console.error('[useVenueDensity] RTDB error:', err),
+      (err) => {
+        console.error('[useVenueDensity] RTDB error:', err);
+        Toast.show({
+          type: 'error',
+          text1: 'Live Sync Lost',
+          text2: 'Reconnecting to the Realtime Database...',
+        });
+      },
     );
 
     return () => {
+      if (locationSub) locationSub.remove();
       unsubVenues();
       unsubLocations();
     };

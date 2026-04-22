@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,16 +8,28 @@ import {
   Platform,
   TextInput,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
-import { Apple, Smartphone } from 'lucide-react-native';
-import { handleGoogleLogin, handleAppleLogin } from '../services/authService';
+import { Apple, Smartphone, ArrowLeft } from 'lucide-react-native';
+import Toast from 'react-native-toast-message';
+import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
+import {
+  handleGoogleLogin,
+  handleAppleLogin,
+  handlePhoneLoginStart,
+  handlePhoneOTPConfirm,
+} from '../services/authService';
+import app from '../services/firebase';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export const LoginScreen = () => {
   const [isLoading, setIsLoading] = useState<string | null>(null);
+  
+  // Phone Auth State
   const [showPhoneInput, setShowPhoneInput] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [verificationId, setVerificationId] = useState<string | null>(null);
+  const [verificationCode, setVerificationCode] = useState('');
+  const recaptchaVerifier = useRef(null);
 
   const onApplePress = async () => {
     try {
@@ -25,7 +37,11 @@ export const LoginScreen = () => {
       await handleAppleLogin();
     } catch (e: any) {
       if (e.code !== 'ERR_REQUEST_CANCELED') {
-         Alert.alert('Apple Login Failed', e.message);
+        Toast.show({
+          type: 'error',
+          text1: 'Apple Login Failed',
+          text2: e.message || 'Check your network connection and try again.',
+        });
       }
     } finally {
       setIsLoading(null);
@@ -38,7 +54,11 @@ export const LoginScreen = () => {
       await handleGoogleLogin();
     } catch (e: any) {
       if (e.code !== 'SIGN_IN_CANCELLED') {
-        Alert.alert('Google Login Failed', e.message);
+        Toast.show({
+          type: 'error',
+          text1: 'Google Login Failed',
+          text2: e.message || 'Check your network connection and try again.',
+        });
       }
     } finally {
       setIsLoading(null);
@@ -50,12 +70,55 @@ export const LoginScreen = () => {
       setShowPhoneInput(true);
       return;
     }
-    // TODO: Phone auth OTP dispatch trigger
-    Alert.alert('Coming Soon', 'Phone authentication processing native dispatch.');
+  };
+
+  const onSendOTPPress = async () => {
+    if (!phoneNumber || phoneNumber.length < 10) {
+      Toast.show({ type: 'error', text1: 'Invalid Number', text2: 'Please enter a valid phone number with country code.' });
+      return;
+    }
+
+    try {
+      setIsLoading('phone');
+      const formattedPhone = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
+      // Trigger invisible reCAPTCHA -> send SMS
+      const vId = await handlePhoneLoginStart(formattedPhone, recaptchaVerifier.current as any);
+      setVerificationId(vId);
+      Toast.show({ type: 'info', text1: 'Code Sent', text2: 'Please check your messages.' });
+    } catch (e: any) {
+      Toast.show({ type: 'error', text1: 'SMS Failed', text2: e.message });
+    } finally {
+      setIsLoading(null);
+    }
+  };
+
+  const onVerifyOTPPress = async () => {
+    if (!verificationId || !verificationCode) return;
+    try {
+      setIsLoading('phone');
+      await handlePhoneOTPConfirm(verificationId, verificationCode);
+    } catch (e: any) {
+      let msg = e.message;
+      if (e.code === 'auth/invalid-verification-code') msg = 'Invalid code entered. Try again.';
+      Toast.show({ type: 'error', text1: 'Verification Failed', text2: msg });
+    } finally {
+      setIsLoading(null);
+    }
+  };
+
+  const onResetPhoneFlow = () => {
+    setVerificationId(null);
+    setVerificationCode('');
+    setShowPhoneInput(false);
   };
 
   return (
     <SafeAreaView style={styles.container}>
+      <FirebaseRecaptchaVerifierModal
+        ref={recaptchaVerifier}
+        firebaseConfig={app.options}
+        attemptInvisibleVerification={true}
+      />
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.content}
@@ -106,30 +169,61 @@ export const LoginScreen = () => {
           </View>
 
           {showPhoneInput ? (
-            <View style={styles.phoneInputContainer}>
-              <TextInput
-                style={styles.phoneInput}
-                placeholder="+1 234 567 8900"
-                keyboardType="phone-pad"
-                value={phoneNumber}
-                onChangeText={setPhoneNumber}
-                autoFocus
-                placeholderTextColor="#999"
-              />
-              <TouchableOpacity 
-                style={styles.phoneSubmitButton}
-                onPress={onPhonePress}
-              >
-                <Text style={styles.phoneSubmitText}>Send OTP</Text>
-              </TouchableOpacity>
-            </View>
+            verificationId ? (
+              // ── Step 2: Enter OTP Code ───────────────────────────────────────────
+              <View style={styles.otpOuterContainer}>
+                <TouchableOpacity onPress={onResetPhoneFlow} style={styles.backButton}>
+                  <ArrowLeft color="#1A1A1A" size={20} />
+                  <Text style={styles.backText}>Change number</Text>
+                </TouchableOpacity>
+                <View style={styles.phoneInputContainer}>
+                  <TextInput
+                    style={[styles.phoneInput, { textAlign: 'center', letterSpacing: 8, fontSize: 22 }]}
+                    placeholder="000000"
+                    keyboardType="number-pad"
+                    value={verificationCode}
+                    onChangeText={setVerificationCode}
+                    maxLength={6}
+                    autoFocus
+                    placeholderTextColor="#999"
+                  />
+                  <TouchableOpacity 
+                    style={styles.phoneSubmitButton}
+                    onPress={onVerifyOTPPress}
+                    disabled={!!isLoading}
+                  >
+                    {isLoading === 'phone' ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.phoneSubmitText}>Verify</Text>}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              // ── Step 1: Enter Phone Number ───────────────────────────────────────
+              <View style={styles.phoneInputContainer}>
+                <TextInput
+                  style={styles.phoneInput}
+                  placeholder="+1 234 567 8900"
+                  keyboardType="phone-pad"
+                  value={phoneNumber}
+                  onChangeText={setPhoneNumber}
+                  autoFocus
+                  placeholderTextColor="#999"
+                />
+                <TouchableOpacity 
+                  style={styles.phoneSubmitButton}
+                  onPress={onSendOTPPress}
+                  disabled={!!isLoading}
+                >
+                  {isLoading === 'phone' ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.phoneSubmitText}>Send OTP</Text>}
+                </TouchableOpacity>
+              </View>
+            )
           ) : (
             <TouchableOpacity 
               style={[styles.providerButton, styles.phoneButtonOutline]} 
               onPress={onPhonePress}
               disabled={!!isLoading}
             >
-              <Smartphone color="#000000" size={24} style={styles.icon} />
+              <Smartphone color="#1A1A1A" size={24} style={styles.icon} />
               <Text style={styles.phoneButtonText}>Continue with Phone</Text>
             </TouchableOpacity>
           )}
@@ -256,5 +350,20 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  otpOuterContainer: {
+    width: '100%',
+    gap: 12,
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    gap: 4,
+  },
+  backText: {
+    color: '#1A1A1A',
+    fontWeight: '600',
+    fontSize: 14,
   },
 });

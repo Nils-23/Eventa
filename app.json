@@ -15,7 +15,16 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.nils23.Eventa",
-      "googleServicesFile": "./GoogleService-Info.plist"
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "com.googleusercontent.apps.653907647305-jfh53up4abu5giju93624umbbpg07ed6"
+            ]
+          }
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {

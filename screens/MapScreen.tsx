@@ -202,12 +202,23 @@ export const MapScreen = () => {
   const { venues } = useVenues();
   
   // Default to a lively city area for now
-  const [region] = useState({
-    latitude: 37.78825,
-    longitude: -122.4324,
-    latitudeDelta: 0.04,
-    longitudeDelta: 0.04,
+  const [camera, setCamera] = useState({
+    center: {
+      latitude: -1.286389,
+      longitude: 36.817223,
+    },
+    pitch: 45, // Snap map 3D tilt
+    heading: 0,
+    altitude: 2000,
+    zoom: 14,
   });
+
+  // Effect to stop marker tracking after mount to boost performance
+  const [trackMarkerChanges, setTrackMarkerChanges] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setTrackMarkerChanges(false), 2000);
+    return () => clearTimeout(timer);
+  }, [venues]);
 
   useEffect(() => {
     (async () => {
@@ -219,12 +230,15 @@ export const MapScreen = () => {
           accuracy: Location.Accuracy.Balanced,
         });
 
-        mapRef.current?.animateToRegion({
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-          latitudeDelta: 0.02,
-          longitudeDelta: 0.02,
-        }, 1500);
+        mapRef.current?.animateCamera({
+          center: {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          },
+          pitch: 45,
+          heading: location.coords.heading || 0,
+          zoom: 16,
+        }, { duration: 2000 });
       } catch (error) {
         console.error("Error getting location: ", error);
       }
@@ -237,12 +251,15 @@ export const MapScreen = () => {
         accuracy: Location.Accuracy.Balanced,
       });
 
-      mapRef.current?.animateToRegion({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        latitudeDelta: 0.02,
-        longitudeDelta: 0.02,
-      }, 1000);
+      mapRef.current?.animateCamera({
+        center: {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        },
+        pitch: 45,
+        heading: location.coords.heading || 0,
+        zoom: 16,
+      }, { duration: 1500 });
     } catch (error) {
       console.error("Error centering map:", error);
     }
@@ -267,8 +284,9 @@ export const MapScreen = () => {
         style={StyleSheet.absoluteFillObject}
         provider={PROVIDER_GOOGLE}
         customMapStyle={DARK_MAP_STYLE}
-        initialRegion={region}
+        initialCamera={camera}
         showsUserLocation={true}
+        onUserLocationChange={() => {}}
         showsMyLocationButton={false}
         showsCompass={false}
         showsScale={false}
@@ -280,6 +298,8 @@ export const MapScreen = () => {
         loadingIndicatorColor="#00FFCC"
         pitchEnabled={true}
         rotateEnabled={true}
+        minZoomLevel={3}
+        maxZoomLevel={20}
       >
         {/* Heatmap layer — one Circle per density cell */}
         {heatCells.map((cell, index) => (
@@ -298,9 +318,11 @@ export const MapScreen = () => {
             coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
             title={venue.name}
             description={venue.description}
+            tracksViewChanges={trackMarkerChanges}
           >
             <View style={styles.markerContainer}>
-              <MapPin color="#00FFCC" fill="#00FFCC" size={28} />
+              <View style={styles.markerGlow} />
+              <MapPin color="#00FFCC" fill="#00FFCC" size={24} />
             </View>
           </Marker>
         ))}
@@ -333,11 +355,20 @@ const styles = StyleSheet.create({
   markerContainer: {
     alignItems: 'center',
     justifyContent: 'center',
+    width: 40,
+    height: 40,
+  },
+  markerGlow: {
+    position: 'absolute',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0, 255, 204, 0.3)',
     shadowColor: '#00FFCC',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    elevation: 8,
   },
   controlsContainer: {
     position: 'absolute',

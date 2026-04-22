@@ -1,6 +1,6 @@
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, firestore } from './firebase';
-import { User, GoogleAuthProvider, signInWithCredential, OAuthProvider } from 'firebase/auth';
+import { User, GoogleAuthProvider, signInWithCredential, OAuthProvider, PhoneAuthProvider, ApplicationVerifier, AuthError } from 'firebase/auth';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
@@ -111,5 +111,39 @@ export const handleAppleLogin = async () => {
       console.error('Apple Sign-In Error:', error);
       throw error;
     }
+  }
+};
+/**
+ * Handles generating OTP via Firebase and Recaptcha
+ */
+export const handlePhoneLoginStart = async (
+  phoneNumber: string,
+  verifier: ApplicationVerifier
+): Promise<string> => {
+  try {
+    const phoneProvider = new PhoneAuthProvider(auth);
+    const verificationId = await phoneProvider.verifyPhoneNumber(phoneNumber, verifier);
+    return verificationId;
+  } catch (error: any) {
+    console.error('Phone Sign-In Start Error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Handles Confirming OTP for Phone Login
+ */
+export const handlePhoneOTPConfirm = async (
+  verificationId: string,
+  code: string
+) => {
+  try {
+    const credential = PhoneAuthProvider.credential(verificationId, code);
+    const userCredential = await signInWithCredential(auth, credential);
+    await checkAndCreateUser(userCredential.user);
+    return userCredential.user;
+  } catch (error: any) {
+    console.error('Phone OTP Confirm Error:', error);
+    throw error;
   }
 };
