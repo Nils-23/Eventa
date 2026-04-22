@@ -4,10 +4,14 @@ import { MapScreen } from '../screens/MapScreen';
 import { ListScreen } from '../screens/ListScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { Map, List, User } from 'lucide-react-native';
+import { useLocationTracking } from '../hooks/useLocationTracking';
 
 const Tab = createBottomTabNavigator();
 
 export const MainTabs = () => {
+  // Mount the global location tracking. Will only sync when App state is active.
+  useLocationTracking();
+
   return (
     <Tab.Navigator
       screenOptions={{
