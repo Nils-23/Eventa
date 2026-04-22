@@ -2,6 +2,8 @@ import React from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import Toast from 'react-native-toast-message';
+import { toastConfig } from './config/toast';
 import { MainTabs } from './navigation/MainTabs';
 import { LoginScreen } from './screens/LoginScreen';
 import { useAuth } from './hooks/useAuth';
@@ -26,19 +28,22 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer theme={DarkTheme}>
-      <Stack.Navigator
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: '#121212' },
-        }}
-      >
-        {!user ? (
-          <Stack.Screen name="Login" component={LoginScreen} />
-        ) : (
-          <Stack.Screen name="Main" component={MainTabs} />
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+    <>
+      <NavigationContainer theme={DarkTheme}>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: '#121212' },
+          }}
+        >
+          {!user ? (
+            <Stack.Screen name="Login" component={LoginScreen} />
+          ) : (
+            <Stack.Screen name="Main" component={MainTabs} />
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+      <Toast config={toastConfig} topOffset={60} />
+    </>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { ref, set } from 'firebase/database';
+import Toast from 'react-native-toast-message';
 import { realtimeDB } from '../services/firebase';
 import { useAppStore } from './useAppStore';
 
@@ -57,7 +58,11 @@ export const useLocationTracking = () => {
         // 1. Request foreground permission first (Android requirement)
         const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
         if (fgStatus !== 'granted') {
-          console.warn('[Location] Foreground permission denied.');
+          Toast.show({
+            type: 'error',
+            text1: 'Location Required',
+            text2: 'Please allow location permission to discover nearby venues.',
+          });
           return;
         }
 
@@ -90,7 +95,12 @@ export const useLocationTracking = () => {
           }
         } else {
           // ── Foreground-only fallback ──────────────────────────────────────
-          console.warn('[Location] Background permission denied — foreground only.');
+          Toast.show({
+            type: 'info',
+            text1: 'Background Tracking Disabled',
+            text2: 'Your heatmap contribution halts when app is minimised.',
+          });
+          
           await Location.watchPositionAsync(
             { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 10 },
             (loc) => {
