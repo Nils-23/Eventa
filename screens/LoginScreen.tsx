@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Apple, Smartphone, ArrowLeft } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
+import FirebaseRecaptchaVerifierModal from '../components/FirebaseRecaptcha/FirebaseRecaptchaVerifierModal';
 import {
   handleGoogleLogin,
   handleAppleLogin,
