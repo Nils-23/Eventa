@@ -1,8 +1,11 @@
-import React, { useRef, useState } from 'react';
-import { StyleSheet, View, Text } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import React, { useRef, useState, useEffect } from 'react';
+import * as Location from 'expo-location';
+import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
+import MapView, { PROVIDER_GOOGLE, Circle, Marker } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MapPin } from 'lucide-react-native';
+import { LocateFixed, Plus, Minus, MapPin } from 'lucide-react-native';
+import { useHeatmap } from '../hooks/useHeatmap';
+import { useVenues } from '../hooks/useVenues';
 
 const DARK_MAP_STYLE = [
   {
@@ -191,16 +194,12 @@ const DARK_MAP_STYLE = [
   }
 ];
 
-// Placeholder for mapped venues
-const MOCK_VENUES = [
-  { id: '1', title: 'Neon Nightclub', lat: 37.78825, lng: -122.4324 },
-  { id: '2', title: 'The Basement Lounge', lat: 37.78925, lng: -122.4334 },
-  { id: '3', title: 'Rooftop Vibes', lat: 37.78725, lng: -122.4314 },
-];
 
 export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
+  const { heatCells } = useHeatmap();
+  const { venues } = useVenues();
   
   // Default to a lively city area for now
   const [region] = useState({
@@ -209,6 +208,57 @@ export const MapScreen = () => {
     latitudeDelta: 0.04,
     longitudeDelta: 0.04,
   });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        let { status } = await Location.getForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+
+        let location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+        mapRef.current?.animateToRegion({
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+          latitudeDelta: 0.02,
+          longitudeDelta: 0.02,
+        }, 1500);
+      } catch (error) {
+        console.error("Error getting location: ", error);
+      }
+    })();
+  }, []);
+
+  const centerMap = async () => {
+    try {
+      let location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      mapRef.current?.animateToRegion({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      }, 1000);
+    } catch (error) {
+      console.error("Error centering map:", error);
+    }
+  };
+
+  const handleZoom = async (zoomIn: boolean) => {
+    try {
+      const camera = await mapRef.current?.getCamera();
+      if (camera && camera.zoom !== undefined) {
+        camera.zoom += zoomIn ? 1 : -1;
+        mapRef.current?.animateCamera(camera, { duration: 300 });
+      }
+    } catch (error) {
+      console.error("Error zooming:", error);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -221,12 +271,33 @@ export const MapScreen = () => {
         showsUserLocation={true}
         showsMyLocationButton={false}
         showsCompass={false}
+        showsScale={false}
+        showsBuildings={true}
+        showsTraffic={false}
+        showsIndoors={false}
+        loadingEnabled={true}
+        loadingBackgroundColor="#121212"
+        loadingIndicatorColor="#00FFCC"
+        pitchEnabled={true}
+        rotateEnabled={true}
       >
-        {MOCK_VENUES.map((venue) => (
+        {/* Heatmap layer — one Circle per density cell */}
+        {heatCells.map((cell, index) => (
+          <Circle
+            key={`heat_${index}`}
+            center={{ latitude: cell.latitude, longitude: cell.longitude }}
+            radius={cell.radius}
+            fillColor={cell.color}
+            strokeWidth={0}
+          />
+        ))}
+        {/* Venue markers */}
+        {venues.map((venue) => (
           <Marker
             key={venue.id}
-            coordinate={{ latitude: venue.lat, longitude: venue.lng }}
-            title={venue.title}
+            coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
+            title={venue.name}
+            description={venue.description}
           >
             <View style={styles.markerContainer}>
               <MapPin color="#00FFCC" fill="#00FFCC" size={28} />
@@ -235,10 +306,20 @@ export const MapScreen = () => {
         ))}
       </MapView>
 
-      {/* Floating Header elements could go here */}
-      <View style={[styles.headerFloating, { top: insets.top + 16 }]}>
-         <Text style={styles.headerText}>HEATMAP LIVE</Text>
-         <View style={styles.liveIndicator} />
+      <View style={[styles.controlsContainer, { bottom: insets.bottom + 120 }]}>
+        <TouchableOpacity style={styles.controlButton} onPress={centerMap} activeOpacity={0.7}>
+          <LocateFixed color="#00FFCC" size={20} />
+        </TouchableOpacity>
+        
+        <View style={styles.zoomContainer}>
+          <TouchableOpacity style={styles.controlButton} onPress={() => handleZoom(true)} activeOpacity={0.7}>
+            <Plus color="#FFFFFF" size={24} />
+          </TouchableOpacity>
+          <View style={styles.controlDivider} />
+          <TouchableOpacity style={styles.controlButton} onPress={() => handleZoom(false)} activeOpacity={0.7}>
+            <Minus color="#FFFFFF" size={24} />
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -247,44 +328,43 @@ export const MapScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#121212',
   },
   markerContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#00FFCC',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
-    elevation: 5,
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+    elevation: 6,
   },
-  headerFloating: {
+  controlsContainer: {
     position: 'absolute',
-    alignSelf: 'center',
-    backgroundColor: 'rgba(20, 20, 20, 0.85)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    flexDirection: 'row',
+    right: 16,
     alignItems: 'center',
-    gap: 8,
+    gap: 16,
+  },
+  zoomContainer: {
+    backgroundColor: 'rgba(26, 26, 26, 0.9)',
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#2A2A2A',
+    overflow: 'hidden',
   },
-  headerText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 12,
-    letterSpacing: 2,
+  controlButton: {
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(26, 26, 26, 0.9)',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
   },
-  liveIndicator: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#FF0055',
-    shadowColor: '#FF0055',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 6,
-  }
+  controlDivider: {
+    height: 1,
+    width: '100%',
+    backgroundColor: '#2A2A2A',
+  },
 });

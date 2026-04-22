@@ -1,31 +1,26 @@
 import React from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, StatusBar, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Flame, Users } from 'lucide-react-native';
-
-const RANKED_VENUES = [
-  { id: '1', name: 'Neon Nightclub', distance: '0.2 mi', activity: 'Crazy', color: '#FF0055' },
-  { id: '2', name: 'The Basement Lounge', distance: '0.8 mi', activity: 'High', color: '#FF5E00' },
-  { id: '3', name: 'Rooftop Vibes', distance: '1.2 mi', activity: 'Medium', color: '#00FFCC' },
-  { id: '4', name: 'Dive Bar 101', distance: '1.5 mi', activity: 'Low', color: '#888888' },
-  { id: '5', name: 'Silent Disco Party', distance: '2.1 mi', activity: 'Low', color: '#888888' },
-];
+import { Flame } from 'lucide-react-native';
+import { useVenueDensity, VenueWithDensity } from '../hooks/useVenueDensity';
 
 export const ListScreen = () => {
-  const renderItem = ({ item, index }: { item: typeof RANKED_VENUES[0], index: number }) => (
+  const { venues, isLoading } = useVenueDensity();
+
+  const renderItem = ({ item, index }: { item: VenueWithDensity; index: number }) => (
     <TouchableOpacity style={styles.venueCard} activeOpacity={0.8}>
       <View style={styles.rankBadge}>
         <Text style={styles.rankText}>#{index + 1}</Text>
       </View>
-      
+
       <View style={styles.venueInfo}>
         <Text style={styles.venueName}>{item.name}</Text>
-        <Text style={styles.venueDistance}>{item.distance} away</Text>
+        <Text style={styles.venueDistance} numberOfLines={1}>{item.description}</Text>
       </View>
-      
-      <View style={[styles.activityBadge, { backgroundColor: `${item.color}20`, borderColor: item.color }]}>
-        <Flame color={item.color} size={14} />
-        <Text style={[styles.activityText, { color: item.color }]}>{item.activity}</Text>
+
+      <View style={[styles.activityBadge, { backgroundColor: `${item.activityColor}20`, borderColor: item.activityColor }]}>
+        <Flame color={item.activityColor} size={14} />
+        <Text style={[styles.activityText, { color: item.activityColor }]}>{item.activityLevel}</Text>
       </View>
     </TouchableOpacity>
   );
@@ -38,16 +33,24 @@ export const ListScreen = () => {
         <Text style={styles.subtitle}>Where everyone's at right now</Text>
       </View>
 
-      <FlatList
-        data={RANKED_VENUES}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-      />
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator color="#00FFCC" size="large" />
+          <Text style={styles.loadingText}>Loading venues...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={venues}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
     </SafeAreaView>
   );
 };
+
 
 const styles = StyleSheet.create({
   container: {
@@ -124,5 +127,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    color: '#888888',
+    fontSize: 14,
+  },
+  errorText: {
+    color: '#FF0055',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

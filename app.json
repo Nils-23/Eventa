@@ -25,7 +25,12 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.nils23.Eventa",
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyAMbBDQ3tayrzs26biBBqJVnsuzLRvFsUQ"
+        }
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
