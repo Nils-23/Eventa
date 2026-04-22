@@ -1,0 +1,186 @@
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { LogOut, Settings, Award, CircleUserRound } from 'lucide-react-native';
+import { useAppStore } from '../hooks/useAppStore';
+import { auth } from '../services/firebase';
+
+export const ProfileScreen = () => {
+  const { user } = useAppStore();
+
+  const handleSignOut = () => {
+    auth.signOut();
+  };
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        
+        <View style={styles.header}>
+          <View style={styles.avatarContainer}>
+            <CircleUserRound color="#00FFCC" size={80} strokeWidth={1} />
+          </View>
+          <Text style={styles.username}>
+            VibeHunter_{Math.floor(1000 + Math.random() * 9000)}
+          </Text>
+          <Text style={styles.joinDate}>
+            Joined April 2026
+          </Text>
+        </View>
+
+        <View style={styles.statsContainer}>
+          <View style={styles.statBox}>
+            <Text style={styles.statValue}>14</Text>
+            <Text style={styles.statLabel}>Venues</Text>
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.statBox}>
+            <Text style={styles.statValue}>4</Text>
+            <Text style={styles.statLabel}>Hotstreaks</Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Preferences</Text>
+          <TouchableOpacity style={styles.row}>
+            <View style={styles.rowItemLeft}>
+               <Settings color="#FFFFFF" size={20} />
+               <Text style={styles.rowText}>Account Settings</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.row}>
+            <View style={styles.rowItemLeft}>
+               <Award color="#FFFFFF" size={20} />
+               <Text style={styles.rowText}>Achievements</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity 
+          style={styles.signOutButton}
+          onPress={handleSignOut}
+          activeOpacity={0.7}
+        >
+          <LogOut color="#FF0055" size={20} style={{ marginRight: 8 }} />
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </TouchableOpacity>
+
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#121212',
+  },
+  scrollContent: {
+    padding: 24,
+    paddingBottom: 40,
+  },
+  header: {
+    alignItems: 'center',
+    marginVertical: 32,
+  },
+  avatarContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#1A1A1A',
+    borderWidth: 2,
+    borderColor: '#00FFCC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    shadowColor: '#00FFCC',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  username: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  joinDate: {
+    fontSize: 14,
+    color: '#888888',
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 32,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+  },
+  statBox: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  divider: {
+    width: 1,
+    backgroundColor: '#2A2A2A',
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#888888',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  section: {
+    marginBottom: 32,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    color: '#888888',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 16,
+    fontWeight: '600',
+  },
+  row: {
+    backgroundColor: '#1A1A1A',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+  },
+  rowItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  rowText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '500',
+    marginLeft: 12,
+  },
+  signOutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 0, 85, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 0, 85, 0.3)',
+    borderRadius: 30,
+    paddingVertical: 16,
+    marginTop: 'auto',
+  },
+  signOutText: {
+    color: '#FF0055',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});

@@ -1,7 +1,11 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { View, ActivityIndicator } from 'react-native';
+import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { HomeScreen } from './screens/HomeScreen';
+import { MainTabs } from './navigation/MainTabs';
+import { LoginScreen } from './screens/LoginScreen';
+import { useAuth } from './hooks/useAuth';
+import { useAppStore } from './hooks/useAppStore';
 
 // Initialize Firebase (will be evaluated once)
 import './services/firebase';
@@ -9,16 +13,31 @@ import './services/firebase';
 const Stack = createNativeStackNavigator();
 
 export default function App() {
+  // Bind Firebase auth listener to the app store
+  useAuth();
+  const { user, isLoading } = useAppStore();
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FAFAFA' }}>
+        <ActivityIndicator size="large" color="#000000" />
+      </View>
+    );
+  }
+
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={DarkTheme}>
       <Stack.Navigator
-        initialRouteName="Home"
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#FFFFFF' },
+          contentStyle: { backgroundColor: '#121212' },
         }}
       >
-        <Stack.Screen name="Home" component={HomeScreen} />
+        {!user ? (
+          <Stack.Screen name="Login" component={LoginScreen} />
+        ) : (
+          <Stack.Screen name="Main" component={MainTabs} />
+        )}
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "653907647305",
+    "project_id": "eventa-211fb",
+    "storage_bucket": "eventa-211fb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:653907647305:android:70d753dac168d39c9d1898",
+        "android_client_info": {
+          "package_name": "com.nils23.Eventa"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "653907647305-5na001ns3v0np69tfar3u8d88o76hvh8.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nils23.Eventa",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "653907647305-2fvdg0vs58rtu81iqfu8fle2p1nq2jcr.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC3ruBhQOSKErf0XMb6qIKjmrBh1F0x7PQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "653907647305-2fvdg0vs58rtu81iqfu8fle2p1nq2jcr.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "653907647305-iqthhin2hd67s73jeg9s1ou03s9qr4j4.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.nils23.Eventa"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
