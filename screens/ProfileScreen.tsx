@@ -1,12 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LogOut, Settings, Award, CircleUserRound } from 'lucide-react-native';
 import { useAppStore } from '../hooks/useAppStore';
 import { auth } from '../services/firebase';
+import { useStories } from '../hooks/useStories';
+import { StoryViewer } from '../components/StoryViewer';
 
 export const ProfileScreen = () => {
   const { user } = useAppStore();
+  const { stories } = useStories();
+  const [isViewerVisible, setIsViewerVisible] = useState(false);
+
+  const myStories = stories.filter(s => s.user_id === user?.uid);
+  const hasStories = myStories.length > 0;
 
   const handleSignOut = () => {
     auth.signOut();
@@ -17,9 +24,15 @@ export const ProfileScreen = () => {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         
         <View style={styles.header}>
-          <View style={styles.avatarContainer}>
+          <TouchableOpacity 
+            style={styles.avatarContainer}
+            disabled={!hasStories}
+            onPress={() => setIsViewerVisible(true)}
+            activeOpacity={0.8}
+          >
+            {hasStories && <View style={styles.storyRing} />}
             <CircleUserRound color="#00FFCC" size={80} strokeWidth={1} />
-          </View>
+          </TouchableOpacity>
           <Text style={styles.username}>
             VibeHunter_{Math.floor(1000 + Math.random() * 9000)}
           </Text>
@@ -66,6 +79,15 @@ export const ProfileScreen = () => {
         </TouchableOpacity>
 
       </ScrollView>
+
+      <StoryViewer
+        isVisible={isViewerVisible}
+        onClose={() => setIsViewerVisible(false)}
+        stories={myStories}
+        venueName="My Stories"
+        canAddStory={false}
+        onAddStory={() => {}}
+      />
     </SafeAreaView>
   );
 };
@@ -98,6 +120,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 10,
     elevation: 8,
+  },
+  storyRing: {
+    position: 'absolute',
+    width: 108,
+    height: 108,
+    borderRadius: 54,
+    borderWidth: 2,
+    borderColor: '#FF00CC', 
+    borderStyle: 'dashed',
   },
   username: {
     fontSize: 24,
