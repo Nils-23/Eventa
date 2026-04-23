@@ -17,6 +17,8 @@
       "bundleIdentifier": "com.nils23.Eventa",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Allow Eventa to use your location to find events near you.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow Eventa to use your location to find events near you.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
