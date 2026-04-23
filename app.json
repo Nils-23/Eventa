@@ -19,6 +19,9 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Allow Eventa to use your location to find events near you.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow Eventa to use your location to find events near you.",
+        "NSCameraUsageDescription": "Allow Eventa to use your camera to record stories at venues.",
+        "NSMicrophoneUsageDescription": "Allow Eventa to record audio for your video stories.",
+        "NSPhotoLibraryUsageDescription": "Allow Eventa to access your gallery to upload stories.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -26,6 +29,11 @@
             ]
           }
         ]
+      },
+      "config": {
+        "googleMaps": {
+          "apiKey": "REDACTED_GOOGLE_MAPS_KEY"
+        }
       }
     },
     "android": {
@@ -47,7 +55,14 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      [
+        "react-native-maps",
+        {
+          "androidGoogleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY",
+          "iosGoogleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY"
+        }
+      ]
     ]
   }
 }

@@ -5,7 +5,14 @@ import MapView, { PROVIDER_GOOGLE, Circle, Marker } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LocateFixed, Plus, Minus, MapPin } from 'lucide-react-native';
 import { useHeatmap } from '../hooks/useHeatmap';
-import { useVenues } from '../hooks/useVenues';
+import { useVenues, Venue } from '../hooks/useVenues';
+import * as ImagePicker from 'expo-image-picker';
+import Toast from 'react-native-toast-message';
+import { useStories } from '../hooks/useStories';
+import { StoryViewer } from '../components/StoryViewer';
+import { uploadStoryMedia, createStory } from '../services/storyService';
+import { getDistanceInMeters } from '../utils/locationUtils';
+import { useAppStore } from '../hooks/useAppStore';
 
 const DARK_MAP_STYLE = [
   {
@@ -200,7 +207,14 @@ export const MapScreen = () => {
   const insets = useSafeAreaInsets();
   const { heatCells } = useHeatmap();
   const { venues } = useVenues();
-  
+  const { user } = useAppStore();
+  const { stories } = useStories();
+
+  const [userLocation, setUserLocation] = useState<Location.LocationObjectCoords | null>(null);
+  const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
+  const [isViewerVisible, setIsViewerVisible] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+
   // Default to a lively city area for now
   const [camera, setCamera] = useState({
     center: {
@@ -229,6 +243,8 @@ export const MapScreen = () => {
         let location = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
+        
+        setUserLocation(location.coords);
 
         mapRef.current?.animateCamera({
           center: {
@@ -277,6 +293,54 @@ export const MapScreen = () => {
     }
   };
 
+  const handleMarkerPress = (venue: Venue) => {
+    setSelectedVenue(venue);
+    setIsViewerVisible(true);
+  };
+
+  const handleAddStory = async () => {
+    if (!user || !selectedVenue) return;
+    
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        allowsEditing: true,
+        quality: 0.7,
+      });
+
+      if (!result.canceled && result.assets.length > 0) {
+        setIsUploading(true);
+        setIsViewerVisible(false); // Close viewer while uploading
+
+        const uri = result.assets[0].uri;
+        const mediaType = result.assets[0].type === 'video' ? 'video' : 'image';
+
+        const downloadUrl = await uploadStoryMedia(uri, user.uid);
+        await createStory(user.uid, downloadUrl, mediaType, selectedVenue.id);
+
+        Toast.show({
+          type: 'success',
+          text1: 'Story Added!',
+          text2: 'Your story is now visible at this venue.',
+        });
+      }
+    } catch (error) {
+      console.error('Upload Error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Upload Failed',
+        text2: 'Could not upload your story.',
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Safe distance check
+  const isNearVenue = selectedVenue && userLocation ? 
+    getDistanceInMeters(userLocation.latitude, userLocation.longitude, selectedVenue.latitude, selectedVenue.longitude) <= 200 
+    : false;
+
   return (
     <View style={styles.container}>
       <MapView
@@ -312,21 +376,48 @@ export const MapScreen = () => {
           />
         ))}
         {/* Venue markers */}
-        {venues.map((venue) => (
-          <Marker
-            key={venue.id}
-            coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
-            title={venue.name}
-            description={venue.description}
-            tracksViewChanges={trackMarkerChanges}
-          >
-            <View style={styles.markerContainer}>
-              <View style={styles.markerGlow} />
-              <MapPin color="#00FFCC" fill="#00FFCC" size={24} />
-            </View>
-          </Marker>
-        ))}
+        {venues.map((venue) => {
+          const venueStories = stories.filter(s => s.venue_id === venue.id);
+          const hasStories = venueStories.length > 0;
+
+          return (
+            <Marker
+              key={venue.id}
+              coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleMarkerPress(venue);
+              }}
+              tracksViewChanges={trackMarkerChanges}
+            >
+              <View style={styles.markerContainer}>
+                {hasStories && <View style={styles.storyRing} />}
+                <View style={styles.markerGlow} />
+                <MapPin color="#00FFCC" fill="#00FFCC" size={24} />
+              </View>
+            </Marker>
+          );
+        })}
       </MapView>
+
+      {/* Story Upload Overlay */}
+      {isUploading && (
+        <View style={styles.uploadOverlay}>
+          <Text style={styles.uploadText}>Uploading Story...</Text>
+        </View>
+      )}
+
+      {/* Story Viewer Modal */}
+      {selectedVenue && (
+        <StoryViewer
+          isVisible={isViewerVisible}
+          onClose={() => setIsViewerVisible(false)}
+          stories={stories.filter(s => s.venue_id === selectedVenue.id)}
+          venueName={selectedVenue.name}
+          canAddStory={Boolean(isNearVenue)}
+          onAddStory={handleAddStory}
+        />
+      )}
 
       <View style={[styles.controlsContainer, { bottom: insets.bottom + 120 }]}>
         <TouchableOpacity style={styles.controlButton} onPress={centerMap} activeOpacity={0.7}>
@@ -369,6 +460,27 @@ const styles = StyleSheet.create({
     shadowOpacity: 1,
     shadowRadius: 10,
     elevation: 8,
+  },
+  storyRing: {
+    position: 'absolute',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    borderColor: '#FF00CC', // Instagram-like magenta color for active stories
+    borderStyle: 'dashed',
+  },
+  uploadOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 999,
+  },
+  uploadText: {
+    color: '#00FFCC',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   controlsContainer: {
     position: 'absolute',
