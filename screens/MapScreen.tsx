@@ -241,9 +241,10 @@ export const MapScreen = () => {
   // Effect to stop marker tracking after mount to boost performance
   const [trackMarkerChanges, setTrackMarkerChanges] = useState(true);
   useEffect(() => {
+    setTrackMarkerChanges(true);
     const timer = setTimeout(() => setTrackMarkerChanges(false), 2000);
     return () => clearTimeout(timer);
-  }, [venues]);
+  }, [venues, stories]);
 
   useEffect(() => {
     let locationSubscription: Location.LocationSubscription;
