@@ -13,6 +13,7 @@ import { StoryViewer } from '../components/StoryViewer';
 import { uploadStoryMedia, createStory } from '../services/storyService';
 import { getDistanceInMeters } from '../utils/locationUtils';
 import { useAppStore } from '../hooks/useAppStore';
+import { VenueChat } from '../components/VenueChat';
 
 const DARK_MAP_STYLE = [
   {
@@ -214,6 +215,7 @@ export const MapScreen = () => {
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [isViewerVisible, setIsViewerVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isChatVisible, setIsChatVisible] = useState(false);
 
   // Debug states
   const [isDebugMode, setIsDebugMode] = useState(false);
@@ -577,6 +579,16 @@ export const MapScreen = () => {
         />
       )}
 
+      {/* Venue Chat Modal */}
+      {selectedMapVenue && (
+        <VenueChat
+          isVisible={isChatVisible}
+          onClose={() => setIsChatVisible(false)}
+          venueId={selectedMapVenue.id}
+          venueName={selectedMapVenue.name}
+        />
+      )}
+
       {/* Venue Info Overlay Card */}
       {selectedMapVenue && (
         <View style={[styles.venueInfoCard, { bottom: insets.bottom + 40 }]}>
@@ -588,15 +600,26 @@ export const MapScreen = () => {
           </TouchableOpacity>
           <Text style={styles.venueCardTitle} numberOfLines={1}>{selectedMapVenue.name}</Text>
           <Text style={styles.venueCardAddress} numberOfLines={1}>{selectedMapVenue.address || 'Nairobi, Kenya'}</Text>
-          <TouchableOpacity 
-            style={styles.viewStoriesBtn}
-            onPress={() => {
-              setSelectedVenue(selectedMapVenue);
-              setIsViewerVisible(true);
-            }}
-          >
-            <Text style={styles.viewStoriesText}>View Stories</Text>
-          </TouchableOpacity>
+          <View style={styles.cardActionRow}>
+            <TouchableOpacity 
+              style={styles.viewStoriesBtn}
+              onPress={() => {
+                setSelectedVenue(selectedMapVenue);
+                setIsViewerVisible(true);
+              }}
+            >
+              <Text style={styles.viewStoriesText}>View Stories</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.accessChatBtn}
+              onPress={() => {
+                setIsChatVisible(true);
+              }}
+            >
+              <Text style={styles.accessChatText}>Access chat</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -767,7 +790,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 16,
   },
+  cardActionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
   viewStoriesBtn: {
+    flex: 1,
     backgroundColor: '#FF00CC',
     paddingVertical: 10,
     borderRadius: 24,
@@ -775,6 +803,20 @@ const styles = StyleSheet.create({
   },
   viewStoriesText: {
     color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  accessChatBtn: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#00FFCC',
+    paddingVertical: 10,
+    borderRadius: 24,
+    alignItems: 'center',
+  },
+  accessChatText: {
+    color: '#00FFCC',
     fontSize: 14,
     fontWeight: '700',
   },
