@@ -247,7 +247,8 @@ export const MapScreen = () => {
   }, [venues, stories]);
 
   useEffect(() => {
-    let locationSubscription: Location.LocationSubscription;
+    let isMounted = true;
+    let intervalId: NodeJS.Timeout;
 
     (async () => {
       try {
@@ -258,27 +259,32 @@ export const MapScreen = () => {
           accuracy: Location.Accuracy.Balanced,
         });
         
-        setUserLocation(location.coords);
+        if (isMounted) {
+          setUserLocation(location.coords);
+          mapRef.current?.animateCamera({
+            center: {
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            },
+            pitch: 45,
+            heading: location.coords.heading || 0,
+            zoom: 16,
+          }, { duration: 2000 });
+        }
 
-        mapRef.current?.animateCamera({
-          center: {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-          },
-          pitch: 45,
-          heading: location.coords.heading || 0,
-          zoom: 16,
-        }, { duration: 2000 });
-
-        locationSubscription = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.Balanced,
-            timeInterval: 15000, // Trigger securely every 15 seconds
-          },
-          (newLocation) => {
-            setUserLocation(newLocation.coords);
+        // Auto refresh location every 15 seconds
+        intervalId = setInterval(async () => {
+          try {
+            let newLocation = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            });
+            if (isMounted) {
+              setUserLocation(newLocation.coords);
+            }
+          } catch (e) {
+            console.error("Error auto-refreshing location:", e);
           }
-        );
+        }, 15000);
 
       } catch (error) {
         console.error("Error getting location: ", error);
@@ -286,8 +292,9 @@ export const MapScreen = () => {
     })();
 
     return () => {
-      if (locationSubscription) {
-        locationSubscription.remove();
+      isMounted = false;
+      if (intervalId) {
+        clearInterval(intervalId);
       }
     };
   }, []);
