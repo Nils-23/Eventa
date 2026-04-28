@@ -3,7 +3,7 @@ import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Circle, Marker, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench } from 'lucide-react-native';
+import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X } from 'lucide-react-native';
 import { useHeatmap } from '../hooks/useHeatmap';
 import { useVenues, Venue } from '../hooks/useVenues';
 import * as ImagePicker from 'expo-image-picker';
@@ -207,7 +207,7 @@ export const MapScreen = () => {
   const insets = useSafeAreaInsets();
   const { heatPoints } = useHeatmap();
   const { venues } = useVenues();
-  const { user } = useAppStore();
+  const { user, selectedMapVenue, setSelectedMapVenue } = useAppStore();
   const { stories } = useStories();
 
   const [userLocation, setUserLocation] = useState<Location.LocationObjectCoords | null>(null);
@@ -245,6 +245,19 @@ export const MapScreen = () => {
     const timer = setTimeout(() => setTrackMarkerChanges(false), 2000);
     return () => clearTimeout(timer);
   }, [venues, stories]);
+
+  useEffect(() => {
+    if (selectedMapVenue && mapRef.current) {
+      mapRef.current.animateCamera({
+        center: {
+          latitude: selectedMapVenue.latitude,
+          longitude: selectedMapVenue.longitude,
+        },
+        zoom: 17,
+        pitch: 45,
+      }, { duration: 1000 });
+    }
+  }, [selectedMapVenue]);
 
   useEffect(() => {
     let isMounted = true;
@@ -332,8 +345,7 @@ export const MapScreen = () => {
   };
 
   const handleMarkerPress = (venue: Venue) => {
-    setSelectedVenue(venue);
-    setIsViewerVisible(true);
+    setSelectedMapVenue(venue);
   };
 
   const executeStoryUpload = async (targetVenue: Venue) => {
@@ -565,6 +577,29 @@ export const MapScreen = () => {
         />
       )}
 
+      {/* Venue Info Overlay Card */}
+      {selectedMapVenue && (
+        <View style={[styles.venueInfoCard, { bottom: insets.bottom + 40 }]}>
+          <TouchableOpacity 
+            style={styles.closeCardButton}
+            onPress={() => setSelectedMapVenue(null)}
+          >
+            <X color="#888" size={20} />
+          </TouchableOpacity>
+          <Text style={styles.venueCardTitle} numberOfLines={1}>{selectedMapVenue.name}</Text>
+          <Text style={styles.venueCardAddress} numberOfLines={1}>{selectedMapVenue.address || 'Nairobi, Kenya'}</Text>
+          <TouchableOpacity 
+            style={styles.viewStoriesBtn}
+            onPress={() => {
+              setSelectedVenue(selectedMapVenue);
+              setIsViewerVisible(true);
+            }}
+          >
+            <Text style={styles.viewStoriesText}>View Stories</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <View style={[styles.controlsContainer, { bottom: insets.bottom + 120 }]}>
         {/* Debug Toggle Wrench */}
         <TouchableOpacity style={styles.controlButton} onPress={() => setIsDebugMode(!isDebugMode)} activeOpacity={0.7}>
@@ -696,6 +731,52 @@ const styles = StyleSheet.create({
     color: '#00FFCC',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  venueInfoCard: {
+    position: 'absolute',
+    left: 16,
+    right: 80, // leave space for controls
+    backgroundColor: 'rgba(26,26,26,0.95)',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#00FFCC',
+    shadowColor: '#00FFCC',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+    zIndex: 20,
+  },
+  closeCardButton: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 2,
+    padding: 4,
+  },
+  venueCardTitle: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 4,
+    paddingRight: 24,
+  },
+  venueCardAddress: {
+    color: '#AAA',
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  viewStoriesBtn: {
+    backgroundColor: '#FF00CC',
+    paddingVertical: 10,
+    borderRadius: 24,
+    alignItems: 'center',
+  },
+  viewStoriesText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   controlsContainer: {
     position: 'absolute',

@@ -59,9 +59,9 @@ function haversineMeters(
 
 function toActivityLevel(count: number): ActivityLevel {
   if (count === 0) return 'None';
-  if (count <= 3)  return 'Low';
-  if (count <= 10) return 'Medium';
-  if (count <= 25) return 'High';
+  if (count <= 25) return 'Low';
+  if (count <= 50) return 'Medium';
+  if (count <= 75) return 'High';
   return 'Crazy';
 }
 

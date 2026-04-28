@@ -5,12 +5,15 @@ import { ListScreen } from '../screens/ListScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { Map, List, User } from 'lucide-react-native';
 import { useLocationTracking } from '../hooks/useLocationTracking';
+import { usePushNotifications } from '../hooks/usePushNotifications';
 
 const Tab = createBottomTabNavigator();
 
 export const MainTabs = () => {
   // Mount the global location tracking. Will only sync when App state is active.
   useLocationTracking();
+  // Register for push notifications and sync token
+  usePushNotifications();
 
   return (
     <Tab.Navigator

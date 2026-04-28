@@ -10,7 +10,7 @@ admin.initializeApp({
 const db = admin.firestore();
 const rtdb = admin.database();
 
-const USERS_PER_VENUE = 12;
+const USERS_PER_VENUE = 80;
 const MAX_RADIUS_METERS = 200; // Roam within 200m
 const UPDATE_INTERVAL_MS = 15000; // Update every 15 seconds
 
