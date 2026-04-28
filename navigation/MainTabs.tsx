@@ -3,7 +3,8 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MapScreen } from '../screens/MapScreen';
 import { ListScreen } from '../screens/ListScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
-import { Map, List, User } from 'lucide-react-native';
+import { ChatListScreen } from '../screens/ChatListScreen';
+import { Map, List, User, MessageCircle } from 'lucide-react-native';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 
@@ -48,6 +49,13 @@ export const MainTabs = () => {
         component={ListScreen}
         options={{
           tabBarIcon: ({ color, size }) => <List color={color} size={size} />,
+        }}
+      />
+      <Tab.Screen 
+        name="Chats" 
+        component={ChatListScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />,
         }}
       />
       <Tab.Screen 
