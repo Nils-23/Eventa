@@ -12,6 +12,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Flame, Navigation, Users } from 'lucide-react-native';
 import { useVenueDensity, VenueWithDensity } from '../hooks/useVenueDensity';
+import { useNavigation } from '@react-navigation/native';
+import { useAppStore } from '../hooks/useAppStore';
 
 // ─── Activity config ──────────────────────────────────────────────────────────
 const ACTIVITY_CONFIG = {
@@ -34,11 +36,18 @@ const VenueCard = ({
   const config = ACTIVITY_CONFIG[item.activityLevel];
   const color = item.activityColor;
   const isTop = index < 3;
+  const navigation = useNavigation<any>();
+  const { setSelectedMapVenue } = useAppStore();
 
   const onPressIn = () =>
     Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, speed: 30 }).start();
   const onPressOut = () =>
     Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, speed: 30 }).start();
+    
+  const handlePress = () => {
+    setSelectedMapVenue(item);
+    navigation.navigate('Map');
+  };
 
   const formatDistance = (km: number | null) => {
     if (km === null) return '— km';
@@ -53,6 +62,7 @@ const VenueCard = ({
         activeOpacity={1}
         onPressIn={onPressIn}
         onPressOut={onPressOut}
+        onPress={handlePress}
       >
         {/* Left: rank */}
         <View style={styles.rankCol}>

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { User } from 'firebase/auth';
+import { Venue } from './useVenues';
 
 interface AppState {
   hasInitialized: boolean;
@@ -8,6 +9,8 @@ interface AppState {
   setUser: (user: User | null) => void;
   isLoading: boolean;
   setIsLoading: (isLoading: boolean) => void;
+  selectedMapVenue: Venue | null;
+  setSelectedMapVenue: (venue: Venue | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -17,4 +20,6 @@ export const useAppStore = create<AppState>((set) => ({
   setUser: (user) => set({ user }),
   isLoading: true,
   setIsLoading: (isLoading) => set({ isLoading }),
+  selectedMapVenue: null,
+  setSelectedMapVenue: (venue) => set({ selectedMapVenue: venue }),
 }));

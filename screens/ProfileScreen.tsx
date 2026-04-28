@@ -1,22 +1,55 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LogOut, Settings, Award, CircleUserRound } from 'lucide-react-native';
+import { LogOut, Settings, Award, CircleUserRound, Edit2, Check } from 'lucide-react-native';
 import { useAppStore } from '../hooks/useAppStore';
 import { auth } from '../services/firebase';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
+import { fetchUsername, updateUsername } from '../services/userService';
 
 export const ProfileScreen = () => {
   const { user } = useAppStore();
   const { stories } = useStories();
   const [isViewerVisible, setIsViewerVisible] = useState(false);
+  const [username, setUsername] = useState<string>('Loading...');
+  const [isEditingUsername, setIsEditingUsername] = useState(false);
+  const [editedUsername, setEditedUsername] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (user?.uid) {
+      fetchUsername(user.uid).then(name => setUsername(name));
+    }
+  }, [user?.uid]);
 
   const myStories = stories.filter(s => s.user_id === user?.uid);
   const hasStories = myStories.length > 0;
 
   const handleSignOut = () => {
     auth.signOut();
+  };
+
+  const handleEditUsername = () => {
+    setEditedUsername(username);
+    setIsEditingUsername(true);
+  };
+
+  const handleSaveUsername = async () => {
+    if (!user?.uid || editedUsername.trim() === '') {
+      setIsEditingUsername(false);
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await updateUsername(user.uid, editedUsername.trim());
+      setUsername(editedUsername.trim());
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsSaving(false);
+      setIsEditingUsername(false);
+    }
   };
 
   return (
@@ -33,9 +66,31 @@ export const ProfileScreen = () => {
             {hasStories && <View style={styles.storyRing} />}
             <CircleUserRound color="#00FFCC" size={80} strokeWidth={1} />
           </TouchableOpacity>
-          <Text style={styles.username}>
-            VibeHunter_{Math.floor(1000 + Math.random() * 9000)}
-          </Text>
+          {isEditingUsername ? (
+            <View style={styles.editUsernameContainer}>
+              <TextInput
+                style={styles.usernameInput}
+                value={editedUsername}
+                onChangeText={setEditedUsername}
+                autoFocus
+                maxLength={30}
+                placeholder="Enter username"
+                placeholderTextColor="#888888"
+              />
+              <TouchableOpacity onPress={handleSaveUsername} disabled={isSaving} style={styles.saveButton}>
+                {isSaving ? <ActivityIndicator size="small" color="#00FFCC" /> : <Check color="#00FFCC" size={24} />}
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.usernameContainer}>
+              <Text style={styles.username}>
+                {username}
+              </Text>
+              <TouchableOpacity onPress={handleEditUsername} style={styles.editButton}>
+                <Edit2 color="#888888" size={16} />
+              </TouchableOpacity>
+            </View>
+          )}
           <Text style={styles.joinDate}>
             Joined April 2026
           </Text>
@@ -130,11 +185,38 @@ const styles = StyleSheet.create({
     borderColor: '#FF00CC', 
     borderStyle: 'dashed',
   },
+  usernameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   username: {
     fontSize: 24,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  editButton: {
+    marginLeft: 8,
+    padding: 4,
+  },
+  editUsernameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 4,
+  },
+  usernameInput: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#00FFCC',
+    paddingVertical: 0,
+    paddingHorizontal: 4,
+    minWidth: 150,
+  },
+  saveButton: {
+    marginLeft: 12,
+    padding: 4,
   },
   joinDate: {
     fontSize: 14,
