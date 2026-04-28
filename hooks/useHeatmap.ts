@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { ref, onValue } from 'firebase/database';
-import { realtimeDB } from '../services/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { realtimeDB, firestore } from '../services/firebase';
 
 export interface HeatPoint {
   latitude: number;
@@ -15,6 +16,11 @@ interface RawLocation {
   user_id: string;
 }
 
+interface SimulationConfig {
+  enabled: boolean;
+  threshold: number;
+}
+
 const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // ignore users inactive > 2 hours
 const REFRESH_RATE_MS = 15000; // Frame-pace map rendering to 15 seconds
 
@@ -23,15 +29,33 @@ export const useHeatmap = () => {
   const [isLoading, setIsLoading] = useState(true);
   
   // Shadow buffer caches intense realtime DB firing implicitly
-  const latestRawBuffer = useRef<Record<string, RawLocation> | null>(null);
+  const latestRawBuffer = useRef<Record<string, RawLocation>>({});
+  const latestSimulatedBuffer = useRef<Record<string, RawLocation>>({});
   const initialLoadTriggered = useRef(false);
 
-  const processBuffer = () => {
-    if (latestRawBuffer.current) {
-      const now = Date.now();
-      const freshPoints: HeatPoint[] = [];
+  const simulationConfig = useRef<SimulationConfig>({ enabled: false, threshold: 50 });
 
-      for (const entry of Object.values(latestRawBuffer.current)) {
+  const processBuffer = () => {
+    const now = Date.now();
+    const freshPoints: HeatPoint[] = [];
+    
+    // Process real users
+    let realUserCount = 0;
+    for (const entry of Object.values(latestRawBuffer.current)) {
+      if (!entry.latitude || !entry.longitude) continue;
+      if (now - entry.timestamp > STALE_THRESHOLD_MS) continue;
+      
+      realUserCount++;
+      freshPoints.push({
+        latitude: entry.latitude,
+        longitude: entry.longitude,
+        weight: 1 
+      });
+    }
+    
+    // Process simulated users if active and below threshold
+    if (simulationConfig.current.enabled && realUserCount < simulationConfig.current.threshold) {
+      for (const entry of Object.values(latestSimulatedBuffer.current)) {
         if (!entry.latitude || !entry.longitude) continue;
         if (now - entry.timestamp > STALE_THRESHOLD_MS) continue;
         
@@ -41,26 +65,36 @@ export const useHeatmap = () => {
           weight: 1 
         });
       }
-      
-      setHeatPoints(freshPoints);
     }
+    
+    setHeatPoints(freshPoints);
   };
 
   useEffect(() => {
-    const locationsRef = ref(realtimeDB, 'locations');
+    // 1. Listen to config
+    const configUnsubscribe = onSnapshot(doc(firestore, 'settings', 'simulation'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        simulationConfig.current = {
+          enabled: data.enabled ?? false,
+          threshold: data.threshold ?? 50
+        };
+        processBuffer();
+      }
+    });
 
-    const unsubscribe = onValue(
+    // 2. Listen to real locations
+    const locationsRef = ref(realtimeDB, 'locations');
+    const locUnsubscribe = onValue(
       locationsRef,
       (snapshot) => {
         setIsLoading(false);
-        if (!snapshot.exists()) {
+        if (snapshot.exists()) {
+          latestRawBuffer.current = snapshot.val();
+        } else {
           latestRawBuffer.current = {};
-          return;
         }
         
-        latestRawBuffer.current = snapshot.val() as Record<string, RawLocation>;
-        
-        // Execute the very first frame immediately to avoid a 15-second loading wait
         if (!initialLoadTriggered.current) {
            initialLoadTriggered.current = true;
            processBuffer();
@@ -72,13 +106,32 @@ export const useHeatmap = () => {
       }
     );
 
+    // 3. Listen to simulated locations
+    const simLocationsRef = ref(realtimeDB, 'simulated_locations');
+    const simUnsubscribe = onValue(
+      simLocationsRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          latestSimulatedBuffer.current = snapshot.val();
+        } else {
+          latestSimulatedBuffer.current = {};
+        }
+        processBuffer(); // Trigger update immediately when data arrives
+      },
+      (error) => {
+        console.error('[useHeatmap] Simulated locations error:', error);
+      }
+    );
+
     // Frame-lock rendering algorithm (No lag allowed on main UI thread)
     const timer = setInterval(() => {
       processBuffer();
     }, REFRESH_RATE_MS);
 
     return () => {
-      unsubscribe();
+      configUnsubscribe();
+      locUnsubscribe();
+      simUnsubscribe();
       clearInterval(timer);
     };
   }, []);

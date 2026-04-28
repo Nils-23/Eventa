@@ -129,12 +129,17 @@ export const useVenueDensity = () => {
   // without creating new subscriptions on every state change
   const venuesRef = useRef<RawVenue[]>([]);
   const locationsRef = useRef<Record<string, RawLocation>>({});
+  const simulatedLocationsRef = useRef<Record<string, RawLocation>>({});
   const userPosRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
 
   const recalculate = () => {
+    const combinedLocations = {
+      ...locationsRef.current,
+      ...simulatedLocationsRef.current,
+    };
     const result = computeDensity(
       venuesRef.current,
-      locationsRef.current,
+      combinedLocations,
       userPosRef.current.lat,
       userPosRef.current.lng,
     );
@@ -197,10 +202,26 @@ export const useVenueDensity = () => {
       },
     );
 
+    // ── 3️⃣  Realtime DB simulated locations listener ──────────────────────
+    const simLocRef = ref(realtimeDB, 'simulated_locations');
+    const unsubSimLocations = onValue(
+      simLocRef,
+      (snap) => {
+        simulatedLocationsRef.current = snap.exists()
+          ? (snap.val() as Record<string, RawLocation>)
+          : {};
+        recalculate();
+      },
+      (err) => {
+        console.error('[useVenueDensity] RTDB sim error:', err);
+      },
+    );
+
     return () => {
       if (locationSub) locationSub.remove();
       unsubVenues();
       unsubLocations();
+      unsubSimLocations();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
