@@ -83,12 +83,12 @@ export const AchievementsScreen = () => {
           {achievement.description}
         </Text>
         
-        {isActive && (
+        {isActive ? (
           <View style={styles.activeOverlay}>
             <CheckCircle2 color="#00FFCC" size={16} />
             <Text style={styles.activeText}>Active</Text>
           </View>
-        )}
+        ) : null}
       </TouchableOpacity>
     );
   };
@@ -108,7 +108,7 @@ export const AchievementsScreen = () => {
           <ArrowLeft color="#FFF" size={24} />
         </TouchableOpacity>
         <Text style={styles.title}>Achievements</Text>
-        <View style={{ width: 24 }} /> {/* Balance for center alignment */}
+        <View style={{ width: 24 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
