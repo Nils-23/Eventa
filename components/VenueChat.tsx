@@ -14,11 +14,14 @@ import {
 } from 'react-native';
 import { X, Send } from 'lucide-react-native';
 import { ref, onValue, push, set } from 'firebase/database';
-import { realtimeDB } from '../services/firebase';
+import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
+import { realtimeDB, firestore } from '../services/firebase';
 import { useAppStore } from '../hooks/useAppStore';
 import { fetchUsername } from '../services/userService';
+import { checkAndUnlockAchievements, ACHIEVEMENTS } from '../services/achievementService';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
+import * as Icons from 'lucide-react-native';
 
 interface Message {
   id: string;
@@ -26,6 +29,7 @@ interface Message {
   username: string;
   message: string;
   timestamp: number;
+  activeBadge?: string;
 }
 
 interface VenueChatProps {
@@ -88,6 +92,11 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
 
     try {
       const username = await fetchUsername(user.uid);
+      
+      const userDocRef = doc(firestore, 'users', user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+      const activeBadge = userDocSnap.exists() ? userDocSnap.data().activeBadge : null;
+
       const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
       const newMessageRef = push(chatRef);
       
@@ -95,8 +104,17 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
         user_id: user.uid,
         username,
         message: inputText.trim(),
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        ...(activeBadge ? { activeBadge } : {})
       });
+      
+      // Update stats and check achievements
+      try {
+        await updateDoc(userDocRef, { chatMessageCount: increment(1) });
+        await checkAndUnlockAchievements(user.uid);
+      } catch (err) {
+        console.error('Failed to update stats', err);
+      }
 
       // Register the interaction in the user's active chats list
       const userChatRef = ref(realtimeDB, `user_chats/${user.uid}/${venueId}`);
@@ -128,9 +146,18 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
 
   const renderMessage = ({ item }: { item: Message }) => {
     const isMe = item.user_id === user?.uid;
+    const badgeObj = item.activeBadge ? ACHIEVEMENTS.find(a => a.id === item.activeBadge) : null;
+    // @ts-ignore dynamic icon
+    const BadgeIcon = badgeObj ? Icons[badgeObj.iconName] : null;
+
     return (
       <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
-        {!isMe && <Text style={styles.username}>{item.username}</Text>}
+        {!isMe && (
+          <View style={styles.usernameContainer}>
+            {BadgeIcon && <BadgeIcon color={badgeObj!.glowColor} size={12} style={{ marginRight: 4 }} />}
+            <Text style={styles.username}>{item.username}</Text>
+          </View>
+        )}
         <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
           <Text style={styles.messageText}>{item.message}</Text>
           <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
@@ -277,11 +304,15 @@ const styles = StyleSheet.create({
   otherMessage: {
     alignSelf: 'flex-start',
   },
+  usernameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+    marginLeft: 4,
+  },
   username: {
     color: '#AAA',
     fontSize: 12,
-    marginBottom: 4,
-    marginLeft: 4,
   },
   messageBubble: {
     padding: 12,

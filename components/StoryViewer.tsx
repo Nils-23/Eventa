@@ -5,6 +5,8 @@ import { X, Plus, Clock, User as UserIcon, ArrowLeft } from 'lucide-react-native
 import { LinearGradient } from 'expo-linear-gradient';
 import { StoryData } from '../services/storyService';
 import { fetchUsername } from '../services/userService';
+import { ACHIEVEMENTS } from '../services/achievementService';
+import * as Icons from 'lucide-react-native';
 
 interface StoryViewerProps {
   isVisible: boolean;
@@ -222,7 +224,16 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                     <UserIcon color="#FFF" size={16} />
                   </View>
                   <View>
-                    <Text style={styles.usernameText}>{username}</Text>
+                    <View style={styles.usernameRow}>
+                      {currentStory.activeBadge && (() => {
+                        const badgeObj = ACHIEVEMENTS.find(a => a.id === currentStory.activeBadge);
+                        // @ts-ignore
+                        const BadgeIcon = badgeObj ? Icons[badgeObj.iconName] : null;
+                        if (!BadgeIcon) return null;
+                        return <BadgeIcon color={badgeObj!.glowColor} size={14} style={{ marginRight: 6 }} />;
+                      })()}
+                      <Text style={styles.usernameText}>{username}</Text>
+                    </View>
                     {venueName && <Text style={styles.venueName}>{venueName}</Text>}
                   </View>
                 </View>
@@ -273,6 +284,7 @@ const styles = StyleSheet.create({
   
   metadataLayout: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   userInfoBlock: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  usernameRow: { flexDirection: 'row', alignItems: 'center' },
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#FFF' },
   usernameText: { color: '#FFF', fontSize: 15, fontWeight: '800', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 3, shadowOffset: { width: 0, height: 1} },
   venueName: { color: '#00FFCC', fontSize: 12, fontWeight: '600', opacity: 0.9 },
