@@ -1,6 +1,7 @@
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, updateDoc, increment, getDoc } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { firestore, storage } from './firebase';
+import { checkAndUnlockAchievements } from './achievementService';
 
 export interface StoryData {
   id?: string;
@@ -10,6 +11,7 @@ export interface StoryData {
   media_type: 'image' | 'video';
   created_at: any;
   expires_at: any;
+  activeBadge?: string;
 }
 
 export const uploadStoryMedia = async (uri: string, userId: string): Promise<string> => {
@@ -34,6 +36,10 @@ export const createStory = async (
   const expiresAtDate = new Date();
   expiresAtDate.setHours(expiresAtDate.getHours() + 24);
 
+  const userDocRef = doc(firestore, 'users', userId);
+  const userDocSnap = await getDoc(userDocRef);
+  const activeBadge = userDocSnap.exists() ? userDocSnap.data().activeBadge : null;
+
   const docRef = await addDoc(collection(firestore, 'stories'), {
     user_id: userId,
     venue_id: venueId,
@@ -41,7 +47,17 @@ export const createStory = async (
     media_type: mediaType,
     created_at: serverTimestamp(),
     expires_at: expiresAtDate,
+    ...(activeBadge ? { activeBadge } : {})
   });
+
+  try {
+    await updateDoc(userDocRef, {
+      storyCount: increment(1)
+    });
+    await checkAndUnlockAchievements(userId);
+  } catch (error) {
+    console.error('Failed to update user story stats', error);
+  }
 
   return docRef.id;
 };

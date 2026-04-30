@@ -7,6 +7,7 @@ import { ChatListScreen } from '../screens/ChatListScreen';
 import { Map, List, User, MessageCircle } from 'lucide-react-native';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { usePushNotifications } from '../hooks/usePushNotifications';
+import { useVisitTracker } from '../hooks/useVisitTracker';
 
 const Tab = createBottomTabNavigator();
 
@@ -15,6 +16,8 @@ export const MainTabs = () => {
   useLocationTracking();
   // Register for push notifications and sync token
   usePushNotifications();
+  // Track visits to venues for profile stats
+  useVisitTracker();
 
   return (
     <Tab.Navigator

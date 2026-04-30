@@ -7,6 +7,11 @@ import { auth } from '../services/firebase';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
 import { fetchUsername, updateUsername } from '../services/userService';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { firestore } from '../services/firebase';
+import { useNavigation } from '@react-navigation/native';
+import { ACHIEVEMENTS } from '../services/achievementService';
+import * as Icons from 'lucide-react-native';
 
 export const ProfileScreen = () => {
   const { user } = useAppStore();
@@ -16,10 +21,30 @@ export const ProfileScreen = () => {
   const [isEditingUsername, setIsEditingUsername] = useState(false);
   const [editedUsername, setEditedUsername] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  
+  const [stats, setStats] = useState({ venues: 0, hotstreaks: 0 });
+  const [unlockedAchievements, setUnlockedAchievements] = useState<string[]>([]);
+  const navigation = useNavigation();
 
   useEffect(() => {
     if (user?.uid) {
       fetchUsername(user.uid).then(name => setUsername(name));
+      
+      const userDocRef = doc(firestore, 'users', user.uid);
+      const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const attendedVenues = data.attendedVenues || [];
+          const activeNights = data.activeNights || [];
+          setStats({
+            venues: attendedVenues.length,
+            hotstreaks: activeNights.length,
+          });
+          setUnlockedAchievements(data.unlockedAchievements || []);
+        }
+      });
+      
+      return () => unsubscribe();
     }
   }, [user?.uid]);
 
@@ -50,6 +75,15 @@ export const ProfileScreen = () => {
       setIsSaving(false);
       setIsEditingUsername(false);
     }
+  };
+
+  const getHotstreakTitle = (count: number) => {
+    if (count === 0) return "Resting (0)";
+    if (count < 3) return `Night Owl (${count})`;
+    if (count < 5) return `Weekend Warrior (${count})`;
+    if (count < 7) return `Party Animal (${count})`;
+    if (count < 10) return `Social Butterfly (${count})`;
+    return `Unstoppable (${count}+)`;
   };
 
   return (
@@ -98,13 +132,41 @@ export const ProfileScreen = () => {
 
         <View style={styles.statsContainer}>
           <View style={styles.statBox}>
-            <Text style={styles.statValue}>14</Text>
+            <Text style={styles.statValue}>{stats.venues}</Text>
             <Text style={styles.statLabel}>Venues</Text>
           </View>
           <View style={styles.divider} />
           <View style={styles.statBox}>
-            <Text style={styles.statValue}>4</Text>
+            <Text style={styles.statValue}>{stats.hotstreaks}</Text>
             <Text style={styles.statLabel}>Hotstreaks</Text>
+            <Text style={styles.hotstreakTitle}>{getHotstreakTitle(stats.hotstreaks)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Top Badges</Text>
+          <View style={styles.topBadgesContainer}>
+            {unlockedAchievements.length === 0 ? (
+              <Text style={styles.emptyBadgesText}>Keep exploring to earn your first badge!</Text>
+            ) : (
+              unlockedAchievements.slice(-3).reverse().map(badgeId => {
+                const badge = ACHIEVEMENTS.find(a => a.id === badgeId);
+                if (!badge) return null;
+                // @ts-ignore
+                const Icon = Icons[badge.iconName] || Icons.Award;
+                return (
+                  <View key={badgeId} style={styles.topBadgeBox}>
+                    <Icon color={badge.glowColor} size={28} style={{
+                      shadowColor: badge.glowColor,
+                      shadowOffset: { width: 0, height: 0 },
+                      shadowOpacity: 0.8,
+                      shadowRadius: 10,
+                    }} />
+                    <Text style={styles.topBadgeName} numberOfLines={1}>{badge.name}</Text>
+                  </View>
+                );
+              })
+            )}
           </View>
         </View>
 
@@ -116,7 +178,7 @@ export const ProfileScreen = () => {
                <Text style={styles.rowText}>Account Settings</Text>
             </View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.row}>
+          <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('Achievements' as never)}>
             <View style={styles.rowItemLeft}>
                <Award color="#FFFFFF" size={20} />
                <Text style={styles.rowText}>Achievements</Text>
@@ -251,6 +313,13 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
+  hotstreakTitle: {
+    fontSize: 10,
+    color: '#00FFCC',
+    marginTop: 4,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   section: {
     marginBottom: 32,
   },
@@ -261,6 +330,31 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginBottom: 16,
     fontWeight: '600',
+  },
+  topBadgesContainer: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  emptyBadgesText: {
+    color: '#666',
+    fontSize: 14,
+    fontStyle: 'italic',
+  },
+  topBadgeBox: {
+    flex: 1,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+  },
+  topBadgeName: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 8,
+    textAlign: 'center',
   },
   row: {
     backgroundColor: '#1A1A1A',

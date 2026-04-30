@@ -6,6 +6,7 @@ import Toast from 'react-native-toast-message';
 import { toastConfig } from './config/toast';
 import { MainTabs } from './navigation/MainTabs';
 import { LoginScreen } from './screens/LoginScreen';
+import { AchievementsScreen } from './screens/AchievementsScreen';
 import { useAuth } from './hooks/useAuth';
 import { useAppStore } from './hooks/useAppStore';
 
@@ -39,7 +40,10 @@ export default function App() {
           {!user ? (
             <Stack.Screen name="Login" component={LoginScreen} />
           ) : (
-            <Stack.Screen name="Main" component={MainTabs} />
+            <>
+              <Stack.Screen name="Main" component={MainTabs} />
+              <Stack.Screen name="Achievements" component={AchievementsScreen} />
+            </>
           )}
         </Stack.Navigator>
       </NavigationContainer>
