@@ -77,15 +77,6 @@ export const ProfileScreen = () => {
     }
   };
 
-  const getHotstreakTitle = (count: number) => {
-    if (count === 0) return "Resting (0)";
-    if (count < 3) return `Night Owl (${count})`;
-    if (count < 5) return `Weekend Warrior (${count})`;
-    if (count < 7) return `Party Animal (${count})`;
-    if (count < 10) return `Social Butterfly (${count})`;
-    return `Unstoppable (${count}+)`;
-  };
-
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -97,7 +88,7 @@ export const ProfileScreen = () => {
             onPress={() => setIsViewerVisible(true)}
             activeOpacity={0.8}
           >
-            {hasStories && <View style={styles.storyRing} />}
+            {hasStories ? <View style={styles.storyRing} /> : null}
             <CircleUserRound color="#00FFCC" size={80} strokeWidth={1} />
           </TouchableOpacity>
           {isEditingUsername ? (
@@ -139,7 +130,6 @@ export const ProfileScreen = () => {
           <View style={styles.statBox}>
             <Text style={styles.statValue}>{stats.hotstreaks}</Text>
             <Text style={styles.statLabel}>Hotstreaks</Text>
-            <Text style={styles.hotstreakTitle}>{getHotstreakTitle(stats.hotstreaks)}</Text>
           </View>
         </View>
 
@@ -312,13 +302,6 @@ const styles = StyleSheet.create({
     color: '#888888',
     textTransform: 'uppercase',
     letterSpacing: 1,
-  },
-  hotstreakTitle: {
-    fontSize: 10,
-    color: '#00FFCC',
-    marginTop: 4,
-    fontWeight: '600',
-    textAlign: 'center',
   },
   section: {
     marginBottom: 32,

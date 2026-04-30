@@ -152,12 +152,12 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
 
     return (
       <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
-        {!isMe && (
+        {!isMe ? (
           <View style={styles.usernameContainer}>
-            {BadgeIcon && <BadgeIcon color={badgeObj!.glowColor} size={12} style={{ marginRight: 4 }} />}
+            {BadgeIcon ? <BadgeIcon color={badgeObj!.glowColor} size={12} style={{ marginRight: 4 }} /> : null}
             <Text style={styles.username}>{item.username}</Text>
           </View>
-        )}
+        ) : null}
         <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
           <Text style={styles.messageText}>{item.message}</Text>
           <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
@@ -180,7 +180,6 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={[styles.chatContainer, { paddingTop: insets.top, paddingBottom: insets.bottom || 20 }]}>
-          {/* Header */}
           <View style={styles.header}>
             <View>
               <Text style={styles.venueName}>{venueName}</Text>
@@ -191,7 +190,6 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             </TouchableOpacity>
           </View>
 
-          {/* Messages */}
           {isLoading ? (
             <View style={styles.centerContainer}>
               <ActivityIndicator color="#00FFCC" size="large" />
@@ -213,7 +211,6 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             />
           )}
 
-          {/* Input Area */}
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.textInput}

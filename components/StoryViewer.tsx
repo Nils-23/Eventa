@@ -140,16 +140,16 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
             </Pressable>
             
             <Text style={styles.emptyText}>No stories here yet.</Text>
-            {canAddStory && (
+            {canAddStory ? (
               <Pressable style={styles.addButtonLarge} onPress={onAddStory}>
                 <Plus color="#000" size={24} />
                 <Text style={styles.addButtonText}>Be the first to add a story!</Text>
               </Pressable>
-            )}
+            ) : null}
           </View>
         ) : currentStory ? (
           <>
-            {/* Dynamic Media Context */}
+            }
             {currentStory.media_type === 'video' ? (
               <Video
                 key={`video_${currentStory.user_id}_${currentIndex}_${isVisible}`}
@@ -170,7 +170,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
               />
             )}
 
-            {/* Tap & Hold Interaction Zones */}
+            }
             <View style={styles.interactionLayer}>
               <Pressable 
                 style={styles.leftTapZone} 
@@ -186,14 +186,14 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
               />
             </View>
 
-            {/* Smooth Top Gradient for Text Legibility */}
+            }
             <LinearGradient
               colors={['rgba(0, 0, 0, 0.7)', 'transparent']}
               style={styles.topGradient}
               pointerEvents="none"
             />
 
-            {/* Structured Top Header Overlay */}
+            }
             <SafeAreaView style={styles.headerContainer} pointerEvents="none">
               <View style={styles.progressContainer}>
                 {stories.map((_, index) => {
@@ -217,7 +217,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                 })}
               </View>
 
-              {/* Advanced Metadata Context */}
+              }
               <View style={styles.metadataLayout}>
                 <View style={styles.userInfoBlock}>
                   <View style={styles.avatar}>
@@ -225,16 +225,16 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                   </View>
                   <View>
                     <View style={styles.usernameRow}>
-                      {currentStory.activeBadge && (() => {
+                      {currentStory.activeBadge ? (() => {
                         const badgeObj = ACHIEVEMENTS.find(a => a.id === currentStory.activeBadge);
                         // @ts-ignore
                         const BadgeIcon = badgeObj ? Icons[badgeObj.iconName] : null;
                         if (!BadgeIcon) return null;
                         return <BadgeIcon color={badgeObj!.glowColor} size={14} style={{ marginRight: 6 }} />;
-                      })()}
+                      })() : null}
                       <Text style={styles.usernameText}>{username}</Text>
                     </View>
-                    {venueName && <Text style={styles.venueName}>{venueName}</Text>}
+                    {venueName ? <Text style={styles.venueName}>{venueName}</Text> : null}
                   </View>
                 </View>
                 
@@ -244,16 +244,16 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
               </View>
             </SafeAreaView>
 
-            {/* Bottom Controls */}
+            }
             <View style={styles.controlsRow}>
-              {canAddStory && (
+              {canAddStory ? (
                 <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
                   <Plus color="#000" size={24} />
                 </Pressable>
-              )}
+              ) : null}
             </View>
 
-            {/* Global Closing Top Right Corner */}
+            }
             <Pressable style={styles.closeButtonAbsolute} onPress={onClose}>
               <X color="#FFF" size={28} />
             </Pressable>
