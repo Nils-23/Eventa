@@ -162,7 +162,7 @@ export const ProfileScreen = () => {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Preferences</Text>
-          <TouchableOpacity style={styles.row}>
+          <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('Settings' as never)}>
             <View style={styles.rowItemLeft}>
                <Settings color="#FFFFFF" size={20} />
                <Text style={styles.rowText}>Account Settings</Text>

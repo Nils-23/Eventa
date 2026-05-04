@@ -28,6 +28,10 @@
               "com.googleusercontent.apps.653907647305-jfh53up4abu5giju93624umbbpg07ed6"
             ]
           }
+        ],
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
         ]
       },
       "config": {
@@ -55,6 +59,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "expo-location",
       "@react-native-google-signin/google-signin",
       [
         "react-native-maps",

@@ -41,6 +41,14 @@ interface VenueChatProps {
 
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
+const CHAT_SUGGESTIONS = [
+  "What's the vibe? 🔥",
+  "Is it packed tonight? 🕺",
+  "Who's already here? 👀",
+  "How's the music? 🎵",
+  "Drinks flowing? 🍻"
+];
+
 export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueId, venueName }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -211,6 +219,26 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             />
           )}
 
+          {messages.length === 0 && !inputText.trim() && !isLoading && (
+            <View style={styles.suggestionsContainer}>
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="always"
+                data={CHAT_SUGGESTIONS}
+                keyExtractor={(item) => item}
+                renderItem={({ item }) => (
+                  <TouchableOpacity 
+                    style={styles.suggestionChip}
+                    onPress={() => setInputText(item)}
+                  >
+                    <Text style={styles.suggestionText}>{item}</Text>
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+          )}
+
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.textInput}
@@ -338,6 +366,24 @@ const styles = StyleSheet.create({
   },
   otherTimeText: {
     color: '#888',
+  },
+  suggestionsContainer: {
+    paddingLeft: 16,
+    paddingBottom: 12,
+  },
+  suggestionChip: {
+    backgroundColor: '#1E1E1E',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  suggestionText: {
+    color: '#00FFCC',
+    fontSize: 14,
+    fontWeight: '500',
   },
   inputContainer: {
     flexDirection: 'row',

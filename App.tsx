@@ -7,6 +7,7 @@ import { toastConfig } from './config/toast';
 import { MainTabs } from './navigation/MainTabs';
 import { LoginScreen } from './screens/LoginScreen';
 import { AchievementsScreen } from './screens/AchievementsScreen';
+import { SettingsScreen } from './screens/SettingsScreen';
 import { useAuth } from './hooks/useAuth';
 import { useAppStore } from './hooks/useAppStore';
 
@@ -43,6 +44,7 @@ export default function App() {
             <>
               <Stack.Screen name="Main" component={MainTabs} />
               <Stack.Screen name="Achievements" component={AchievementsScreen} />
+              <Stack.Screen name="Settings" component={SettingsScreen} />
             </>
           )}
         </Stack.Navigator>

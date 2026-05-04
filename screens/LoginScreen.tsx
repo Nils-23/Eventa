@@ -23,7 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 export const LoginScreen = () => {
   const [isLoading, setIsLoading] = useState<string | null>(null);
-  
+
   // Phone Auth State
   const [showPhoneInput, setShowPhoneInput] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -119,7 +119,7 @@ export const LoginScreen = () => {
         firebaseConfig={app.options}
         attemptInvisibleVerification={true}
       />
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.content}
       >
@@ -130,8 +130,8 @@ export const LoginScreen = () => {
 
         <View style={styles.actionContainer}>
           {Platform.OS === 'ios' && (
-            <TouchableOpacity 
-              style={[styles.providerButton, styles.appleButton]} 
+            <TouchableOpacity
+              style={[styles.providerButton, styles.appleButton]}
               onPress={onApplePress}
               disabled={!!isLoading}
             >
@@ -146,8 +146,8 @@ export const LoginScreen = () => {
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity 
-            style={[styles.providerButton, styles.googleButton]} 
+          <TouchableOpacity
+            style={[styles.providerButton, styles.googleButton]}
             onPress={onGooglePress}
             disabled={!!isLoading}
           >
@@ -156,7 +156,7 @@ export const LoginScreen = () => {
             ) : (
               <>
                 {/* Simplified "G" icon standard placeholder. Use SVG in production */}
-                <Text style={[styles.icon, {fontWeight: 'bold', fontSize: 20, color: '#DB4437'}]}>G</Text>
+                <Text style={[styles.icon, { fontWeight: 'bold', fontSize: 20, color: '#DB4437' }]}>G</Text>
                 <Text style={styles.googleButtonText}>Continue with Google</Text>
               </>
             )}
@@ -187,7 +187,7 @@ export const LoginScreen = () => {
                     autoFocus
                     placeholderTextColor="#999"
                   />
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={styles.phoneSubmitButton}
                     onPress={onVerifyOTPPress}
                     disabled={!!isLoading}
@@ -201,14 +201,14 @@ export const LoginScreen = () => {
               <View style={styles.phoneInputContainer}>
                 <TextInput
                   style={styles.phoneInput}
-                  placeholder="+1 234 567 8900"
+                  placeholder="+254712345678"
                   keyboardType="phone-pad"
                   value={phoneNumber}
                   onChangeText={setPhoneNumber}
                   autoFocus
                   placeholderTextColor="#999"
                 />
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.phoneSubmitButton}
                   onPress={onSendOTPPress}
                   disabled={!!isLoading}
@@ -218,8 +218,8 @@ export const LoginScreen = () => {
               </View>
             )
           ) : (
-            <TouchableOpacity 
-              style={[styles.providerButton, styles.phoneButtonOutline]} 
+            <TouchableOpacity
+              style={[styles.providerButton, styles.phoneButtonOutline]}
               onPress={onPhonePress}
               disabled={!!isLoading}
             >
