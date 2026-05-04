@@ -34,6 +34,12 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
 
 // Helper: Send Expo Push Notification
 async function sendPushNotification(expoPushToken, title, body) {
+  // Skip mock/simulator tokens — they are never valid on Expo's servers
+  if (!expoPushToken || expoPushToken.includes('Simulator-Mock-Token')) {
+    console.log(`Skipping mock token: ${expoPushToken}`);
+    return;
+  }
+
   const message = {
     to: expoPushToken,
     sound: 'default',
@@ -53,7 +59,12 @@ async function sendPushNotification(expoPushToken, title, body) {
       body: JSON.stringify(message),
     });
     const receipt = await response.json();
-    console.log(`Push notification sent to ${expoPushToken}`, receipt);
+    // Only log errors, not every successful dispatch
+    if (receipt?.data?.status === 'error') {
+      console.warn(`Push failed for ${expoPushToken}:`, receipt.data.message);
+    } else {
+      console.log(`✅ Push sent to ${expoPushToken}`);
+    }
   } catch (error) {
     console.error(`Error sending push notification: ${error}`);
   }
@@ -111,21 +122,16 @@ async function startNotificationService() {
           for (const userDoc of usersSnap.docs) {
             const userData = userDoc.data();
             const token = userData.expoPushToken;
-            
-            // We only notify them if they are nearby!
-            const userLastLoc = realLocs[userDoc.id];
-            if (userLastLoc) {
-              const distance = getDistanceInMeters(venue.latitude, venue.longitude, userLastLoc.latitude, userLastLoc.longitude);
-              
-              if (distance <= NOTIFY_RADIUS_METERS) {
-                await sendPushNotification(
-                  token, 
-                  `🔥 Crazy vibes at ${venue.name} right now!`,
-                  `Over ${userCount} people are there. Check it out!`
-                );
-                dispatchedCount++;
-              }
-            }
+            if (!token) continue;
+
+            // DEV MODE: notify all users with a valid token regardless of location.
+            // TODO: restore distance check (NOTIFY_RADIUS_METERS) before production.
+            await sendPushNotification(
+              token,
+              `🔥 Crazy vibes at ${venue.name} right now!`,
+              `Over ${userCount} people are there. Check it out!`
+            );
+            dispatchedCount++;
           }
           console.log(`Dispatched ${dispatchedCount} pushes for ${venue.name}.`);
           
