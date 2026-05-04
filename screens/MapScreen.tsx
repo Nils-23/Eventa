@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Circle, Marker, Heatmap, Region } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Circle, Marker, Region } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X } from 'lucide-react-native';
 import { useHeatmap } from '../hooks/useHeatmap';
@@ -222,102 +222,47 @@ export const MapScreen = () => {
   const [showHeatmapOverlay, setShowHeatmapOverlay] = useState(true);
   const [showRawPoints, setShowRawPoints] = useState(false);
 
-  // ─── Heatmap dynamic config ─────────────────────────────────────────────
-  const [currentZoom, setCurrentZoom] = useState(16);
+  // ─── Region tracking (for future use) ──────────────────────────────────
+  const [region, setRegion] = useState<Region | null>(null);
+  const handleRegionChange = (newRegion: Region) => setRegion(newRegion);
 
-  // Fetch true camera to avoid 3D pitch distortion messing with region.latitudeDelta
-  const handleRegionChange = async () => {
-    try {
-      if (mapRef.current) {
-        const cam = await mapRef.current.getCamera();
-        if (cam && cam.zoom !== undefined) {
-          setCurrentZoom(cam.zoom);
-        }
+  // ─── Heat gradient ────────────────────────────────────────────────────────────
+  // Color stops matching the reference heatmap image:
+  // outer edge (transparent) → cyan → green → yellow → orange → red → dark maroon (core)
+  // t=0 is the outermost ring, t=1 is the center core.
+  const HEAT_STOPS = [
+    { t: 0.00, r: 0,   g: 220, b: 255, a: 0.00 },
+    { t: 0.10, r: 0,   g: 210, b: 255, a: 0.09 },
+    { t: 0.22, r: 0,   g: 255, b: 160, a: 0.20 },
+    { t: 0.35, r: 50,  g: 255, b: 50,  a: 0.30 },
+    { t: 0.48, r: 180, g: 255, b: 0,   a: 0.40 },
+    { t: 0.58, r: 255, g: 230, b: 0,   a: 0.50 },
+    { t: 0.67, r: 255, g: 140, b: 0,   a: 0.58 },
+    { t: 0.76, r: 255, g: 50,  b: 0,   a: 0.66 },
+    { t: 0.85, r: 220, g: 0,   b: 0,   a: 0.74 },
+    { t: 0.92, r: 165, g: 0,   b: 0,   a: 0.80 },
+    { t: 1.00, r: 110, g: 0,   b: 0,   a: 0.86 },
+  ];
+
+  // Linear interpolation between gradient stops
+  const interpolateHeat = (t: number): [number, number, number, number] => {
+    const stops = HEAT_STOPS;
+    if (t <= stops[0].t) return [stops[0].r, stops[0].g, stops[0].b, stops[0].a];
+    const last = stops[stops.length - 1];
+    if (t >= last.t)    return [last.r, last.g, last.b, last.a];
+    for (let i = 0; i < stops.length - 1; i++) {
+      if (t >= stops[i].t && t <= stops[i + 1].t) {
+        const f = (t - stops[i].t) / (stops[i + 1].t - stops[i].t);
+        return [
+          Math.round(stops[i].r + f * (stops[i + 1].r - stops[i].r)),
+          Math.round(stops[i].g + f * (stops[i + 1].g - stops[i].g)),
+          Math.round(stops[i].b + f * (stops[i + 1].b - stops[i].b)),
+          parseFloat((stops[i].a + f * (stops[i + 1].a - stops[i].a)).toFixed(3)),
+        ];
       }
-    } catch (e) {
-      // ignore
     }
+    return [last.r, last.g, last.b, last.a];
   };
-
-  // We now use blooming to create large blobs, so the native radius is always maxed out at 50
-  // to ensure smooth blending between the bloomed points.
-  const heatmapRadius = 50;
-
-  // Raise opacity as zoom increases so venue glow never fades out
-  const heatmapOpacity = useMemo(() => {
-    const base = 0.8;
-    const boost = Math.max(0, (currentZoom - 13) * 0.03);
-    return Math.min(1.0, base + boost);
-  }, [currentZoom]);
-
-  // Full heat-scale gradient matching classic Snapchat/heatmap look:
-  // transparent -> cyan/blue -> green -> yellow -> red core
-  const HEATMAP_GRADIENT = useMemo(() => ({
-    colors: [
-      'transparent',
-      'rgba(0, 220, 255, 0.4)', // cyan/light blue (wide outer edge)
-      'rgba(0, 255, 50, 0.7)',  // green
-      'rgba(255, 255, 0, 0.9)', // yellow
-      'rgba(255, 100, 0, 1.0)', // orange
-      'rgba(255, 0, 0, 1.0)',   // strong red core
-    ],
-    startPoints: [0.0, 0.1, 0.3, 0.6, 0.8, 1.0],
-    colorMapSize: 512,
-  }), []);
-
-  // ─── BLOOM CLUSTERING ALGORITHM ──────────────────────────────────────────
-  // React Native Maps caps the heatmap radius at 50 screen pixels.
-  // To create a massive Snapchat-style glow that stays smooth and never breaks into dots,
-  // we dynamically generate a circular grid of points ("bloom") around the venue.
-  // The algorithm calculates the exact map degrees needed to maintain a constant spacing
-  // of 20 screen pixels between points at ANY zoom level.
-  const bloomedHeatPoints = useMemo(() => {
-    if (heatPoints.length === 0) return heatPoints;
-
-    // Exact pixels per degree calculation for Google Maps Web Mercator projection.
-    const pixelsPerDegree = (256 * Math.pow(2, currentZoom)) / 360;
-    
-    // Scale the blob size dynamically based on zoom level:
-    // Zoom 10 (zoomed out) -> 40px spread (+50px native blur) = 90px radius blob
-    // Zoom 18 (zoomed in)  -> 120px spread (+50px native blur) = 170px radius blob
-    const visualRadiusPixels = Math.max(40, Math.min(120, 40 + (currentZoom - 10) * 10));
-    const spacingPixels = 20; // 20px spacing perfectly blends the 50px blur radii together
-
-    const targetRadiusDeg = visualRadiusPixels / pixelsPerDegree;
-    const spacingDeg = spacingPixels / pixelsPerDegree;
-
-    const result: HeatPoint[] = [];
-
-    for (const hp of heatPoints) {
-      // Add center core point
-      result.push({ ...hp, weight: hp.weight });
-
-      let currentRadius = spacingDeg;
-      
-      while (currentRadius <= targetRadiusDeg) {
-        // Calculate how many points fit in this ring's circumference
-        const numPoints = Math.max(4, Math.floor((2 * Math.PI * currentRadius) / spacingDeg));
-        
-        // Intensity fades out smoothly toward the edge (Gaussian-like curve)
-        const weightFactor = Math.pow(1 - (currentRadius / targetRadiusDeg), 1.5);
-        const ringWeight = hp.weight * weightFactor;
-
-        // Map projection adjustment to keep circles perfectly round at any latitude
-        const lngAdjust = Math.cos(hp.latitude * (Math.PI / 180));
-
-        for (let i = 0; i < numPoints; i++) {
-          const angle = (i / numPoints) * Math.PI * 2;
-          result.push({
-            latitude: hp.latitude + Math.cos(angle) * currentRadius,
-            longitude: hp.longitude + (Math.sin(angle) * currentRadius) / lngAdjust,
-            weight: ringWeight
-          });
-        }
-        currentRadius += spacingDeg;
-      }
-    }
-    return result;
-  }, [heatPoints, currentZoom]);
 
   // Default to a lively city area for now
   const [camera, setCamera] = useState({
@@ -592,26 +537,36 @@ export const MapScreen = () => {
         maxZoomLevel={20}
         onRegionChangeComplete={handleRegionChange}
       >
-        {/* Native KDE Heatmap Layer */}
-        {showHeatmapOverlay && bloomedHeatPoints.length > 0 ? (
-          <Heatmap
-            points={bloomedHeatPoints}
-            opacity={heatmapOpacity}
-            radius={heatmapRadius}
-            gradient={HEATMAP_GRADIENT}
-          />
-        ) : null}
-        
-        {/* Hardware Debug Layer */}
-        {showRawPoints && bloomedHeatPoints.map((point, index) => (
-          <Circle
-            key={`raw_${index}`}
-            center={{ latitude: point.latitude, longitude: point.longitude }}
-            radius={2}
-            fillColor="rgba(255, 0, 0, 0.8)"
-            strokeWidth={0}
-          />
-        ))}
+        {/* ── Venue Heat Circles ───────────────────────────────────────────
+             12 concentric circles per venue, rendered outer → inner so the
+             hot core always sits on top. Low individual opacity per layer
+             causes natural alpha-blending that mimics edge blur.          */}
+        {showHeatmapOverlay && heatPoints.map((hp, idx) => {
+          const center   = { latitude: hp.latitude, longitude: hp.longitude };
+          const N        = 12;
+          // Blob radius scales with user density
+          const maxR     = Math.round(150 + hp.weight * 150); // 150–300 m (outer edge)
+          const coreR    = Math.round(12  + hp.weight * 18);  //  12–30  m (hot core)
+          const circles  = Array.from({ length: N }, (_, i) => {
+            const t      = i / (N - 1);                        // 0 = outer, 1 = core
+            const radius = Math.round(maxR + t * (coreR - maxR));
+            const [r, g, b, a] = interpolateHeat(t);
+            return { radius, r, g, b, a, key: i };
+          });
+          return (
+            <React.Fragment key={`heat_${idx}`}>
+              {circles.map(({ radius, r, g, b, a, key }) => (
+                <Circle
+                  key={key}
+                  center={center}
+                  radius={radius}
+                  fillColor={`rgba(${r},${g},${b},${a})`}
+                  strokeWidth={0}
+                />
+              ))}
+            </React.Fragment>
+          );
+        })}
         {/* Venue markers */}
         {venues.map((venue) => {
           const venueStories = stories.filter(s => s.venue_id === venue.id);
@@ -655,7 +610,7 @@ export const MapScreen = () => {
           <TouchableOpacity onPress={() => setShowRawPoints(!showRawPoints)}>
             <Text style={styles.debugText}>[ {showRawPoints ? 'X' : ' '} ] Expose Raw Firebase Nodes</Text>
           </TouchableOpacity>
-          <Text style={styles.debugText}>Cached Frame Nodes: {bloomedHeatPoints.length}</Text>
+          <Text style={styles.debugText}>Active Heat Venues: {heatPoints.length}</Text>
         </View>
       )}
 

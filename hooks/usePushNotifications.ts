@@ -64,8 +64,8 @@ async function registerForPushNotificationsAsync() {
   }
 
   if (!Device.isDevice) {
-    console.log('Must use physical device for real Push Notifications. Using mock token for Simulator.');
-    return 'ExponentPushToken[Simulator-Mock-Token]';
+    console.log('Running on simulator — push notifications not available. Token will not be saved.');
+    return undefined; // never save a mock token to Firestore
   }
 
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -89,8 +89,14 @@ async function registerForPushNotificationsAsync() {
         projectId ? { projectId } : undefined
       )
     ).data;
-  } catch (error) {
-    console.error('Error fetching Expo Push Token:', error);
+  } catch (error: any) {
+    // On free Apple Developer accounts, aps-environment entitlement is not available.
+    // Push notifications will be unavailable but the app functions normally.
+    if (error?.message?.includes('aps-environment')) {
+      console.log('Push notifications unavailable: requires a paid Apple Developer account.');
+    } else {
+      console.warn('Error fetching Expo Push Token:', error);
+    }
   }
 
   return token;

@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { ref, set } from 'firebase/database';
-import Toast from 'react-native-toast-message';
 import { realtimeDB } from '../services/firebase';
 import { useAppStore } from './useAppStore';
 
@@ -95,12 +94,11 @@ export const useLocationTracking = () => {
           }
         } else {
           // ── Foreground-only fallback ──────────────────────────────────────
-          Toast.show({
-            type: 'info',
-            text1: 'Background Tracking Disabled',
-            text2: 'Your heatmap contribution halts when app is minimised.',
-          });
-          
+          // Background permission not granted — watchPositionAsync still runs
+          // continuously while the app is open (including minimised on iOS until
+          // the OS suspends the process). No toast — this is expected behaviour.
+          console.log('[Location] Background permission not granted, using foreground watcher.');
+
           await Location.watchPositionAsync(
             { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 10 },
             (loc) => {
