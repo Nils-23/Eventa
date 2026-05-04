@@ -304,7 +304,17 @@ export const MapScreen = () => {
     (async () => {
       try {
         let { status } = await Location.getForegroundPermissionsAsync();
-        if (status !== 'granted') return;
+        
+        // If not granted, request it
+        if (status !== 'granted') {
+          const res = await Location.requestForegroundPermissionsAsync();
+          status = res.status;
+        }
+
+        if (status !== 'granted') {
+          console.warn('Location permission denied, cannot center map to user.');
+          return;
+        }
 
         let location = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
@@ -326,19 +336,31 @@ export const MapScreen = () => {
         // Auto refresh location every 15 seconds
         intervalId = setInterval(async () => {
           try {
+            // Check permission again in case it was revoked
+            const perm = await Location.getForegroundPermissionsAsync();
+            if (perm.status !== 'granted') {
+              clearInterval(intervalId);
+              return;
+            }
+
             let newLocation = await Location.getCurrentPositionAsync({
               accuracy: Location.Accuracy.Balanced,
             });
             if (isMounted) {
               setUserLocation(newLocation.coords);
             }
-          } catch (e) {
-            console.error("Error auto-refreshing location:", e);
+          } catch (e: any) {
+            // Graceful handling of permission errors without spamming the console
+            if (e?.message?.includes('permission')) {
+              clearInterval(intervalId);
+            } else {
+              console.error("Error auto-refreshing location:", e);
+            }
           }
         }, 15000);
 
       } catch (error) {
-        console.error("Error getting location: ", error);
+        console.warn("Could not start location tracking:", error);
       }
     })();
 
@@ -352,6 +374,17 @@ export const MapScreen = () => {
 
   const centerMap = async () => {
     try {
+      let { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        const res = await Location.requestForegroundPermissionsAsync();
+        status = res.status;
+      }
+
+      if (status !== 'granted') {
+        Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Please allow location access to center map.' });
+        return;
+      }
+
       let location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
@@ -366,7 +399,7 @@ export const MapScreen = () => {
         zoom: 16,
       }, { duration: 1500 });
     } catch (error) {
-      console.error("Error centering map:", error);
+      console.warn("Error centering map:", error);
     }
   };
 
