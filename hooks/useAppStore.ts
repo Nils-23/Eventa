@@ -11,6 +11,10 @@ interface AppState {
   setIsLoading: (isLoading: boolean) => void;
   selectedMapVenue: Venue | null;
   setSelectedMapVenue: (venue: Venue | null) => void;
+  isAdmin: boolean;
+  setIsAdmin: (isAdmin: boolean) => void;
+  isSimulationRunning: boolean;
+  setIsSimulationRunning: (isRunning: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -22,4 +26,8 @@ export const useAppStore = create<AppState>((set) => ({
   setIsLoading: (isLoading) => set({ isLoading }),
   selectedMapVenue: null,
   setSelectedMapVenue: (venue) => set({ selectedMapVenue: venue }),
+  isAdmin: false,
+  setIsAdmin: (isAdmin) => set({ isAdmin }),
+  isSimulationRunning: true,
+  setIsSimulationRunning: (isSimulationRunning) => set({ isSimulationRunning }),
 }));

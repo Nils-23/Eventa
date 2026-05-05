@@ -61,3 +61,27 @@ export const createStory = async (
 
   return docRef.id;
 };
+
+export const createSimulatedStory = async (
+  mediaUrl: string,
+  mediaType: 'image' | 'video',
+  venueId: string | null
+): Promise<string> => {
+  // Calculate expiration time (24 hours from now)
+  const expiresAtDate = new Date();
+  expiresAtDate.setHours(expiresAtDate.getHours() + 24);
+
+  const fakeUserId = `sim_admin_${Date.now()}`;
+
+  const docRef = await addDoc(collection(firestore, 'stories'), {
+    user_id: fakeUserId,
+    venue_id: venueId,
+    media_url: mediaUrl,
+    media_type: mediaType,
+    created_at: serverTimestamp(),
+    expires_at: expiresAtDate,
+    activeBadge: 'Admin'
+  });
+
+  return docRef.id;
+};

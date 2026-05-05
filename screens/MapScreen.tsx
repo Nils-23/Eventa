@@ -208,7 +208,7 @@ export const MapScreen = () => {
   const insets = useSafeAreaInsets();
   const { heatPoints } = useHeatmap();
   const { venues } = useVenues();
-  const { user, selectedMapVenue, setSelectedMapVenue } = useAppStore();
+  const { user, selectedMapVenue, setSelectedMapVenue, isAdmin } = useAppStore();
   const { stories } = useStories();
 
   const [userLocation, setUserLocation] = useState<Location.LocationObjectCoords | null>(null);
@@ -705,9 +705,11 @@ export const MapScreen = () => {
 
       <View style={[styles.controlsContainer, { bottom: insets.bottom + 120 }]}>
         {/* Debug Toggle Wrench */}
-        <TouchableOpacity style={styles.controlButton} onPress={() => setIsDebugMode(!isDebugMode)} activeOpacity={0.7}>
-          <Wrench color={isDebugMode ? "#FF00CC" : "#888"} size={20} />
-        </TouchableOpacity>
+        {isAdmin && (
+          <TouchableOpacity style={styles.controlButton} onPress={() => setIsDebugMode(!isDebugMode)} activeOpacity={0.7}>
+            <Wrench color={isDebugMode ? "#FF00CC" : "#888"} size={20} />
+          </TouchableOpacity>
+        )}
 
         <TouchableOpacity style={styles.controlButton} onPress={centerMap} activeOpacity={0.7}>
           <LocateFixed color="#00FFCC" size={20} />

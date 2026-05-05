@@ -8,8 +8,12 @@ import { MainTabs } from './navigation/MainTabs';
 import { LoginScreen } from './screens/LoginScreen';
 import { AchievementsScreen } from './screens/AchievementsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { AdminSimulationScreen } from './screens/AdminSimulationScreen';
+import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
 import { useAuth } from './hooks/useAuth';
 import { useAppStore } from './hooks/useAppStore';
+import { useNotificationEngine } from './hooks/useNotificationEngine';
+import { useSimulationEngine } from './hooks/useSimulationEngine';
 
 // Initialize Firebase (will be evaluated once)
 import './services/firebase';
@@ -19,6 +23,11 @@ const Stack = createNativeStackNavigator();
 export default function App() {
   // Bind Firebase auth listener to the app store
   useAuth();
+  
+  // Start serverless background engines
+  useNotificationEngine();
+  useSimulationEngine();
+
   const { user, isLoading } = useAppStore();
 
   if (isLoading) {
@@ -45,6 +54,8 @@ export default function App() {
               <Stack.Screen name="Main" component={MainTabs} />
               <Stack.Screen name="Achievements" component={AchievementsScreen} />
               <Stack.Screen name="Settings" component={SettingsScreen} />
+              <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+              <Stack.Screen name="AdminSimulation" component={AdminSimulationScreen} />
             </>
           )}
         </Stack.Navigator>

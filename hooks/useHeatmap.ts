@@ -14,6 +14,7 @@ interface RawLocation {
   longitude: number;
   timestamp: number;
   user_id: string;
+  venueId?: string;
 }
 
 interface RawVenue {
@@ -95,10 +96,13 @@ function computeVenueHeatPoints(
     if (!venue.latitude || !venue.longitude) continue;
 
     // Count users within the venue radius — locations are discarded after this
-    const userCount = activeLocs.filter(loc =>
-      haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude)
-        <= VENUE_RADIUS_METERS
-    ).length;
+    const userCount = activeLocs.filter(loc => {
+      if (loc.venueId) {
+        return loc.venueId === venue.id;
+      }
+      return haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude)
+        <= VENUE_RADIUS_METERS;
+    }).length;
 
     // Only render venues that have at least one active user
     if (userCount === 0) continue;
