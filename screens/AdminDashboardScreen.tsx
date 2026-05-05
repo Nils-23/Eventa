@@ -12,50 +12,6 @@ import { grantCertificationBadge, revokeCertificationBadge } from '../services/a
 export const AdminDashboardScreen = () => {
   const navigation = useNavigation<any>();
   const { isSimulationRunning, setIsSimulationRunning } = useAppStore();
-  const [isCertModalVisible, setIsCertModalVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [users, setUsers] = useState<any[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-
-  const fetchUsers = async () => {
-    setLoadingUsers(true);
-    try {
-      const querySnapshot = await getDocs(collection(firestore, 'users'));
-      const fetchedUsers = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
-      setUsers(fetchedUsers);
-    } catch (err) {
-      console.error('Error fetching users:', err);
-    } finally {
-      setLoadingUsers(false);
-    }
-  };
-
-  useEffect(() => {
-    if (isCertModalVisible) {
-      fetchUsers();
-    }
-  }, [isCertModalVisible]);
-
-  const handleToggleCertification = async (user: any) => {
-    const isCertified = user.unlockedAchievements?.includes('cert_1');
-    try {
-      if (isCertified) {
-        await revokeCertificationBadge(user.id);
-        Toast.show({ type: 'success', text1: 'Revoked', text2: `${user.username} is no longer certified.` });
-      } else {
-        await grantCertificationBadge(user.id);
-        Toast.show({ type: 'success', text1: 'Certified!', text2: `${user.username} has been granted the prestige badge.` });
-      }
-      // Refresh list to show updated status
-      fetchUsers();
-    } catch (error) {
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to update badge.' });
-    }
-  };
-
-  const filteredUsers = users.filter(u => 
-    u.username?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -109,7 +65,7 @@ export const AdminDashboardScreen = () => {
           {/* Certification / User Management */}
           <TouchableOpacity 
             style={styles.card} 
-            onPress={() => setIsCertModalVisible(true)}
+            onPress={() => navigation.navigate('AdminUsers')}
           >
             <View style={styles.iconContainer}>
               <BadgeCheck color="#FFD700" size={32} />
@@ -119,62 +75,6 @@ export const AdminDashboardScreen = () => {
           </TouchableOpacity>
         </View>
       </ScrollView>
-
-      {/* Certification Modal */}
-      <Modal visible={isCertModalVisible} animationType="slide" transparent={true}>
-        <SafeAreaView style={styles.fullModalOverlay}>
-          <View style={styles.fullModalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>User Certification</Text>
-              <TouchableOpacity onPress={() => setIsCertModalVisible(false)}>
-                <X color="#FFFFFF" size={24} />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.searchContainer}>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search users by username..."
-                placeholderTextColor="#666"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                autoCapitalize="none"
-              />
-            </View>
-
-            {loadingUsers ? (
-              <ActivityIndicator size="large" color="#FFD700" style={{ marginTop: 40 }} />
-            ) : (
-              <FlatList
-                data={filteredUsers}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={{ paddingBottom: 24 }}
-                renderItem={({ item }) => {
-                  const isCertified = item.unlockedAchievements?.includes('cert_1');
-                  return (
-                    <View style={styles.userRow}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Text style={styles.userRowName}>{item.username || 'Unknown'}</Text>
-                        {isCertified && <BadgeCheck color="#FFD700" size={16} style={{ marginLeft: 8 }} />}
-                      </View>
-                      
-                      <TouchableOpacity 
-                        style={[styles.toggleBtn, isCertified ? styles.revokeBtn : styles.grantBtn]} 
-                        onPress={() => handleToggleCertification(item)}
-                      >
-                        <Text style={styles.toggleBtnText}>
-                          {isCertified ? 'Revoke' : 'Grant'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  );
-                }}
-                ListEmptyComponent={<Text style={{ color: '#888', textAlign: 'center', marginTop: 40 }}>No users found.</Text>}
-              />
-            )}
-          </View>
-        </SafeAreaView>
-      </Modal>
     </SafeAreaView>
   );
 };
@@ -272,67 +172,5 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 14,
     lineHeight: 20,
-  },
-  fullModalOverlay: {
-    flex: 1,
-    backgroundColor: '#121212',
-  },
-  fullModalContent: {
-    flex: 1,
-    backgroundColor: '#1A1A1A',
-    padding: 24,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  modalTitle: {
-    color: '#FFD700',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  searchContainer: {
-    marginBottom: 16,
-  },
-  searchInput: {
-    backgroundColor: '#2A2A2A',
-    color: '#FFFFFF',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  userRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#222',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-  },
-  userRowName: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  toggleBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  grantBtn: {
-    backgroundColor: '#FFD700',
-  },
-  revokeBtn: {
-    backgroundColor: '#FF0055',
-  },
-  toggleBtnText: {
-    color: '#000',
-    fontWeight: '700',
-    fontSize: 14,
   },
 });

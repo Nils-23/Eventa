@@ -160,12 +160,10 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
 
     return (
       <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
-        {!isMe ? (
-          <View style={styles.usernameContainer}>
-            {BadgeIcon ? <BadgeIcon color={badgeObj!.glowColor} size={12} style={{ marginRight: 4 }} /> : null}
-            <Text style={styles.username}>{item.username}</Text>
-          </View>
-        ) : null}
+        <View style={[styles.usernameContainer, isMe ? { alignSelf: 'flex-end', marginRight: 4 } : { marginLeft: 4 }]}>
+          {BadgeIcon ? <BadgeIcon color={badgeObj!.glowColor} size={12} style={{ marginRight: 4 }} /> : null}
+          <Text style={styles.username}>{isMe ? 'You' : item.username}</Text>
+        </View>
         <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
           <Text style={styles.messageText}>{item.message}</Text>
           <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
