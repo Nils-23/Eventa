@@ -10,6 +10,7 @@ import { AchievementsScreen } from './screens/AchievementsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { AdminSimulationScreen } from './screens/AdminSimulationScreen';
 import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
+import { AdminUsersScreen } from './screens/AdminUsersScreen';
 import { useAuth } from './hooks/useAuth';
 import { useAppStore } from './hooks/useAppStore';
 import { useNotificationEngine } from './hooks/useNotificationEngine';
@@ -56,6 +57,7 @@ export default function App() {
               <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
               <Stack.Screen name="AdminSimulation" component={AdminSimulationScreen} />
+              <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
             </>
           )}
         </Stack.Navigator>

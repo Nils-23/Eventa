@@ -110,7 +110,14 @@ export const useSimulationEngine = () => {
   useEffect(() => {
     if (!isSimulationRunning || !isAdmin) {
       // Clean up local reference and wipe RTDB when stopped
-      set(ref(realtimeDB, 'simulated_locations'), null).catch(console.error);
+      if (simulatedUsersRef.current.length > 0) {
+        import('firebase/auth').then(({ getAuth }) => {
+          const auth = getAuth();
+          if (auth.currentUser) {
+            set(ref(realtimeDB, 'simulated_locations'), null).catch(console.error);
+          }
+        });
+      }
       simulatedUsersRef.current = [];
       return;
     }
