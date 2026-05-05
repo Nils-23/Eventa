@@ -9,6 +9,7 @@ export interface Venue {
   latitude: number;
   longitude: number;
   description: string;
+  simulatedUsersCount?: number;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────

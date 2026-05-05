@@ -36,6 +36,9 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'soc_1', name: 'Ice Breaker', description: 'Send your first chat message.', category: 'Social', iconName: 'MessageCircle', glowColor: '#00FFCC', target: 1, statKey: 'chats' },
   { id: 'soc_10', name: 'Chatterbox', description: 'Send 10 messages in live chats.', category: 'Social', iconName: 'MessageSquare', glowColor: '#4169E1', target: 10, statKey: 'chats' },
   { id: 'soc_50', name: 'Socialite', description: 'Send 50 messages in live chats.', category: 'Social', iconName: 'Users', glowColor: '#FF00CC', target: 50, statKey: 'chats' },
+
+  // Admin / Special
+  { id: 'cert_1', name: 'Eventa Certified', description: 'Official certification of prestige. Recognized by Eventa.', category: 'Personality', iconName: 'BadgeCheck', glowColor: '#FFD700', target: 999999, statKey: 'hotstreaks' },
 ];
 
 /**
@@ -86,5 +89,48 @@ export const checkAndUnlockAchievements = async (userId: string) => {
 
   } catch (error) {
     console.error('[Achievements] Error checking achievements:', error);
+  }
+};
+
+/**
+ * Admin function to manually grant the prestige certification badge to a user.
+ */
+export const grantCertificationBadge = async (userId: string) => {
+  try {
+    const userDocRef = doc(firestore, 'users', userId);
+    await updateDoc(userDocRef, {
+      unlockedAchievements: arrayUnion('cert_1'),
+      activeBadge: 'cert_1'
+    });
+    console.log(`[Admin] Successfully certified user ${userId}`);
+  } catch (error) {
+    console.error('[Admin] Error granting certification badge:', error);
+    throw error;
+  }
+};
+
+/**
+ * Admin function to manually revoke the prestige certification badge from a user.
+ */
+export const revokeCertificationBadge = async (userId: string) => {
+  try {
+    const userDocRef = doc(firestore, 'users', userId);
+    const docSnap = await getDoc(userDocRef);
+    if (!docSnap.exists()) return;
+    
+    const data = docSnap.data();
+    let unlockedAchievements = data.unlockedAchievements || [];
+    unlockedAchievements = unlockedAchievements.filter((id: string) => id !== 'cert_1');
+    
+    const updates: any = { unlockedAchievements };
+    if (data.activeBadge === 'cert_1') {
+      updates.activeBadge = null;
+    }
+    
+    await updateDoc(userDocRef, updates);
+    console.log(`[Admin] Successfully revoked certification from user ${userId}`);
+  } catch (error) {
+    console.error('[Admin] Error revoking certification badge:', error);
+    throw error;
   }
 };

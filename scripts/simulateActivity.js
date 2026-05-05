@@ -10,13 +10,12 @@ admin.initializeApp({
 const db = admin.firestore();
 const rtdb = admin.database();
 
-const USERS_PER_VENUE = 80;
 const MAX_RADIUS_METERS = 200; // Roam within 200m
 const UPDATE_INTERVAL_MS = 15000; // Update every 15 seconds
+const DEFAULT_USERS_PER_VENUE = 80;
 
 // Helper to calculate a new location within distance
 function offsetLocation(lat, lon, maxDistanceMeters) {
-  // 1 degree of latitude is ~111,111 meters
   const radiusInDegrees = maxDistanceMeters / 111111;
   const u = Math.random();
   const v = Math.random();
@@ -25,7 +24,6 @@ function offsetLocation(lat, lon, maxDistanceMeters) {
   const x = w * Math.cos(t);
   const y = w * Math.sin(t);
   
-  // Adjust longitude based on latitude
   const newLat = lat + x;
   const newLon = lon + y / Math.cos(lat * Math.PI / 180);
   
@@ -34,13 +32,10 @@ function offsetLocation(lat, lon, maxDistanceMeters) {
 
 // Helper to move a bit towards target or randomly
 function moveLocation(currentLat, currentLon, centerLat, centerLon, stepMeters) {
-  // Move randomly by stepMeters
   let { latitude, longitude } = offsetLocation(currentLat, currentLon, stepMeters);
   
-  // Keep it within max radius
   const distance = getDistanceInMeters(latitude, longitude, centerLat, centerLon);
   if (distance > MAX_RADIUS_METERS) {
-     // Pull back towards center
      return {
        latitude: (latitude + centerLat) / 2,
        longitude: (longitude + centerLon) / 2
@@ -62,25 +57,18 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
 
 let simulatedUsers = [];
 
-async function startSimulation() {
-  console.log('Loading venues from Firestore...');
-  const snapshot = await db.collection('venues').get();
-  
-  if (snapshot.empty) {
-    console.log('No venues found. Make sure to run seedVenues.js first.');
-    process.exit(1);
-  }
+function syncVenueUsers(venue, targetCount) {
+  // Count how many users we currently have for this venue
+  const currentUsers = simulatedUsers.filter(u => u.venueId === venue.id);
+  const currentCount = currentUsers.length;
 
-  const venues = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  console.log(`Loaded ${venues.length} venues.`);
-
-  // Generate initial fake users
-  venues.forEach(venue => {
-    for (let i = 0; i < USERS_PER_VENUE; i++) {
-      const id = `sim_${venue.id}_${i}`;
+  if (currentCount < targetCount) {
+    // Need to spawn more
+    const toSpawn = targetCount - currentCount;
+    for (let i = 0; i < toSpawn; i++) {
       const loc = offsetLocation(venue.latitude, venue.longitude, MAX_RADIUS_METERS / 2);
       simulatedUsers.push({
-        user_id: id,
+        user_id: `sim_${venue.id}_${Date.now()}_${i}`,
         venueId: venue.id,
         centerLat: venue.latitude,
         centerLon: venue.longitude,
@@ -89,12 +77,52 @@ async function startSimulation() {
         timestamp: Date.now()
       });
     }
-  });
+    console.log(`[+] Spawned ${toSpawn} new users for venue ${venue.name}. Total: ${targetCount}`);
+  } else if (currentCount > targetCount) {
+    // Need to despawn
+    const toRemove = currentCount - targetCount;
+    
+    // Grab the ones we want to remove
+    const despawnList = currentUsers.slice(0, toRemove).map(u => u.user_id);
+    
+    // Remove from active array
+    simulatedUsers = simulatedUsers.filter(u => !despawnList.includes(u.user_id));
+    
+    // Remove from RTDB
+    const locationsRef = rtdb.ref('simulated_locations');
+    const updates = {};
+    despawnList.forEach(uid => {
+      updates[uid] = null;
+    });
+    
+    locationsRef.update(updates).catch(console.error);
+    console.log(`[-] Despawned ${toRemove} users from venue ${venue.name}. Total: ${targetCount}`);
+  }
+}
 
-  console.log(`Spawned ${simulatedUsers.length} simulated users. Starting simulation loop...`);
+async function startSimulation() {
+  console.log('Starting dynamic simulation server...');
+  
+  // Listen to changes in venues dynamically
+  db.collection('venues').onSnapshot((snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+      const venue = { id: change.doc.id, ...change.doc.data() };
+      const targetCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : DEFAULT_USERS_PER_VENUE;
+
+      if (change.type === 'added' || change.type === 'modified') {
+        syncVenueUsers(venue, targetCount);
+      }
+      
+      if (change.type === 'removed') {
+        syncVenueUsers(venue, 0); // Remove all users for this venue
+      }
+    });
+  });
 
   // Run update loop immediately and then every UPDATE_INTERVAL_MS
   const tick = () => {
+    if (simulatedUsers.length === 0) return;
+    
     const locationsRef = rtdb.ref('simulated_locations');
     const updates = {};
     const now = Date.now();
@@ -114,12 +142,11 @@ async function startSimulation() {
       };
     });
 
-    locationsRef.set(updates)
+    locationsRef.update(updates)
       .then(() => console.log(`[${new Date().toISOString()}] Updated ${simulatedUsers.length} simulated locations.`))
       .catch(err => console.error('Failed to update RTDB:', err));
   };
 
-  tick();
   setInterval(tick, UPDATE_INTERVAL_MS);
 }
 

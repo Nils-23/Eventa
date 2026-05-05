@@ -14,8 +14,17 @@ export const fetchUsername = async (userId: string): Promise<string> => {
     return usernameCache[userId];
   }
 
+const NIGHTLIFE_NAMES = [
+  'NightOwl', 'PartyAnimal', 'VibeCheck', 'Raver', 'ClubHopper', 
+  'MidnightRider', 'NeonSoul', 'BassDrop', 'GrooveMaster', 'MoonlightViber',
+  'StarGazer', 'RhythmJunkie', 'VibeChaser', 'BeatRider'
+];
+
   if (userId.startsWith('sim_')) {
-    const simName = `SimUser_${userId.split('_').pop()}`;
+    const numStr = userId.split('_').pop() || '0';
+    const number = parseInt(numStr, 10) || Math.floor(Math.random() * 9999);
+    const baseName = NIGHTLIFE_NAMES[number % NIGHTLIFE_NAMES.length];
+    const simName = `${baseName}${number}`;
     usernameCache[userId] = simName;
     return simName;
   }

@@ -16,10 +16,14 @@ GoogleSignin.configure({
  * Generates a random username based on a Vibe
  */
 export const generateRandomUsername = (): string => {
-  const prefixes = ['VibeHunter', 'EventGoer', 'PartyStarter', 'NightOwl', 'DayTripper'];
+  const prefixes = [
+    'NightOwl', 'PartyAnimal', 'VibeCheck', 'Raver', 'ClubHopper', 
+    'MidnightRider', 'NeonSoul', 'BassDrop', 'GrooveMaster', 'MoonlightViber',
+    'StarGazer', 'RhythmJunkie', 'VibeChaser', 'BeatRider'
+  ];
   const numbers = Math.floor(1000 + Math.random() * 9000);
   const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-  return `${prefix}_${numbers}`;
+  return `${prefix}${numbers}`;
 };
 
 /**

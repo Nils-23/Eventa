@@ -25,6 +25,7 @@ interface RawLocation {
   longitude: number;
   timestamp: number;
   user_id: string;
+  venueId?: string;
 }
 
 interface RawVenue {
@@ -94,11 +95,15 @@ function computeDensity(
 
   const result: VenueWithDensity[] = venues.map((venue) => {
     const userCount = activeLocations.filter(
-      (loc) =>
-        haversineMeters(
+      (loc) => {
+        if (loc.venueId) {
+          return loc.venueId === venue.id;
+        }
+        return haversineMeters(
           venue.latitude, venue.longitude,
           loc.latitude, loc.longitude,
-        ) <= VENUE_RADIUS_METERS,
+        ) <= VENUE_RADIUS_METERS;
+      }
     ).length;
 
     const distanceKm =

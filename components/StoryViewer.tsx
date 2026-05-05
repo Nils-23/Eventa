@@ -149,7 +149,6 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
           </View>
         ) : currentStory ? (
           <>
-            }
             {currentStory.media_type === 'video' ? (
               <Video
                 key={`video_${currentStory.user_id}_${currentIndex}_${isVisible}`}
@@ -170,7 +169,6 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
               />
             )}
 
-            }
             <View style={styles.interactionLayer}>
               <Pressable 
                 style={styles.leftTapZone} 
@@ -186,14 +184,12 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
               />
             </View>
 
-            }
             <LinearGradient
               colors={['rgba(0, 0, 0, 0.7)', 'transparent']}
               style={styles.topGradient}
               pointerEvents="none"
             />
 
-            }
             <SafeAreaView style={styles.headerContainer} pointerEvents="none">
               <View style={styles.progressContainer}>
                 {stories.map((_, index) => {
@@ -217,7 +213,6 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                 })}
               </View>
 
-              }
               <View style={styles.metadataLayout}>
                 <View style={styles.userInfoBlock}>
                   <View style={styles.avatar}>
@@ -244,7 +239,6 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
               </View>
             </SafeAreaView>
 
-            }
             <View style={styles.controlsRow}>
               {canAddStory ? (
                 <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
@@ -253,7 +247,6 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
               ) : null}
             </View>
 
-            }
             <Pressable style={styles.closeButtonAbsolute} onPress={onClose}>
               <X color="#FFF" size={28} />
             </Pressable>

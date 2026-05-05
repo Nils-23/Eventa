@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Linking, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Trash2, Flag } from 'lucide-react-native';
+import { ArrowLeft, Trash2, Flag, Users } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { auth, firestore } from '../services/firebase';
 import { doc, deleteDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
+import { useAppStore } from '../hooks/useAppStore';
 
 export const SettingsScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const [isDeleting, setIsDeleting] = useState(false);
+  const { isAdmin } = useAppStore();
 
   const handleReport = async () => {
     const url = 'mailto:support@eventa.to?subject=Report%20Issue&body=Please%20describe%20your%20issue%20here...';
@@ -84,6 +86,18 @@ export const SettingsScreen = () => {
             <Text style={styles.rowText}>Report an Issue</Text>
           </View>
         </TouchableOpacity>
+
+        {isAdmin && (
+          <TouchableOpacity 
+            style={styles.row} 
+            onPress={() => navigation.navigate('AdminDashboard')}
+          >
+            <View style={styles.rowItemLeft}>
+              <Users color="#FF00CC" size={20} />
+              <Text style={styles.rowText}>Admin Dashboard</Text>
+            </View>
+          </TouchableOpacity>
+        )}
 
         <TouchableOpacity 
           style={[styles.row, styles.deleteRow]} 
