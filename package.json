@@ -42,6 +42,8 @@
   "devDependencies": {
     "@types/react": "~19.1.0",
     "firebase-admin": "^13.8.0",
+    "react-native-svg-transformer": "^1.5.3",
+    "sharp": "^0.34.5",
     "typescript": "~5.9.2"
   },
   "private": true
