@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Modal, ActivityIndicator, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, X } from 'lucide-react-native';
+import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
@@ -62,16 +62,17 @@ export const AdminDashboardScreen = () => {
             />
           </View>
 
-          {/* Certification / User Management */}
+          {/* Certification & Bottle Awards */}
           <TouchableOpacity 
             style={styles.card} 
             onPress={() => navigation.navigate('AdminUsers')}
           >
             <View style={styles.iconContainer}>
-              <BadgeCheck color="#FFD700" size={32} />
+              <BadgeCheck color="#FFD700" size={28} />
+              <Wine color="#D4A843" size={20} style={styles.subIcon} />
             </View>
-            <Text style={styles.cardTitle}>User Certification</Text>
-            <Text style={styles.cardDesc}>Grant the ultimate prestige verification badge to top-tier users.</Text>
+            <Text style={styles.cardTitle}>Users & Awards</Text>
+            <Text style={styles.cardDesc}>Grant the prestige certification badge and monthly Nightlife Legend bottle reward to top-tier users.</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
