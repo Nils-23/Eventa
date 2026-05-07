@@ -109,6 +109,46 @@ export const grantCertificationBadge = async (userId: string) => {
   }
 };
 
+// ─── Bottle Award Admin Functions ─────────────────────────────────────────────
+
+export const BOTTLE_IDS = ['bottle_jameson', 'bottle_hennessy', 'bottle_martell'] as const;
+export type BottleId = typeof BOTTLE_IDS[number];
+
+/**
+ * Admin function to grant a specific bottle reward to the monthly Nightlife Legend.
+ */
+export const grantBottleReward = async (userId: string, bottleId: BottleId) => {
+  try {
+    const userDocRef = doc(firestore, 'users', userId);
+    await updateDoc(userDocRef, {
+      unlockedBottles: arrayUnion(bottleId),
+    });
+    console.log(`[Admin] Granted bottle '${bottleId}' to user ${userId}`);
+  } catch (error) {
+    console.error('[Admin] Error granting bottle reward:', error);
+    throw error;
+  }
+};
+
+/**
+ * Admin function to revoke a specific bottle reward from a user.
+ */
+export const revokeBottleReward = async (userId: string, bottleId: BottleId) => {
+  try {
+    const userDocRef = doc(firestore, 'users', userId);
+    const docSnap = await getDoc(userDocRef);
+    if (!docSnap.exists()) return;
+
+    const data = docSnap.data();
+    const unlockedBottles: string[] = (data.unlockedBottles || []).filter((b: string) => b !== bottleId);
+    await updateDoc(userDocRef, { unlockedBottles });
+    console.log(`[Admin] Revoked bottle '${bottleId}' from user ${userId}`);
+  } catch (error) {
+    console.error('[Admin] Error revoking bottle reward:', error);
+    throw error;
+  }
+};
+
 /**
  * Admin function to manually revoke the prestige certification badge from a user.
  */
