@@ -170,7 +170,7 @@ export const AdminUsersScreen = () => {
                   <View style={styles.actionRow}>
                     <View style={styles.actionLabel}>
                       <BadgeCheck color={isCertified ? '#FFD700' : '#555'} size={16} />
-                      <Text style={styles.actionLabelText}>Eventa Certified</Text>
+                      <Text style={styles.actionLabelText}>Eventas Certified</Text>
                     </View>
                     <TouchableOpacity
                       style={[styles.actionBtn, isCertified ? styles.revokeBtn : styles.grantBtn]}

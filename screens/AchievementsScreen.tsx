@@ -213,11 +213,11 @@ export const AchievementsScreen = () => {
       <View style={styles.bottleDescCard}>
         <Text style={styles.bottleDescTitle}>🏆 Monthly Bottle Award</Text>
         <Text style={styles.bottleDescText}>
-          Every month, Eventa rewards one Nightlife Legend by unlocking this achievement and offering them a real bottle of their choice — on us.
+          Every month, Eventas rewards one Nightlife Legend by unlocking this achievement and offering them a real bottle — on us.
         </Text>
         <View style={styles.bottleDescBadge}>
           <Lock color="#888" size={11} />
-          <Text style={styles.bottleDescBadgeText}>Admin-unlocked · Limited to 1 per month</Text>
+          <Text style={styles.bottleDescBadgeText}>Limited to 1 per month</Text>
         </View>
       </View>
 

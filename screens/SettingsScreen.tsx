@@ -14,13 +14,13 @@ export const SettingsScreen = () => {
   const { isAdmin } = useAppStore();
 
   const handleReport = async () => {
-    const url = 'mailto:support@eventa.to?subject=Report%20Issue&body=Please%20describe%20your%20issue%20here...';
+    const url = 'mailto:support@eventas.to?subject=Report%20Issue&body=Please%20describe%20your%20issue%20here...';
     try {
       const canOpen = await Linking.canOpenURL(url);
       if (canOpen) {
         await Linking.openURL(url);
       } else {
-        Toast.show({ type: 'error', text1: 'Email app not found', text2: 'Please email support@eventa.to directly.' });
+        Toast.show({ type: 'error', text1: 'Email app not found', text2: 'Please email support@eventas.to directly.' });
       }
     } catch (error) {
       console.error('Error opening email:', error);
