@@ -84,7 +84,7 @@ export const useLocationTracking = () => {
               showsBackgroundLocationIndicator: false, // no iOS status-bar pill
               foregroundService: {
                 // Required on Android to keep the task alive in the background
-                notificationTitle: 'Eventa',
+                notificationTitle: 'Eventas',
                 notificationBody: 'Tracking your location for the heatmap.',
                 notificationColor: '#00FFCC',
               },

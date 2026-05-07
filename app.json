@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Eventa",
+    "name": "Eventas",
     "slug": "Eventa",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -17,11 +17,11 @@
       "bundleIdentifier": "com.nils23.Eventa",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Allow Eventa to use your location to find events near you.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow Eventa to use your location to find events near you.",
-        "NSCameraUsageDescription": "Allow Eventa to use your camera to record stories at venues.",
-        "NSMicrophoneUsageDescription": "Allow Eventa to record audio for your video stories.",
-        "NSPhotoLibraryUsageDescription": "Allow Eventa to access your gallery to upload stories.",
+        "NSLocationWhenInUseUsageDescription": "Allow Eventas to use your location to find events near you.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow Eventas to use your location to find events near you.",
+        "NSCameraUsageDescription": "Allow Eventas to use your camera to record stories at venues.",
+        "NSMicrophoneUsageDescription": "Allow Eventas to record audio for your video stories.",
+        "NSPhotoLibraryUsageDescription": "Allow Eventas to access your gallery to upload stories.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [

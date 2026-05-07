@@ -124,7 +124,7 @@ export const LoginScreen = () => {
         style={styles.content}
       >
         <View style={styles.header}>
-          <Text style={styles.title}>Eventa</Text>
+          <Text style={styles.title}>Eventas</Text>
           <Text style={styles.subtitle}>Sign in to discover your next vibe.</Text>
         </View>
 

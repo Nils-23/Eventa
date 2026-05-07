@@ -38,7 +38,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'soc_50', name: 'Socialite', description: 'Send 50 messages in live chats.', category: 'Social', iconName: 'Users', glowColor: '#FF00CC', target: 50, statKey: 'chats' },
 
   // Admin / Special
-  { id: 'cert_1', name: 'Eventa Certified', description: 'Official certification of prestige. Recognized by Eventa.', category: 'Personality', iconName: 'BadgeCheck', glowColor: '#FFD700', target: 999999, statKey: 'hotstreaks' },
+  { id: 'cert_1', name: 'Eventas Certified', description: 'Official certification of prestige. Recognized by Eventas.', category: 'Personality', iconName: 'BadgeCheck', glowColor: '#FFD700', target: 999999, statKey: 'hotstreaks' },
 ];
 
 /**
