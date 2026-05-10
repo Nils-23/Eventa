@@ -8,10 +8,10 @@ import {
   Platform,
   TextInput,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { Apple, Smartphone, ArrowLeft } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
-import EventasLogo from '../assets/EventasLogo.svg';
 import FirebaseRecaptchaVerifierModal from '../components/FirebaseRecaptcha/FirebaseRecaptchaVerifierModal';
 import {
   handleGoogleLogin,
@@ -125,7 +125,11 @@ export const LoginScreen = () => {
         style={styles.content}
       >
         <View style={styles.header}>
-          <EventasLogo width={200} height={200} style={{ marginBottom: -30 }} />
+          <Image
+            source={require('../assets/EventasNewLogo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
           <Text style={styles.subtitle}>Sign in to discover your next vibe.</Text>
         </View>
 
@@ -246,8 +250,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   header: {
-    marginBottom: 60,
+    marginBottom: 40,
     alignItems: 'center',
+  },
+  logo: {
+    width: 3640,
+    height: 230,
+    marginBottom: -10,
   },
   title: {
     fontSize: 42,

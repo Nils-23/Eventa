@@ -41,6 +41,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "babel-preset-expo": "^55.0.21",
     "firebase-admin": "^13.8.0",
     "react-native-svg-transformer": "^1.5.3",
     "sharp": "^0.34.5",
