@@ -2,12 +2,12 @@ import { useEffect, useRef } from 'react';
 import { doc, getDoc, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { useAppStore } from './useAppStore';
-import { useVenueDensity } from './useVenueDensity';
+import { useLiveVenues } from './useLiveVenues';
 import { checkAndUnlockAchievements } from '../services/achievementService';
 
 export const useVisitTracker = () => {
   const { user } = useAppStore();
-  const { venues } = useVenueDensity();
+  const { venues } = useLiveVenues();
   
   // We use refs to avoid triggering unnecessary effect runs and spamming Firestore
   const hasTrackedToday = useRef(false);

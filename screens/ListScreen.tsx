@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Flame, Navigation, Users } from 'lucide-react-native';
-import { useVenueDensity, VenueWithDensity } from '../hooks/useVenueDensity';
+import { useLiveVenues, LiveVenue as VenueWithDensity } from '../hooks/useLiveVenues';
 import { useNavigation } from '@react-navigation/native';
 import { useAppStore } from '../hooks/useAppStore';
 
@@ -104,7 +104,7 @@ const VenueCard = ({
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 export const ListScreen = () => {
-  const { venues, isLoading } = useVenueDensity();
+  const { venues, isLoading } = useLiveVenues();
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
