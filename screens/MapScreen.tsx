@@ -4,8 +4,7 @@ import { StyleSheet, View, Text, TouchableOpacity, Alert } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X } from 'lucide-react-native';
-import { useHeatmap } from '../hooks/useHeatmap';
-import { useVenues, Venue } from '../hooks/useVenues';
+import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
 import { useStories } from '../hooks/useStories';
@@ -207,17 +206,17 @@ const DARK_MAP_STYLE = [
 // Matches the reference image: blue/cyan outer → green → yellow → orange → red core
 const HEATMAP_GRADIENT = {
   colors: [
-    'rgba(0, 180, 255, 0)',
-    'rgba(0, 200, 255, 0.12)',
-    'rgba(0, 230, 200, 0.25)',
-    'rgba(0, 255, 80, 0.38)',
-    'rgba(120, 255, 0, 0.48)',
-    'rgba(255, 240, 0, 0.58)',
-    'rgba(255, 150, 0, 0.68)',
-    'rgba(255, 60, 0, 0.76)',
-    'rgba(230, 0, 0, 0.83)',
-    'rgba(180, 0, 0, 0.88)',
-    'rgba(120, 0, 0, 0.92)'
+    'rgba(0, 180, 255, 0)',    // 0% - Outermost edge (transparent to blend with map)
+    'rgba(0, 200, 255, 1)',    // 8% - Solid cyan fringe
+    'rgba(0, 230, 200, 1)',    // 18% - Solid teal
+    'rgba(0, 255, 80, 1)',     // 30% - Solid green
+    'rgba(120, 255, 0, 1)',    // 42% - Solid yellow-green
+    'rgba(255, 240, 0, 1)',    // 54% - Solid yellow
+    'rgba(255, 150, 0, 1)',    // 65% - Solid orange
+    'rgba(255, 60, 0, 1)',     // 75% - Solid red-orange
+    'rgba(230, 0, 0, 1)',      // 84% - Solid red
+    'rgba(180, 0, 0, 1)',      // 92% - Solid dark red
+    'rgba(120, 0, 0, 1)'       // 100% - Solid deep maroon core
   ],
   startPoints: [0, 0.08, 0.18, 0.30, 0.42, 0.54, 0.65, 0.75, 0.84, 0.92, 1.0],
   colorMapSize: 256
@@ -231,7 +230,21 @@ const HEATMAP_GRADIENT = {
 // This wrapper blocks re-renders unless the points array reference changes.
 const StableHeatmap = React.memo(
   ({ points }: { points: { latitude: number; longitude: number; weight: number }[] }) => {
-    if (points.length === 0) return null;
+    React.useEffect(() => {
+      console.log(`[HEATMAP-DEBUG] StableHeatmap MOUNTED with ${points.length} points`);
+      return () => console.log('[HEATMAP-DEBUG] StableHeatmap UNMOUNTED');
+    }, []);
+
+    React.useEffect(() => {
+      console.log(`[HEATMAP-DEBUG] StableHeatmap points CHANGED → ${points.length} points`);
+    }, [points]);
+
+    console.log(`[HEATMAP-DEBUG] StableHeatmap render() called. points.length=${points.length}`);
+
+    if (points.length === 0) {
+      console.log('[HEATMAP-DEBUG] StableHeatmap returning null (0 points)');
+      return null;
+    }
     return (
       <Heatmap
         points={points}
@@ -242,21 +255,28 @@ const StableHeatmap = React.memo(
     );
   },
   (prevProps, nextProps) => {
-    // Only re-render if the points array reference actually changed
-    return prevProps.points === nextProps.points;
+    const same = prevProps.points === nextProps.points;
+    if (!same) {
+      console.log(`[HEATMAP-DEBUG] React.memo: points ref CHANGED (prev=${prevProps.points.length}, next=${nextProps.points.length}) → WILL re-render`);
+    }
+    return same;
   }
 );
 
 export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
-  const { heatPoints } = useHeatmap();
-  const { venues } = useVenues();
-  const { user, selectedMapVenue, setSelectedMapVenue, isAdmin } = useAppStore();
+  const { venues, heatPoints } = useLiveVenues();
+  const { user, selectedMapVenue, setSelectedMapLiveVenue, isAdmin } = useAppStore();
   const { stories } = useStories();
 
+  // ─── Diagnostic: track every MapScreen render ───────────────────────────
+  const renderCountRef = useRef(0);
+  renderCountRef.current++;
+  console.log(`[HEATMAP-DEBUG] MapScreen render #${renderCountRef.current} | heatPoints.length=${heatPoints.length} | showHeatmapOverlay=${true}`);
+
   const [userLocation, setUserLocation] = useState<Location.LocationObjectCoords | null>(null);
-  const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
+  const [selectedLiveVenue, setSelectedLiveVenue] = useState<LiveVenue | null>(null);
   const [isViewerVisible, setIsViewerVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
@@ -441,11 +461,11 @@ export const MapScreen = () => {
     }
   };
 
-  const handleMarkerPress = (venue: Venue) => {
-    setSelectedMapVenue(venue);
+  const handleMarkerPress = (venue: LiveVenue) => {
+    setSelectedMapLiveVenue(venue);
   };
 
-  const executeStoryUpload = async (targetVenue: Venue) => {
+  const executeStoryUpload = async (targetVenue: LiveVenue) => {
     if (!user || !targetVenue || !userLocation) return;
     
     const trueDistance = getDistanceInMeters(userLocation.latitude, userLocation.longitude, targetVenue.latitude, targetVenue.longitude);
@@ -488,7 +508,7 @@ export const MapScreen = () => {
     );
   };
 
-  const launchPicker = async (useCamera: boolean, targetVenue: Venue) => {
+  const launchPicker = async (useCamera: boolean, targetVenue: LiveVenue) => {
     try {
       const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ['images', 'videos'],
@@ -529,10 +549,10 @@ export const MapScreen = () => {
   };
 
   const handleAddStory = () => {
-    if (selectedVenue) executeStoryUpload(selectedVenue);
+    if (selectedLiveVenue) executeStoryUpload(selectedLiveVenue);
   };
 
-  const closestVenue = useMemo(() => {
+  const closestLiveVenue = useMemo(() => {
     if (!userLocation || !venues.length) return { venue: null, distance: Infinity };
     let minDist = Infinity;
     let closest = null;
@@ -546,15 +566,15 @@ export const MapScreen = () => {
     return { venue: closest, distance: minDist };
   }, [userLocation, venues]);
 
-  const canAddGlobalStory = closestVenue.distance <= 200;
+  const canAddGlobalStory = closestLiveVenue.distance <= 200;
 
   const handleGlobalAddStory = () => {
-    if (closestVenue.venue) executeStoryUpload(closestVenue.venue);
+    if (closestLiveVenue.venue) executeStoryUpload(closestLiveVenue.venue);
   };
     
   // Safe distance check
-  const isNearVenue = selectedVenue && userLocation ? 
-    getDistanceInMeters(userLocation.latitude, userLocation.longitude, selectedVenue.latitude, selectedVenue.longitude) <= 200 
+  const isNearLiveVenue = selectedLiveVenue && userLocation ? 
+    getDistanceInMeters(userLocation.latitude, userLocation.longitude, selectedLiveVenue.latitude, selectedLiveVenue.longitude) <= 200 
     : false;
 
   return (
@@ -602,7 +622,7 @@ export const MapScreen = () => {
              Wrapped in StableHeatmap to prevent native tile cache wipe on
              unrelated parent re-renders (notifications, location, etc).       */}
         {showHeatmapOverlay && <StableHeatmap points={heatPoints} />}
-        {/* Venue markers */}
+        {/* LiveVenue markers */}
         {venues.map((venue) => {
           const venueStories = stories.filter(s => s.venue_id === venue.id);
           const hasStories = venueStories.length > 0;
@@ -645,23 +665,23 @@ export const MapScreen = () => {
           <TouchableOpacity onPress={() => setShowRawPoints(!showRawPoints)}>
             <Text style={styles.debugText}>[ {showRawPoints ? 'X' : ' '} ] Expose Raw Firebase Nodes</Text>
           </TouchableOpacity>
-          <Text style={styles.debugText}>Active Heat Venues: {heatPoints.length}</Text>
+          <Text style={styles.debugText}>Active Heat LiveVenues: {heatPoints.length}</Text>
         </View>
       )}
 
       {/* Story Viewer Modal */}
-      {selectedVenue && (
+      {selectedLiveVenue && (
         <StoryViewer
           isVisible={isViewerVisible}
           onClose={() => setIsViewerVisible(false)}
-          stories={stories.filter(s => s.venue_id === selectedVenue.id)}
-          venueName={selectedVenue.name}
-          canAddStory={Boolean(isNearVenue)}
+          stories={stories.filter(s => s.venue_id === selectedLiveVenue.id)}
+          venueName={selectedLiveVenue.name}
+          canAddStory={Boolean(isNearLiveVenue)}
           onAddStory={handleAddStory}
         />
       )}
 
-      {/* Venue Chat Modal */}
+      {/* LiveVenue Chat Modal */}
       {selectedMapVenue && (
         <VenueChat
           isVisible={isChatVisible}
@@ -671,12 +691,12 @@ export const MapScreen = () => {
         />
       )}
 
-      {/* Venue Info Overlay Card */}
+      {/* LiveVenue Info Overlay Card */}
       {selectedMapVenue && (
         <View style={[styles.venueInfoCard, { bottom: insets.bottom + 40 }]}>
           <TouchableOpacity 
             style={styles.closeCardButton}
-            onPress={() => setSelectedMapVenue(null)}
+            onPress={() => setSelectedMapLiveVenue(null)}
           >
             <X color="#888" size={20} />
           </TouchableOpacity>
@@ -686,7 +706,7 @@ export const MapScreen = () => {
             <TouchableOpacity 
               style={styles.viewStoriesBtn}
               onPress={() => {
-                setSelectedVenue(selectedMapVenue);
+                setSelectedLiveVenue(selectedMapVenue);
                 setIsViewerVisible(true);
               }}
             >

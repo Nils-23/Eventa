@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { User } from 'firebase/auth';
-import { Venue } from './useVenues';
+import { LiveVenue } from './useLiveVenues';
 
 interface AppState {
   hasInitialized: boolean;
@@ -9,8 +9,8 @@ interface AppState {
   setUser: (user: User | null) => void;
   isLoading: boolean;
   setIsLoading: (isLoading: boolean) => void;
-  selectedMapVenue: Venue | null;
-  setSelectedMapVenue: (venue: Venue | null) => void;
+  selectedMapVenue: LiveVenue | null;
+  setSelectedMapVenue: (venue: LiveVenue | null) => void;
   isAdmin: boolean;
   setIsAdmin: (isAdmin: boolean) => void;
   isSimulationRunning: boolean;

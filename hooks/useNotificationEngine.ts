@@ -5,6 +5,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import { realtimeDB, firestore } from '../services/firebase';
 import { getDistanceInMeters } from '../utils/locationUtils';
 import { useAppStore } from './useAppStore';
+import { useLiveVenues } from './useLiveVenues';
 
 const VENUE_RADIUS_METERS = 200;
 const STALE_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -41,7 +42,7 @@ export const useNotificationEngine = () => {
       try {
         const now = Date.now();
         
-        // 1. Fetch Venues
+        // 1. Fetch LiveVenues
         const venuesSnap = await getDocs(collection(firestore, 'venues'));
         if (venuesSnap.empty) return;
         const venues = venuesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));

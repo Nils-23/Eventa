@@ -1,4 +1,4 @@
-import { Venue } from '../hooks/useVenues';
+import { LiveVenue } from '../hooks/useLiveVenues';
 
 // Haversine formula to calculate distance between two coordinates in meters
 export function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -18,22 +18,22 @@ export function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lo
   return R * c;
 }
 
-export function findNearestVenue(
+export function findNearestLiveVenue(
   userLat: number, 
   userLng: number, 
-  venues: Venue[], 
+  venues: LiveVenue[], 
   maxDistanceMeters = 200
-): Venue | null {
-  let nearestVenue: Venue | null = null;
+): LiveVenue | null {
+  let nearestLiveVenue: LiveVenue | null = null;
   let minDistance = Infinity;
 
   venues.forEach(venue => {
     const distance = getDistanceInMeters(userLat, userLng, venue.latitude, venue.longitude);
     if (distance <= maxDistanceMeters && distance < minDistance) {
       minDistance = distance;
-      nearestVenue = venue;
+      nearestLiveVenue = venue;
     }
   });
 
-  return nearestVenue;
+  return nearestLiveVenue;
 }

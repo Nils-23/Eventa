@@ -7,7 +7,7 @@ import { useAppStore } from './useAppStore';
 
 const MAX_RADIUS_METERS = 200; // Roam within 200m
 const UPDATE_INTERVAL_MS = 15000; // Update every 15 seconds
-const DEFAULT_USERS_PER_VENUE = 80;
+const DEFAULT_USERS_PER_VENUE = 20;
 
 // Helper to calculate a new location within distance
 function offsetLocation(lat: number, lon: number, maxDistanceMeters: number) {
@@ -76,7 +76,7 @@ export const useSimulationEngine = () => {
         const toSpawn = targetCount - currentCount;
         for (let i = 0; i < toSpawn; i++) {
           const loc = offsetLocation(venue.latitude, venue.longitude, MAX_RADIUS_METERS / 2);
-          currentSims.push({
+          const newUser = {
             user_id: `sim_${venue.id}_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
             venueId: venue.id,
             centerLat: venue.latitude,
@@ -84,7 +84,10 @@ export const useSimulationEngine = () => {
             latitude: loc.latitude,
             longitude: loc.longitude,
             timestamp: Date.now()
-          });
+          };
+          currentSims.push(newUser);
+          updates[newUser.user_id] = newUser;
+          needsUpdate = true;
         }
       } else if (currentCount > targetCount) {
         // Despawn
@@ -123,7 +126,24 @@ export const useSimulationEngine = () => {
     }
 
     // Initial sync
-    syncAllVenueUsers();
+    const initializeEngine = async () => {
+      try {
+        // Fetch existing sims from RTDB so we don't infinitely duplicate them on app restart
+        const { get } = await import('firebase/database');
+        const snap = await get(ref(realtimeDB, 'simulated_locations'));
+        if (snap.exists()) {
+          const existingSims = Object.values(snap.val());
+          // Only keep sims that are structurally valid
+          simulatedUsersRef.current = existingSims.filter((s: any) => s.user_id && s.venueId);
+        }
+      } catch (err) {
+        console.error('Error fetching existing simulations:', err);
+      }
+      
+      syncAllVenueUsers();
+    };
+
+    initializeEngine();
 
     const tick = async () => {
       if (simulatedUsersRef.current.length === 0) return;

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Users, Plus, Save, X, UploadCloud } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
-import { useVenues, Venue } from '../hooks/useVenues';
+import { useLiveVenues, LiveVenue as Venue } from '../hooks/useLiveVenues';
 import { firestore } from '../services/firebase';
 import { doc, setDoc, updateDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
@@ -12,7 +12,7 @@ import { uploadStoryMedia, createSimulatedStory } from '../services/storyService
 
 export const AdminSimulationScreen = () => {
   const navigation = useNavigation();
-  const { venues, isLoading } = useVenues();
+  const { venues, isLoading } = useLiveVenues();
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingCounts, setEditingCounts] = useState<Record<string, string>>({});
   const [uploadingVenueId, setUploadingVenueId] = useState<string | null>(null);
