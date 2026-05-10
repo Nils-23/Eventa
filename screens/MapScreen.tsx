@@ -229,7 +229,7 @@ const HEATMAP_GRADIENT = {
 // the Heatmap component to re-render, which crosses the bridge and wipes tiles.
 // This wrapper blocks re-renders unless the points array reference changes.
 const StableHeatmap = React.memo(
-  ({ points }: { points: { latitude: number; longitude: number; weight: number }[] }) => {
+  ({ points, radius }: { points: { latitude: number; longitude: number; weight: number }[], radius: number }) => {
     React.useEffect(() => {
       console.log(`[HEATMAP-DEBUG] StableHeatmap MOUNTED with ${points.length} points`);
       return () => console.log('[HEATMAP-DEBUG] StableHeatmap UNMOUNTED');
@@ -248,18 +248,19 @@ const StableHeatmap = React.memo(
     return (
       <Heatmap
         points={points}
-        radius={50}
-        opacity={0.8}
+        radius={radius}
+        opacity={1.0}
         gradient={HEATMAP_GRADIENT}
       />
     );
   },
   (prevProps, nextProps) => {
-    const same = prevProps.points === nextProps.points;
-    if (!same) {
-      console.log(`[HEATMAP-DEBUG] React.memo: points ref CHANGED (prev=${prevProps.points.length}, next=${nextProps.points.length}) → WILL re-render`);
+    const samePoints = prevProps.points === nextProps.points;
+    const sameRadius = prevProps.radius === nextProps.radius;
+    if (!samePoints || !sameRadius) {
+      console.log(`[HEATMAP-DEBUG] React.memo: CHANGED (points: ${samePoints}, radius: ${sameRadius}) → WILL re-render`);
     }
-    return same;
+    return samePoints && sameRadius;
   }
 );
 
@@ -267,7 +268,7 @@ export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
   const { venues, heatPoints } = useLiveVenues();
-  const { user, selectedMapVenue, setSelectedMapLiveVenue, isAdmin } = useAppStore();
+  const { user, selectedMapVenue, setSelectedMapVenue, isAdmin } = useAppStore();
   const { stories } = useStories();
 
   // ─── Diagnostic: track every MapScreen render ───────────────────────────
@@ -462,7 +463,7 @@ export const MapScreen = () => {
   };
 
   const handleMarkerPress = (venue: LiveVenue) => {
-    setSelectedMapLiveVenue(venue);
+    setSelectedMapVenue(venue);
   };
 
   const executeStoryUpload = async (targetVenue: LiveVenue) => {
@@ -527,14 +528,16 @@ export const MapScreen = () => {
         const uri = result.assets[0].uri;
         const mediaType = result.assets[0].type === 'video' ? 'video' : 'image';
 
-        const downloadUrl = await uploadStoryMedia(uri, user.uid);
-        await createStory(user.uid, downloadUrl, mediaType, targetVenue.id);
+        if (user) {
+          const downloadUrl = await uploadStoryMedia(uri, user.uid);
+          await createStory(user.uid, downloadUrl, mediaType, targetVenue.id);
 
-        Toast.show({
-          type: 'success',
-          text1: 'Story Added!',
-          text2: 'Your story is now visible at this venue.',
-        });
+          Toast.show({
+            type: 'success',
+            text1: 'Story Added!',
+            text2: 'Your story is now visible at this venue.',
+          });
+        }
       }
     } catch (error) {
       console.error('Upload Error:', error);
@@ -599,7 +602,7 @@ export const MapScreen = () => {
         provider={PROVIDER_GOOGLE}
         customMapStyle={DARK_MAP_STYLE}
         initialCamera={camera}
-        showsUserLocation={true}
+        showsUserLocation={false}
         onUserLocationChange={() => {}}
         showsMyLocationButton={false}
         showsCompass={false}
@@ -621,7 +624,13 @@ export const MapScreen = () => {
              seamless blending and KDE (Kernel Density Estimation).
              Wrapped in StableHeatmap to prevent native tile cache wipe on
              unrelated parent re-renders (notifications, location, etc).       */}
-        {showHeatmapOverlay && <StableHeatmap points={heatPoints} />}
+        {/* Dynamically scale radius based on zoom level so it appears to grow as you zoom in */}
+        {showHeatmapOverlay && (
+          <StableHeatmap 
+            points={heatPoints} 
+            radius={Math.max(40, Math.min(180, Math.floor(80 * Math.pow(1.3, currentZoom - 14))))} 
+          />
+        )}
         {/* LiveVenue markers */}
         {venues.map((venue) => {
           const venueStories = stories.filter(s => s.venue_id === venue.id);
@@ -637,11 +646,15 @@ export const MapScreen = () => {
                 handleMarkerPress(venue);
               }}
               tracksViewChanges={trackMarkerChanges}
+              zIndex={100} // Force elevation above the heatmap
+              anchor={{ x: 0.5, y: 1 }} // Pin tip at exact coordinate
             >
               <View style={styles.markerContainer}>
-                {hasStories && <View style={styles.storyRing} />}
-                <View style={[styles.markerGlow, hasStories && styles.markerGlowActive]} />
-                <MapPin color={pinColor} fill={pinColor} size={24} />
+                {/* Sharp high-contrast pin without fuzzy glow */}
+                <View style={[styles.pinBubble, { backgroundColor: pinColor }]}>
+                  <MapPin color="#000" size={14} fill="#000" />
+                </View>
+                <View style={[styles.pinArrow, { borderTopColor: pinColor }]} />
               </View>
             </Marker>
           );
@@ -696,7 +709,7 @@ export const MapScreen = () => {
         <View style={[styles.venueInfoCard, { bottom: insets.bottom + 40 }]}>
           <TouchableOpacity 
             style={styles.closeCardButton}
-            onPress={() => setSelectedMapLiveVenue(null)}
+            onPress={() => setSelectedMapVenue(null)}
           >
             <X color="#888" size={20} />
           </TouchableOpacity>
@@ -706,7 +719,7 @@ export const MapScreen = () => {
             <TouchableOpacity 
               style={styles.viewStoriesBtn}
               onPress={() => {
-                setSelectedLiveVenue(selectedMapVenue);
+                setSelectedMapVenue(selectedMapVenue);
                 setIsViewerVisible(true);
               }}
             >
@@ -761,6 +774,32 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 40,
     height: 40,
+  },
+  pinBubble: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#00FFCC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#000',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 3,
+    elevation: 5,
+  },
+  pinArrow: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 6,
+    borderRightWidth: 6,
+    borderTopWidth: 8,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: '#00FFCC',
+    marginTop: -2,
   },
   topBarContainer: {
     position: 'absolute',
@@ -822,31 +861,7 @@ const styles = StyleSheet.create({
     marginVertical: 4,
     fontFamily: 'monospace',
   },
-  markerGlow: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0, 255, 204, 0.3)',
-    shadowColor: '#00FFCC',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  markerGlowActive: {
-    backgroundColor: 'rgba(255, 0, 204, 0.3)',
-    shadowColor: '#FF00CC',
-  },
-  storyRing: {
-    position: 'absolute',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 2,
-    borderColor: '#FF00CC', // Instagram-like magenta color for active stories
-    borderStyle: 'dashed',
-  },
+  // Removed fuzzy markerGlow and storyRing to improve pin quality and clarity per user request
   uploadOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
