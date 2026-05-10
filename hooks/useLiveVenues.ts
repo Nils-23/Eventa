@@ -14,6 +14,7 @@ export interface LiveVenue {
   latitude: number;
   longitude: number;
   description: string;
+  address?: string;
   simulatedUsersCount?: number;
   
   // Computed live data
@@ -43,6 +44,7 @@ interface RawVenue {
   latitude: number;
   longitude: number;
   description: string;
+  address?: string;
   simulatedUsersCount?: number;
 }
 
@@ -87,29 +89,7 @@ function toActivityColor(level: ActivityLevel): string {
   }
 }
 
-// Generate deterministic gaussian offset for heatmap blobs
-function getVenueScatter(venueId: string): { dx: number; dy: number }[] {
-  // A simple deterministic pseudo-random generator based on venue ID
-  let seed = 0;
-  for (let i = 0; i < venueId.length; i++) {
-    seed += venueId.charCodeAt(i);
-  }
-  
-  const random = () => {
-    const x = Math.sin(seed++) * 10000;
-    return x - Math.floor(x);
-  };
 
-  const points = [];
-  for (let i = 0; i < 80; i++) { // Fixed 80 points
-    const u = random();
-    const v = random();
-    const radius = Math.sqrt(-2.0 * Math.log(u));
-    const theta = 2.0 * Math.PI * v;
-    points.push({ dx: radius * Math.cos(theta), dy: radius * Math.sin(theta) });
-  }
-  return points;
-}
 
 // ─── Master Computation Engine ────────────────────────────────────────────────
 function computeLiveData(
@@ -153,11 +133,22 @@ function computeLiveData(
       return haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
     }).length;
 
-    // 4. Enforce Mathematical Baseline
-    const baselineSimCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
+    // 4. Determine if the simulation engine is actively running globally
+    // We use the presence of active RTDB simulation locations as a "heartbeat". 
+    // If the admin goes offline or turns the toggle off, the RTDB node is wiped.
+    const isEngineActive = simActiveLocs.length > 0;
 
-    // 5. Calculate Total
-    const simUserCount = Math.max(rtdbSimCount, baselineSimCount);
+    // 5. Calculate Final Simulated Users
+    let simUserCount = 20; // Hard default if the engine is completely disabled/offline
+
+    if (includeSimulated && isEngineActive) {
+      // If engine is actively running, use the admin's custom target count (or fallback to 20 if undefined)
+      const customAdminCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
+      // Use whichever is higher (moving RTDB vs mathematical custom target)
+      simUserCount = Math.max(rtdbSimCount, customAdminCount);
+    }
+
+    // 6. Calculate Total
     const userCount = realUserCount + simUserCount;
 
     // Build Venue List item
@@ -176,23 +167,40 @@ function computeLiveData(
     });
 
     // Build Heatmap Points
+    // We use a "Concentric Ring" approach to guarantee that higher-density venues 
+    // actually expand their physical footprint across the map geometry, rather than
+    // just changing color intensity within a fixed radius.
     if (userCount > 0) {
       hashStr += `${venue.id}:${userCount};`;
-      const numScattered = 80; 
-      const spreadMeters = 40; 
-      const pointWeight = Math.log10(Math.max(10, userCount * 10)) * 10;
-      const scatterOffsets = getVenueScatter(venue.id);
+      
+      const baseWeight = Math.log10(userCount + 1) * 10;
+      
+      // Center core point
+      heatPoints.push({
+        latitude: venue.latitude,
+        longitude: venue.longitude,
+        weight: baseWeight
+      });
 
-      for (let i = 0; i < numScattered; i++) {
-        const offset = scatterOffsets[i];
-        const latOffset = (offset.dx * spreadMeters) / 111111;
-        const lngOffset = (offset.dy * spreadMeters) / (111111 * Math.cos(venue.latitude * Math.PI / 180));
+      // Expand outward based on density (1 ring per 40 users, max 12 rings)
+      const numRings = Math.min(12, Math.floor(userCount / 40));
+      
+      for (let ring = 1; ring <= numRings; ring++) {
+        const ringRadiusMeters = ring * 12; // rings expand by 12 meters each
+        const numPointsInRing = ring * 6;   // 6, 12, 18, 24... perfectly symmetrical
+        const ringWeight = baseWeight * Math.pow(0.85, ring); // Smooth decay outward
 
-        heatPoints.push({
-          latitude: venue.latitude + latOffset,
-          longitude: venue.longitude + lngOffset,
-          weight: pointWeight
-        });
+        for (let i = 0; i < numPointsInRing; i++) {
+          const angle = (i / numPointsInRing) * Math.PI * 2;
+          const latOffset = (ringRadiusMeters * Math.cos(angle)) / 111111;
+          const lngOffset = (ringRadiusMeters * Math.sin(angle)) / (111111 * Math.cos(venue.latitude * Math.PI / 180));
+          
+          heatPoints.push({
+            latitude: venue.latitude + latOffset,
+            longitude: venue.longitude + lngOffset,
+            weight: ringWeight
+          });
+        }
       }
     }
   }
