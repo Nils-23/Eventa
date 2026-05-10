@@ -50,17 +50,24 @@ function haversineMeters(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// ─── Weight from user count ───────────────────────────────────────────────────
-// Maps user count to a 0–1 weight using a log scale so the full colour
-// gradient is used meaningfully across the range 1 → 100+.
-//   1–5   users → ~0.05–0.20  (cool blue)
-//   10–30 users → ~0.30–0.50  (green/yellow)
-//   50    users → ~0.70       (orange)
-//   100+  users → ~0.90–1.0   (red / white core)
-function userCountToWeight(count: number): number {
-  if (count <= 0) return 0;
-  const w = Math.log1p(count) / Math.log1p(100); // saturates at ~100 users
-  return Math.min(1.0, Math.max(0.05, w));        // floor ensures visibility
+// No longer need userCountToWeight, native KDE handles intensity based on point frequency
+
+const MAX_SCATTER_POINTS = 500;
+const venueScatterCache = new Map<string, { z0: number, z1: number }[]>();
+
+function getVenueScatter(venueId: string): { z0: number, z1: number }[] {
+  if (!venueScatterCache.has(venueId)) {
+    const offsets = [];
+    for (let i = 0; i < MAX_SCATTER_POINTS; i++) {
+      const u1 = Math.max(0.0001, Math.random());
+      const u2 = Math.random();
+      const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+      const z1 = Math.sqrt(-2.0 * Math.log(u1)) * Math.sin(2.0 * Math.PI * u2);
+      offsets.push({ z0, z1 });
+    }
+    venueScatterCache.set(venueId, offsets);
+  }
+  return venueScatterCache.get(venueId)!;
 }
 
 // ─── Core compute: venue-centred heat ────────────────────────────────────────
@@ -72,7 +79,7 @@ function computeVenueHeatPoints(
   realLocs: Record<string, RawLocation>,
   simLocs: Record<string, RawLocation>,
   includeSimulated: boolean,
-): HeatPoint[] {
+): { points: HeatPoint[], hash: string } {
   const now = Date.now();
 
   // Build a filtered list of active user locations (used only for counting)
@@ -91,6 +98,7 @@ function computeVenueHeatPoints(
   }
 
   const points: HeatPoint[] = [];
+  let hashStr = '';
 
   for (const venue of venues) {
     if (!venue.latitude || !venue.longitude) continue;
@@ -107,14 +115,51 @@ function computeVenueHeatPoints(
     // Only render venues that have at least one active user
     if (userCount === 0) continue;
 
+    const count = Math.max(1, userCount);
+    
+    // Add to our hash string to detect state changes
+    hashStr += `${venue.id}:${count};`;
+
+    // 1. Add a heavy central core point
     points.push({
-      latitude: venue.latitude,   // ← only venue coords ever touch the map
+      latitude: venue.latitude,
       longitude: venue.longitude,
-      weight: userCountToWeight(userCount),
+      weight: count
     });
+
+    // 2. Generate a Gaussian scatter of points around the venue
+    // The native Heatmap uses Kernel Density Estimation (KDE). 
+    // By providing a cluster of points instead of just one, we bypass the 
+    // maximum radius limits and create large, seamless blobs that scale with users.
+    const numScattered = Math.min(count * 4, 400); // Generate up to 400 points
+    
+    // Spread massively based on crowd size so large venues (e.g., 500 users) 
+    // are visible even from very far zoom levels.
+    // Base 50m, +3 meters per user. 500 users = 1550m spread (1.5km).
+    const spreadMeters = 50 + (count * 3); 
+
+    // We distribute the total weight among the scattered points 
+    // so the blob remains intensely colored without overwhelming the KDE center
+    const pointWeight = Math.max(1, Math.floor(count / 10));
+
+    const scatterOffsets = getVenueScatter(venue.id);
+
+    for (let i = 0; i < numScattered; i++) {
+      // Use cached Gaussian offsets so the point cloud is perfectly stable across renders
+      const { z0, z1 } = scatterOffsets[i];
+      
+      const latOffset = z0 * (spreadMeters / 111320);
+      const lngOffset = z1 * (spreadMeters / (111320 * Math.cos((venue.latitude * Math.PI) / 180)));
+
+      points.push({
+        latitude: venue.latitude + latOffset,
+        longitude: venue.longitude + lngOffset,
+        weight: pointWeight
+      });
+    }
   }
 
-  return points;
+  return { points, hash: hashStr };
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
@@ -128,6 +173,7 @@ export const useHeatmap = () => {
   const simulationConfig = useRef<SimulationConfig>({ enabled: false, threshold: 50 });
   const realUserCountRef = useRef(0);
   const initialLoadDone = useRef(false);
+  const lastCountsHash = useRef<string>('');
 
   const processBuffer = () => {
     const now = Date.now();
@@ -144,14 +190,20 @@ export const useHeatmap = () => {
       simulationConfig.current.enabled &&
       realCount < simulationConfig.current.threshold;
 
-    const points = computeVenueHeatPoints(
+    const { points, hash } = computeVenueHeatPoints(
       venuesRef.current,
       realLocBuffer.current,
       simLocBuffer.current,
       includeSimulated,
     );
 
-    setHeatPoints(points);
+    // Only trigger a React state update (and Native Bridge crossing) if the 
+    // actual crowd sizes have changed. This prevents the native map from 
+    // infinitely flushing its tile cache due to rapid Firebase location updates.
+    if (hash !== lastCountsHash.current) {
+      lastCountsHash.current = hash;
+      setHeatPoints(points);
+    }
   };
 
   useEffect(() => {

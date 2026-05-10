@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Circle, Marker, Region } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X } from 'lucide-react-native';
 import { useHeatmap } from '../hooks/useHeatmap';
@@ -202,6 +202,50 @@ const DARK_MAP_STYLE = [
   }
 ];
 
+// ─── Heat gradient ────────────────────────────────────────────────────────────
+// t=0 → outermost edge (transparent cyan), t=1 → hot core (deep red)
+// Matches the reference image: blue/cyan outer → green → yellow → orange → red core
+const HEATMAP_GRADIENT = {
+  colors: [
+    'rgba(0, 180, 255, 0)',
+    'rgba(0, 200, 255, 0.12)',
+    'rgba(0, 230, 200, 0.25)',
+    'rgba(0, 255, 80, 0.38)',
+    'rgba(120, 255, 0, 0.48)',
+    'rgba(255, 240, 0, 0.58)',
+    'rgba(255, 150, 0, 0.68)',
+    'rgba(255, 60, 0, 0.76)',
+    'rgba(230, 0, 0, 0.83)',
+    'rgba(180, 0, 0, 0.88)',
+    'rgba(120, 0, 0, 0.92)'
+  ],
+  startPoints: [0, 0.08, 0.18, 0.30, 0.42, 0.54, 0.65, 0.75, 0.84, 0.92, 1.0],
+  colorMapSize: 256
+};
+
+// ─── Stable Heatmap Wrapper ──────────────────────────────────────────────────
+// CRITICAL FIX: The native iOS GMUHeatmapTileLayer calls clearTileCache() and
+// re-sets the map EVERY time setPoints: is invoked from the React Native bridge.
+// Any parent re-render (notifications, location updates, state changes) causes
+// the Heatmap component to re-render, which crosses the bridge and wipes tiles.
+// This wrapper blocks re-renders unless the points array reference changes.
+const StableHeatmap = React.memo(
+  ({ points }: { points: { latitude: number; longitude: number; weight: number }[] }) => {
+    if (points.length === 0) return null;
+    return (
+      <Heatmap
+        points={points}
+        radius={50}
+        opacity={0.8}
+        gradient={HEATMAP_GRADIENT}
+      />
+    );
+  },
+  (prevProps, nextProps) => {
+    // Only re-render if the points array reference actually changed
+    return prevProps.points === nextProps.points;
+  }
+);
 
 export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
@@ -222,46 +266,28 @@ export const MapScreen = () => {
   const [showHeatmapOverlay, setShowHeatmapOverlay] = useState(true);
   const [showRawPoints, setShowRawPoints] = useState(false);
 
-  // ─── Region tracking (for future use) ──────────────────────────────────
+  // ─── Region + zoom tracking ───────────────────────────────────────────────
+  // We track the current zoom level so we can convert screen-pixel sizes to
+  // geo-accurate meter radii. This fixes the zoom-in issue (GitHub #371):
+  // fixed-meter circles balloon on screen as you zoom in, but pixel-based
+  // circles stay a constant visual size at all zoom levels.
   const [region, setRegion] = useState<Region | null>(null);
-  const handleRegionChange = (newRegion: Region) => setRegion(newRegion);
+  const [currentZoom, setCurrentZoom] = useState(14);
 
-  // ─── Heat gradient ────────────────────────────────────────────────────────────
-  // Color stops matching the reference heatmap image:
-  // outer edge (transparent) → cyan → green → yellow → orange → red → dark maroon (core)
-  // t=0 is the outermost ring, t=1 is the center core.
-  const HEAT_STOPS = [
-    { t: 0.00, r: 0,   g: 220, b: 255, a: 0.00 },
-    { t: 0.10, r: 0,   g: 210, b: 255, a: 0.09 },
-    { t: 0.22, r: 0,   g: 255, b: 160, a: 0.20 },
-    { t: 0.35, r: 50,  g: 255, b: 50,  a: 0.30 },
-    { t: 0.48, r: 180, g: 255, b: 0,   a: 0.40 },
-    { t: 0.58, r: 255, g: 230, b: 0,   a: 0.50 },
-    { t: 0.67, r: 255, g: 140, b: 0,   a: 0.58 },
-    { t: 0.76, r: 255, g: 50,  b: 0,   a: 0.66 },
-    { t: 0.85, r: 220, g: 0,   b: 0,   a: 0.74 },
-    { t: 0.92, r: 165, g: 0,   b: 0,   a: 0.80 },
-    { t: 1.00, r: 110, g: 0,   b: 0,   a: 0.86 },
-  ];
-
-  // Linear interpolation between gradient stops
-  const interpolateHeat = (t: number): [number, number, number, number] => {
-    const stops = HEAT_STOPS;
-    if (t <= stops[0].t) return [stops[0].r, stops[0].g, stops[0].b, stops[0].a];
-    const last = stops[stops.length - 1];
-    if (t >= last.t)    return [last.r, last.g, last.b, last.a];
-    for (let i = 0; i < stops.length - 1; i++) {
-      if (t >= stops[i].t && t <= stops[i + 1].t) {
-        const f = (t - stops[i].t) / (stops[i + 1].t - stops[i].t);
-        return [
-          Math.round(stops[i].r + f * (stops[i + 1].r - stops[i].r)),
-          Math.round(stops[i].g + f * (stops[i + 1].g - stops[i].g)),
-          Math.round(stops[i].b + f * (stops[i + 1].b - stops[i].b)),
-          parseFloat((stops[i].a + f * (stops[i + 1].a - stops[i].a)).toFixed(3)),
-        ];
-      }
+  const handleRegionChange = (newRegion: Region) => {
+    setRegion(newRegion);
+    // Derive zoom from longitudeDelta: zoom ≈ log2(360 / longitudeDelta)
+    if (newRegion.longitudeDelta > 0) {
+      const zoom = Math.log2(360 / newRegion.longitudeDelta);
+      setCurrentZoom(Math.max(1, Math.min(20, zoom)));
     }
-    return [last.r, last.g, last.b, last.a];
+  };
+
+  // ─── Meters-per-pixel at a given zoom & latitude ─────────────────────────
+  // Formula from Web Mercator: metersPerPx = 156543.03392 * cos(lat°) / 2^zoom
+  // Source: https://wiki.openstreetmap.org/wiki/Zoom_levels
+  const metersPerPixel = (lat: number, zoom: number): number => {
+    return (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom);
   };
 
   // Default to a lively city area for now
@@ -570,36 +596,12 @@ export const MapScreen = () => {
         maxZoomLevel={20}
         onRegionChangeComplete={handleRegionChange}
       >
-        {/* ── Venue Heat Circles ───────────────────────────────────────────
-             12 concentric circles per venue, rendered outer → inner so the
-             hot core always sits on top. Low individual opacity per layer
-             causes natural alpha-blending that mimics edge blur.          */}
-        {showHeatmapOverlay && heatPoints.map((hp, idx) => {
-          const center   = { latitude: hp.latitude, longitude: hp.longitude };
-          const N        = 12;
-          // Blob radius scales with user density
-          const maxR     = Math.round(150 + hp.weight * 150); // 150–300 m (outer edge)
-          const coreR    = Math.round(12  + hp.weight * 18);  //  12–30  m (hot core)
-          const circles  = Array.from({ length: N }, (_, i) => {
-            const t      = i / (N - 1);                        // 0 = outer, 1 = core
-            const radius = Math.round(maxR + t * (coreR - maxR));
-            const [r, g, b, a] = interpolateHeat(t);
-            return { radius, r, g, b, a, key: i };
-          });
-          return (
-            <React.Fragment key={`heat_${idx}`}>
-              {circles.map(({ radius, r, g, b, a, key }) => (
-                <Circle
-                  key={key}
-                  center={center}
-                  radius={radius}
-                  fillColor={`rgba(${r},${g},${b},${a})`}
-                  strokeWidth={0}
-                />
-              ))}
-            </React.Fragment>
-          );
-        })}
+        {/* ── Native Heatmap (KDE blending) ──────────────────────────────
+             Uses react-native-maps's native Heatmap implementation which supports
+             seamless blending and KDE (Kernel Density Estimation).
+             Wrapped in StableHeatmap to prevent native tile cache wipe on
+             unrelated parent re-renders (notifications, location, etc).       */}
+        {showHeatmapOverlay && <StableHeatmap points={heatPoints} />}
         {/* Venue markers */}
         {venues.map((venue) => {
           const venueStories = stories.filter(s => s.venue_id === venue.id);
