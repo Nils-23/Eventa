@@ -1,17 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Modal, ActivityIndicator, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X } from 'lucide-react-native';
+import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X, Activity } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
-import { firestore } from '../services/firebase';
+import { firestore, realtimeDB } from '../services/firebase';
+import { ref, onValue } from 'firebase/database';
 import { useAppStore } from '../hooks/useAppStore';
 import { grantCertificationBadge, revokeCertificationBadge } from '../services/achievementService';
 
 export const AdminDashboardScreen = () => {
   const navigation = useNavigation<any>();
   const { isSimulationRunning, setIsSimulationRunning } = useAppStore();
+  const [liveUserCount, setLiveUserCount] = useState<number>(0);
+
+  useEffect(() => {
+    const STALE_MS = 2 * 60 * 60 * 1000; // 2 hours
+    const unsub = onValue(ref(realtimeDB, 'locations'), (snap) => {
+      if (snap.exists()) {
+        const locations = snap.val();
+        const now = Date.now();
+        const count = Object.values(locations).filter(
+          (loc: any) => loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS)
+        ).length;
+        setLiveUserCount(count);
+      } else {
+        setLiveUserCount(0);
+      }
+    });
+
+    return () => unsub();
+  }, []);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -28,6 +48,21 @@ export const AdminDashboardScreen = () => {
         <Text style={styles.subtitle}>Select a module to manage platform operations.</Text>
 
         <View style={styles.grid}>
+          {/* Live Stats Card */}
+          <View style={[styles.card, styles.statsCard]}>
+            <View style={styles.statsHeader}>
+              <View style={styles.liveIndicator}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveText}>LIVE</Text>
+              </View>
+              <Activity color="#00FFCC" size={24} />
+            </View>
+            <View style={styles.statsContent}>
+              <Text style={styles.statsCount}>{liveUserCount}</Text>
+              <Text style={styles.statsLabel}>Real Users Active</Text>
+            </View>
+          </View>
+
           {/* Venue & Simulation Management */}
           <TouchableOpacity 
             style={styles.card} 
@@ -126,6 +161,53 @@ const styles = StyleSheet.create({
     padding: 24,
     borderWidth: 1,
     borderColor: '#333',
+  },
+  statsCard: {
+    borderColor: 'rgba(0, 255, 204, 0.3)',
+    backgroundColor: 'rgba(0, 255, 204, 0.05)',
+  },
+  statsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  liveIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 0, 85, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 6,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF0055',
+  },
+  liveText: {
+    color: '#FF0055',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  statsContent: {
+    alignItems: 'center',
+  },
+  statsCount: {
+    fontSize: 48,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  statsLabel: {
+    fontSize: 14,
+    color: '#00FFCC',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   toggleCard: {
     flexDirection: 'row',
