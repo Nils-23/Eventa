@@ -139,13 +139,19 @@ function computeLiveData(
     const isEngineActive = simActiveLocs.length > 0;
 
     // 5. Calculate Final Simulated Users
-    let simUserCount = 20; // Hard default if the engine is completely disabled/offline
+    let simUserCount = 0;
 
-    if (includeSimulated && isEngineActive) {
-      // If engine is actively running, use the admin's custom target count (or fallback to 20 if undefined)
+    if (includeSimulated) {
+      // Always respect the admin's custom mathematical target, or fallback to 20
       const customAdminCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
-      // Use whichever is higher (moving RTDB vs mathematical custom target)
-      simUserCount = Math.max(rtdbSimCount, customAdminCount);
+      
+      if (isEngineActive) {
+        // Use whichever is higher (moving RTDB vs mathematical custom target)
+        simUserCount = Math.max(rtdbSimCount, customAdminCount);
+      } else {
+        // If engine is offline, maintain the stable mathematical target
+        simUserCount = customAdminCount;
+      }
     }
 
     // 6. Calculate Total
@@ -173,7 +179,8 @@ function computeLiveData(
     if (userCount > 0) {
       hashStr += `${venue.id}:${userCount};`;
       
-      const baseWeight = Math.log10(userCount + 1) * 30; // Tripled weight for much stronger visual heat
+      // Direct linear mapping: attaches number of users directly to color intensity
+      const baseWeight = userCount;
       
       // Center core point
       heatPoints.push({
@@ -182,8 +189,9 @@ function computeLiveData(
         weight: baseWeight
       });
 
-      // Expand outward based on density (1 ring per 20 users to make it geographically wider)
-      const numRings = Math.min(12, Math.floor(userCount / 20));
+      // Expand outward based on density (1 ring per 20 users)
+      // Raised cap to 20 rings (covers ~240 meters) to allow massive 400+ user venues to look significantly larger
+      const numRings = Math.min(20, Math.floor(userCount / 20));
       
       for (let ring = 1; ring <= numRings; ring++) {
         const ringRadiusMeters = ring * 12; // rings expand by 12 meters each
