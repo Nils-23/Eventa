@@ -92,8 +92,11 @@ export const useNotificationEngine = () => {
             }
           }
         }
-      } catch (error) {
-        console.warn('Error in Notification Engine:', error);
+      } catch (error: any) {
+        const msg = error?.message || '';
+        if (!msg.includes('Permission denied') && !msg.includes('insufficient permissions')) {
+          console.warn('Error in Notification Engine:', error);
+        }
       }
     };
 

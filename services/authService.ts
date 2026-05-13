@@ -41,6 +41,7 @@ export const checkAndCreateUser = async (user: User) => {
         username: generateRandomUsername(),
         created_at: serverTimestamp(),
         last_active: serverTimestamp(),
+      });
       console.log('New user created successfully!');
     } else {
       const data = userSnap.data();
