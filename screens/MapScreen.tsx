@@ -338,7 +338,7 @@ export const MapScreen = () => {
           latitude: selectedMapVenue.latitude,
           longitude: selectedMapVenue.longitude,
         },
-        zoom: 17,
+        zoom: 16,
         pitch: 45,
       }, { duration: 1000 });
     }
@@ -351,7 +351,7 @@ export const MapScreen = () => {
     (async () => {
       try {
         let { status } = await Location.getForegroundPermissionsAsync();
-        
+
         // If not granted, request it
         if (status !== 'granted') {
           const res = await Location.requestForegroundPermissionsAsync();
@@ -366,7 +366,7 @@ export const MapScreen = () => {
         let location = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
-        
+
         if (isMounted) {
           setUserLocation(location.coords);
           mapRef.current?.animateCamera({
@@ -468,13 +468,13 @@ export const MapScreen = () => {
 
   const executeStoryUpload = async (targetVenue: LiveVenue) => {
     if (!user || !targetVenue || !userLocation) return;
-    
+
     const trueDistance = getDistanceInMeters(userLocation.latitude, userLocation.longitude, targetVenue.latitude, targetVenue.longitude);
     if (trueDistance > 200) {
       Toast.show({ type: 'error', text1: 'Too far away', text2: 'You must be within 200m to post here!' });
       return;
     }
-    
+
     Alert.alert(
       "Add Story",
       "Would you like to take a new photo/video or select from your gallery?",
@@ -497,12 +497,12 @@ export const MapScreen = () => {
         {
           text: "Gallery",
           onPress: async () => {
-             const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-             if (status !== 'granted') {
-               Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Gallery access is required.' });
-               return;
-             }
-             launchPicker(false, targetVenue);
+            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (status !== 'granted') {
+              Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Gallery access is required.' });
+              return;
+            }
+            launchPicker(false, targetVenue);
           }
         }
       ]
@@ -517,7 +517,7 @@ export const MapScreen = () => {
         quality: 0.7,
       };
 
-      const result = useCamera 
+      const result = useCamera
         ? await ImagePicker.launchCameraAsync(options)
         : await ImagePicker.launchImageLibraryAsync(options);
 
@@ -574,18 +574,18 @@ export const MapScreen = () => {
   const handleGlobalAddStory = () => {
     if (closestLiveVenue.venue) executeStoryUpload(closestLiveVenue.venue);
   };
-    
+
   // Safe distance check
-  const isNearLiveVenue = selectedLiveVenue && userLocation ? 
-    getDistanceInMeters(userLocation.latitude, userLocation.longitude, selectedLiveVenue.latitude, selectedLiveVenue.longitude) <= 200 
+  const isNearLiveVenue = selectedLiveVenue && userLocation ?
+    getDistanceInMeters(userLocation.latitude, userLocation.longitude, selectedLiveVenue.latitude, selectedLiveVenue.longitude) <= 200
     : false;
 
   return (
     <View style={styles.container}>
       {/* Global Top Add Story Button */}
       <View style={[styles.topBarContainer, { top: insets.top + 16 }]}>
-        <TouchableOpacity 
-          style={[styles.globalAddButton, !canAddGlobalStory && styles.globalAddButtonDisabled]} 
+        <TouchableOpacity
+          style={[styles.globalAddButton, !canAddGlobalStory && styles.globalAddButtonDisabled]}
           onPress={handleGlobalAddStory}
           disabled={!canAddGlobalStory}
         >
@@ -602,8 +602,8 @@ export const MapScreen = () => {
         provider={PROVIDER_GOOGLE}
         customMapStyle={DARK_MAP_STYLE}
         initialCamera={camera}
-        showsUserLocation={false}
-        onUserLocationChange={() => {}}
+        showsUserLocation={true}
+        onUserLocationChange={() => { }}
         showsMyLocationButton={false}
         showsCompass={false}
         showsScale={false}
@@ -616,7 +616,7 @@ export const MapScreen = () => {
         pitchEnabled={true}
         rotateEnabled={true}
         minZoomLevel={3}
-        maxZoomLevel={20}
+        maxZoomLevel={15}
         onRegionChangeComplete={handleRegionChange}
       >
         {/* ── Native Heatmap (KDE blending) ──────────────────────────────
@@ -624,11 +624,11 @@ export const MapScreen = () => {
              seamless blending and KDE (Kernel Density Estimation).
              Wrapped in StableHeatmap to prevent native tile cache wipe on
              unrelated parent re-renders (notifications, location, etc).       */}
-        {/* Dynamically scale radius based on zoom level so it appears to grow as you zoom in */}
+        {/* Dynamically scale radius based on zoom level, safely capped at 90 to prevent iOS square rendering artifacts */}
         {showHeatmapOverlay && (
-          <StableHeatmap 
-            points={heatPoints} 
-            radius={Math.max(40, Math.min(180, Math.floor(80 * Math.pow(1.3, currentZoom - 14))))} 
+          <StableHeatmap
+            points={heatPoints}
+            radius={Math.max(50, Math.min(90, Math.floor(50 * Math.pow(1.15, currentZoom - 14))))}
           />
         )}
         {/* LiveVenue markers */}
@@ -707,7 +707,7 @@ export const MapScreen = () => {
       {/* LiveVenue Info Overlay Card */}
       {selectedMapVenue && (
         <View style={[styles.venueInfoCard, { bottom: insets.bottom + 40 }]}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.closeCardButton}
             onPress={() => setSelectedMapVenue(null)}
           >
@@ -716,7 +716,7 @@ export const MapScreen = () => {
           <Text style={styles.venueCardTitle} numberOfLines={1}>{selectedMapVenue.name}</Text>
           <Text style={styles.venueCardAddress} numberOfLines={1}>{selectedMapVenue.address || 'Nairobi, Kenya'}</Text>
           <View style={styles.cardActionRow}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.viewStoriesBtn}
               onPress={() => {
                 setSelectedMapVenue(selectedMapVenue);
@@ -726,7 +726,7 @@ export const MapScreen = () => {
               <Text style={styles.viewStoriesText}>View Stories</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.accessChatBtn}
               onPress={() => {
                 setIsChatVisible(true);
@@ -749,7 +749,7 @@ export const MapScreen = () => {
         <TouchableOpacity style={styles.controlButton} onPress={centerMap} activeOpacity={0.7}>
           <LocateFixed color="#00FFCC" size={20} />
         </TouchableOpacity>
-        
+
         <View style={styles.zoomContainer}>
           <TouchableOpacity style={styles.controlButton} onPress={() => handleZoom(true)} activeOpacity={0.7}>
             <Plus color="#FFFFFF" size={24} />
