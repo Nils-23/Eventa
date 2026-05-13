@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Image,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { Apple, Smartphone, ArrowLeft } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
@@ -143,9 +144,15 @@ export const LoginScreen = () => {
       />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.content}
+        style={{ flex: 1 }}
       >
-        <View style={styles.header}>
+        <ScrollView 
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          <View style={styles.header}>
           <Image
             source={require('../assets/EventasNewLogo.png')}
             style={styles.logo}
@@ -255,6 +262,7 @@ export const LoginScreen = () => {
           )}
 
         </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -266,7 +274,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAFAFA',
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
     padding: 24,
     justifyContent: 'center',
   },
