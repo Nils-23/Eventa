@@ -173,7 +173,7 @@ function computeLiveData(
     if (userCount > 0) {
       hashStr += `${venue.id}:${userCount};`;
       
-      const baseWeight = Math.log10(userCount + 1) * 10;
+      const baseWeight = Math.log10(userCount + 1) * 30; // Tripled weight for much stronger visual heat
       
       // Center core point
       heatPoints.push({
@@ -182,8 +182,8 @@ function computeLiveData(
         weight: baseWeight
       });
 
-      // Expand outward based on density (1 ring per 40 users, max 12 rings)
-      const numRings = Math.min(12, Math.floor(userCount / 40));
+      // Expand outward based on density (1 ring per 20 users to make it geographically wider)
+      const numRings = Math.min(12, Math.floor(userCount / 20));
       
       for (let ring = 1; ring <= numRings; ring++) {
         const ringRadiusMeters = ring * 12; // rings expand by 12 meters each
