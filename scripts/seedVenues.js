@@ -88,6 +88,48 @@ const NAIROBI_VENUES = [
     longitude: 36.8218,
     description: 'Named after Nairobi\'s founding, this bar combines history with modern cocktail culture in the CBD.',
   },
+  {
+    id: 'venue_011',
+    name: 'AL CAPONE LOUNGE',
+    latitude: -1.2323,
+    longitude: 36.8797,
+    description: 'Popular nightlife spot along Thika Superhighway known for a vibrant crowd and music.',
+  },
+  {
+    id: 'venue_012',
+    name: 'HABANOS LOUNGE',
+    latitude: -1.2154,
+    longitude: 36.8452,
+    description: 'Premium lounge located along the Northern Bypass near Kiambu Road.',
+  },
+  {
+    id: 'venue_013',
+    name: 'Bar Next Door',
+    latitude: -1.2825,
+    longitude: 36.7865,
+    description: 'Trendy social hub in Kileleshwa, famous for weekend vibes and great cocktails.',
+  },
+  {
+    id: 'venue_014',
+    name: 'Zeytoon Lounge',
+    latitude: -1.2930,
+    longitude: 36.7845,
+    description: 'Elegant lounge space with premium service and energetic nightlife atmosphere.',
+  },
+  {
+    id: 'venue_015',
+    name: 'Paris Lounge and Grill',
+    latitude: -1.2050,
+    longitude: 36.8850,
+    description: 'Lively grill and lounge along Mirema Drive, offering fantastic food and music.',
+  },
+  {
+    id: 'venue_016',
+    name: 'QUIVER KILIMANI',
+    latitude: -1.3005,
+    longitude: 36.7808,
+    description: 'The Kilimani branch of the famous Quiver Lounge, located along Ngong Road.',
+  }
 ];
 
 async function seedVenues() {
