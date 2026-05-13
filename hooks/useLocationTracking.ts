@@ -52,6 +52,8 @@ export const useLocationTracking = () => {
     // Stash the UID globally so the background task can access it
     (global as any).__eventaUserId = user.uid;
 
+    let locationSub: Location.LocationSubscription | null = null;
+
     const startTracking = async () => {
       try {
         // 1. Request foreground permission first (Android requirement)
@@ -64,6 +66,20 @@ export const useLocationTracking = () => {
           });
           return;
         }
+
+        // Always start foreground watcher for reliable UI updates while the app is open
+        locationSub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 10 },
+          (loc) => {
+            const userLocationRef = ref(realtimeDB, `locations/${user.uid}`);
+            set(userLocationRef, {
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+              timestamp: loc.timestamp,
+              user_id: user.uid,
+            }).catch(console.error);
+          }
+        );
 
         // 2. Request background permission
         const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
@@ -94,23 +110,7 @@ export const useLocationTracking = () => {
           }
         } else {
           // ── Foreground-only fallback ──────────────────────────────────────
-          // Background permission not granted — watchPositionAsync still runs
-          // continuously while the app is open (including minimised on iOS until
-          // the OS suspends the process). No toast — this is expected behaviour.
-          console.log('[Location] Background permission not granted, using foreground watcher.');
-
-          await Location.watchPositionAsync(
-            { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 10 },
-            (loc) => {
-              const userLocationRef = ref(realtimeDB, `locations/${user.uid}`);
-              set(userLocationRef, {
-                latitude: loc.coords.latitude,
-                longitude: loc.coords.longitude,
-                timestamp: loc.timestamp,
-                user_id: user.uid,
-              }).catch(console.error);
-            }
-          );
+          console.log('[Location] Background permission not granted, using foreground watcher only.');
         }
       } catch (err) {
         console.error('[Location] Failed to start tracking:', err);
@@ -122,6 +122,9 @@ export const useLocationTracking = () => {
     // Cleanup: stop the background task when user signs out
     return () => {
       (global as any).__eventaUserId = null;
+      if (locationSub) {
+        locationSub.remove();
+      }
       Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME)
         .then((running) => {
           if (running) Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
