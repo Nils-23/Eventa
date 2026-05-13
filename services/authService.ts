@@ -41,9 +41,13 @@ export const checkAndCreateUser = async (user: User) => {
         username: generateRandomUsername(),
         created_at: serverTimestamp(),
         last_active: serverTimestamp(),
-      });
       console.log('New user created successfully!');
     } else {
+      const data = userSnap.data();
+      if (data?.suspended) {
+        await auth.signOut();
+        throw new Error('ACCOUNT_SUSPENDED');
+      }
       // Existing user - update last_active
       await setDoc(userRef, {
         last_active: serverTimestamp(),

@@ -9,6 +9,7 @@ import {
   TextInput,
   ActivityIndicator,
   Image,
+  Alert,
 } from 'react-native';
 import { Apple, Smartphone, ArrowLeft } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
@@ -37,7 +38,13 @@ export const LoginScreen = () => {
       setIsLoading('apple');
       await handleAppleLogin();
     } catch (e: any) {
-      if (e.code !== 'ERR_REQUEST_CANCELED') {
+      if (e.message === 'ACCOUNT_SUSPENDED') {
+        Alert.alert(
+          'Account Suspended',
+          'Due to previous activities that are not aligned with our policies we have been forced to temporarily suspend your account. Contact us via email in case you think this is wrong.\n\nsupport@eventas.live',
+          [{ text: 'OK' }]
+        );
+      } else if (e.code !== 'ERR_REQUEST_CANCELED') {
         Toast.show({
           type: 'error',
           text1: 'Apple Login Failed',
@@ -54,7 +61,13 @@ export const LoginScreen = () => {
       setIsLoading('google');
       await handleGoogleLogin();
     } catch (e: any) {
-      if (e.code !== 'SIGN_IN_CANCELLED') {
+      if (e.message === 'ACCOUNT_SUSPENDED') {
+        Alert.alert(
+          'Account Suspended',
+          'Due to previous activities that are not aligned with our policies we have been forced to temporarily suspend your account. Contact us via email in case you think this is wrong.\n\nsupport@eventas.live',
+          [{ text: 'OK' }]
+        );
+      } else if (e.code !== 'SIGN_IN_CANCELLED') {
         Toast.show({
           type: 'error',
           text1: 'Google Login Failed',
@@ -99,9 +112,17 @@ export const LoginScreen = () => {
       setIsLoading('phone');
       await handlePhoneOTPConfirm(verificationId, verificationCode);
     } catch (e: any) {
-      let msg = e.message;
-      if (e.code === 'auth/invalid-verification-code') msg = 'Invalid code entered. Try again.';
-      Toast.show({ type: 'error', text1: 'Verification Failed', text2: msg });
+      if (e.message === 'ACCOUNT_SUSPENDED') {
+        Alert.alert(
+          'Account Suspended',
+          'Due to previous activities that are not aligned with our policies we have been forced to temporarily suspend your account. Contact us via email in case you think this is wrong.\n\nsupport@eventas.live',
+          [{ text: 'OK' }]
+        );
+      } else {
+        let msg = e.message;
+        if (e.code === 'auth/invalid-verification-code') msg = 'Invalid code entered. Try again.';
+        Toast.show({ type: 'error', text1: 'Verification Failed', text2: msg });
+      }
     } finally {
       setIsLoading(null);
     }
