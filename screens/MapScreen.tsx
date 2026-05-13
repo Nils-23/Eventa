@@ -277,7 +277,7 @@ export const MapScreen = () => {
   console.log(`[HEATMAP-DEBUG] MapScreen render #${renderCountRef.current} | heatPoints.length=${heatPoints.length} | showHeatmapOverlay=${true}`);
 
   const [userLocation, setUserLocation] = useState<Location.LocationObjectCoords | null>(null);
-  const [selectedLiveVenue, setSelectedLiveVenue] = useState<LiveVenue | null>(null);
+
   const [isViewerVisible, setIsViewerVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
@@ -552,7 +552,7 @@ export const MapScreen = () => {
   };
 
   const handleAddStory = () => {
-    if (selectedLiveVenue) executeStoryUpload(selectedLiveVenue);
+    if (selectedMapVenue) executeStoryUpload(selectedMapVenue as LiveVenue);
   };
 
   const closestLiveVenue = useMemo(() => {
@@ -576,8 +576,8 @@ export const MapScreen = () => {
   };
 
   // Safe distance check
-  const isNearLiveVenue = selectedLiveVenue && userLocation ?
-    getDistanceInMeters(userLocation.latitude, userLocation.longitude, selectedLiveVenue.latitude, selectedLiveVenue.longitude) <= 200
+  const isNearLiveVenue = selectedMapVenue && userLocation ?
+    getDistanceInMeters(userLocation.latitude, userLocation.longitude, selectedMapVenue.latitude, selectedMapVenue.longitude) <= 200
     : false;
 
   return (
@@ -683,12 +683,12 @@ export const MapScreen = () => {
       )}
 
       {/* Story Viewer Modal */}
-      {selectedLiveVenue && (
+      {selectedMapVenue && (
         <StoryViewer
           isVisible={isViewerVisible}
           onClose={() => setIsViewerVisible(false)}
-          stories={stories.filter(s => s.venue_id === selectedLiveVenue.id)}
-          venueName={selectedLiveVenue.name}
+          stories={stories.filter(s => s.venue_id === selectedMapVenue.id)}
+          venueName={selectedMapVenue.name}
           canAddStory={Boolean(isNearLiveVenue)}
           onAddStory={handleAddStory}
         />

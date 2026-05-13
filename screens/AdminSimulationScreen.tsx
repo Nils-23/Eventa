@@ -153,7 +153,7 @@ export const AdminSimulationScreen = () => {
               <View style={styles.venueInfo}>
                 <Text style={styles.venueName}>{venue.name}</Text>
                 <Text style={styles.venueCurrentCount}>
-                  Current Target: {venue.simulatedUsersCount ?? 80}
+                  Current Target: {venue.simulatedUsersCount ?? 20}
                 </Text>
               </View>
               
@@ -161,7 +161,7 @@ export const AdminSimulationScreen = () => {
                 <TextInput
                   style={styles.countInput}
                   keyboardType="numeric"
-                  placeholder={String(venue.simulatedUsersCount ?? 80)}
+                  placeholder={String(venue.simulatedUsersCount ?? 20)}
                   placeholderTextColor="#666"
                   value={editingCounts[venue.id] !== undefined ? editingCounts[venue.id] : ''}
                   onChangeText={(text) => setEditingCounts(prev => ({ ...prev, [venue.id]: text }))}
