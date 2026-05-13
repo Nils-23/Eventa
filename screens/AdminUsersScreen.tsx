@@ -4,9 +4,9 @@ import {
   ActivityIndicator, FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, BadgeCheck, Wine, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { ArrowLeft, BadgeCheck, Wine, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 import { firestore } from '../services/firebase';
 import {
@@ -66,6 +66,21 @@ export const AdminUsersScreen = () => {
       fetchUsers();
     } catch (error) {
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to update badge.' });
+    }
+  };
+
+  // ── Suspension toggle ────────────────────────────────────────────────────
+  const handleToggleSuspend = async (user: any) => {
+    const isSuspended = user.suspended === true;
+    try {
+      const userRef = doc(firestore, 'users', user.id);
+      await updateDoc(userRef, {
+        suspended: !isSuspended
+      });
+      Toast.show({ type: 'success', text1: isSuspended ? 'Restored' : 'Suspended', text2: `Account access updated for ${user.username}.` });
+      fetchUsers();
+    } catch (error) {
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to update suspension status.' });
     }
   };
 
@@ -178,6 +193,22 @@ export const AdminUsersScreen = () => {
                     >
                       <Text style={[styles.actionBtnText, isCertified && styles.actionBtnTextRevoke]}>
                         {isCertified ? 'Revoke' : 'Grant'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* ── Suspension action ──────────────────── */}
+                  <View style={styles.actionRow}>
+                    <View style={styles.actionLabel}>
+                      <AlertTriangle color={item.suspended ? '#FF0055' : '#555'} size={16} />
+                      <Text style={styles.actionLabelText}>Account Access</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, item.suspended ? styles.grantBtn : styles.revokeBtn]}
+                      onPress={() => handleToggleSuspend(item)}
+                    >
+                      <Text style={[styles.actionBtnText, !item.suspended && styles.actionBtnTextRevoke]}>
+                        {item.suspended ? 'Restore Access' : 'Suspend Account'}
                       </Text>
                     </TouchableOpacity>
                   </View>
