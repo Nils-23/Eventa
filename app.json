@@ -38,7 +38,8 @@
         "googleMaps": {
           "apiKey": "REDACTED_GOOGLE_MAPS_KEY"
         }
-      }
+      },
+      "usesAppleSignIn": true
     },
     "android": {
       "adaptiveIcon": {
@@ -67,7 +68,8 @@
           "androidGoogleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY",
           "iosGoogleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY"
         }
-      ]
+      ],
+      "expo-apple-authentication"
     ]
   }
 }
