@@ -15,6 +15,7 @@ import { useAuth } from './hooks/useAuth';
 import { useAppStore } from './hooks/useAppStore';
 import { useNotificationEngine } from './hooks/useNotificationEngine';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Initialize Firebase (will be evaluated once)
 import './services/firebase';
@@ -40,7 +41,7 @@ export default function App() {
   }
 
   return (
-    <>
+    <ErrorBoundary>
       <NavigationContainer theme={DarkTheme}>
         <Stack.Navigator
           screenOptions={{
@@ -63,6 +64,6 @@ export default function App() {
         </Stack.Navigator>
       </NavigationContainer>
       <Toast config={toastConfig} topOffset={60} />
-    </>
+    </ErrorBoundary>
   );
 }
