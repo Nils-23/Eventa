@@ -16,6 +16,7 @@ import { useAppStore } from './hooks/useAppStore';
 import { useNotificationEngine } from './hooks/useNotificationEngine';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { LiveVenuesProvider } from './contexts/LiveVenuesContext';
 
 // Initialize Firebase (will be evaluated once)
 import './services/firebase';
@@ -42,27 +43,29 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <NavigationContainer theme={DarkTheme}>
-        <Stack.Navigator
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: '#121212' },
-          }}
-        >
-          {!user ? (
-            <Stack.Screen name="Login" component={LoginScreen} />
-          ) : (
-            <>
-              <Stack.Screen name="Main" component={MainTabs} />
-              <Stack.Screen name="Achievements" component={AchievementsScreen} />
-              <Stack.Screen name="Settings" component={SettingsScreen} />
-              <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
-              <Stack.Screen name="AdminSimulation" component={AdminSimulationScreen} />
-              <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
-            </>
-          )}
-        </Stack.Navigator>
-      </NavigationContainer>
+      <LiveVenuesProvider>
+        <NavigationContainer theme={DarkTheme}>
+          <Stack.Navigator
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: '#121212' },
+            }}
+          >
+            {!user ? (
+              <Stack.Screen name="Login" component={LoginScreen} />
+            ) : (
+              <>
+                <Stack.Screen name="Main" component={MainTabs} />
+                <Stack.Screen name="Achievements" component={AchievementsScreen} />
+                <Stack.Screen name="Settings" component={SettingsScreen} />
+                <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+                <Stack.Screen name="AdminSimulation" component={AdminSimulationScreen} />
+                <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
+              </>
+            )}
+          </Stack.Navigator>
+        </NavigationContainer>
+      </LiveVenuesProvider>
       <Toast config={toastConfig} topOffset={60} />
     </ErrorBoundary>
   );
