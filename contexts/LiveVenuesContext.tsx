@@ -2,7 +2,9 @@ import React, { createContext, useContext, useEffect, useState, useRef } from 'r
 import * as Location from 'expo-location';
 import { collection, onSnapshot, query, doc, getDoc } from 'firebase/firestore';
 import { ref, onValue } from 'firebase/database';
-import { firestore, realtimeDB } from '../services/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, firestore, realtimeDB } from '../services/firebase';
+
 
 // ─── Types (re-exported so consumers don't need to change) ────────────────────
 export type ActivityLevel = 'None' | 'Low' | 'Medium' | 'High' | 'Crazy';
@@ -248,74 +250,94 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   useEffect(() => {
-    // 0. Load Simulation Config
-    getDoc(doc(firestore, 'settings', 'simulation'))
-      .then((docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          simConfigRef.current = {
-            enabled: data.enabled ?? true,
-            threshold: data.threshold ?? 100,
-          };
-          requestRecalculate();
-        }
-      })
-      .catch((e) => console.warn('[LiveVenuesContext] Failed to load sim config:', e));
+    // Wait for Firebase Auth to resolve before attaching any listeners
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        // Not authenticated — clear data and wait
+        venuesRef.current = [];
+        locationsRef.current = {};
+        simLocationsRef.current = {};
+        setIsLoading(false);
+        return;
+      }
 
-    // 1. User location watcher
-    let locationSub: Location.LocationSubscription | null = null;
-    Location.getForegroundPermissionsAsync()
-      .then(({ status }) => {
-        if (status !== 'granted') return;
-        return Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 20 },
-          (loc) => {
-            userPosRef.current = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+      setIsLoading(true);
+
+      // 0. Load Simulation Config
+      getDoc(doc(firestore, 'settings', 'simulation'))
+        .then((docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            simConfigRef.current = {
+              enabled: data.enabled ?? true,
+              threshold: data.threshold ?? 100,
+            };
             requestRecalculate();
           }
-        ).then((sub) => {
-          locationSub = sub;
-        });
-      })
-      .catch((e) => console.warn('[LiveVenuesContext] Location watch error:', e));
+        })
+        .catch((e) => console.warn('[LiveVenuesContext] Failed to load sim config:', e));
 
-    // 2. Venues listener
-    const unsubVenues = onSnapshot(
-      query(collection(firestore, 'venues')),
-      (snap) => {
-        venuesRef.current = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RawVenue, 'id'>) }));
-        requestRecalculate();
-      },
-      (e) => console.warn('[LiveVenuesContext] Venues snapshot error:', e)
-    );
+      // 1. User location watcher
+      let locationSub: Location.LocationSubscription | null = null;
+      Location.getForegroundPermissionsAsync()
+        .then(({ status }) => {
+          if (status !== 'granted') return;
+          return Location.watchPositionAsync(
+            { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 20 },
+            (loc) => {
+              userPosRef.current = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+              requestRecalculate();
+            }
+          ).then((sub) => {
+            locationSub = sub;
+          });
+        })
+        .catch((e) => console.warn('[LiveVenuesContext] Location watch error:', e));
 
-    // 3. Real locations listener
-    const unsubLocs = onValue(
-      ref(realtimeDB, 'locations'),
-      (snap) => {
-        locationsRef.current = snap.exists() ? snap.val() : {};
-        requestRecalculate();
-      },
-      (e) => console.warn('[LiveVenuesContext] Locations listener error:', e)
-    );
+      // 2. Venues listener
+      const unsubVenues = onSnapshot(
+        query(collection(firestore, 'venues')),
+        (snap) => {
+          venuesRef.current = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RawVenue, 'id'>) }));
+          requestRecalculate();
+        },
+        (e) => console.warn('[LiveVenuesContext] Venues snapshot error:', e)
+      );
 
-    // 4. Simulated locations listener
-    const unsubSimLocs = onValue(
-      ref(realtimeDB, 'simulated_locations'),
-      (snap) => {
-        simLocationsRef.current = snap.exists() ? snap.val() : {};
-        requestRecalculate();
-      },
-      (e) => console.warn('[LiveVenuesContext] SimLocations listener error:', e)
-    );
+      // 3. Real locations listener
+      const unsubLocs = onValue(
+        ref(realtimeDB, 'locations'),
+        (snap) => {
+          locationsRef.current = snap.exists() ? snap.val() : {};
+          requestRecalculate();
+        },
+        (e) => console.warn('[LiveVenuesContext] Locations listener error:', e)
+      );
+
+      // 4. Simulated locations listener
+      const unsubSimLocs = onValue(
+        ref(realtimeDB, 'simulated_locations'),
+        (snap) => {
+          simLocationsRef.current = snap.exists() ? snap.val() : {};
+          requestRecalculate();
+        },
+        (e) => console.warn('[LiveVenuesContext] SimLocations listener error:', e)
+      );
+
+      // Store cleanup functions to be called when auth changes or component unmounts
+      return () => {
+        if (locationSub) locationSub.remove();
+        unsubVenues();
+        unsubLocs();
+        unsubSimLocs();
+      };
+    });
 
     return () => {
-      if (locationSub) locationSub.remove();
-      unsubVenues();
-      unsubLocs();
-      unsubSimLocs();
+      unsubAuth();
     };
   }, []);
+
 
   return (
     <LiveVenuesContext.Provider value={{ venues, heatPoints, isLoading }}>
