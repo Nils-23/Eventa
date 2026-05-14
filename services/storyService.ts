@@ -1,4 +1,4 @@
-import { collection, addDoc, serverTimestamp, doc, updateDoc, increment, getDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, updateDoc, increment, getDoc, deleteDoc } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { firestore, storage } from './firebase';
 import { checkAndUnlockAchievements } from './achievementService';
@@ -84,4 +84,9 @@ export const createSimulatedStory = async (
   });
 
   return docRef.id;
+};
+
+export const deleteStory = async (storyId: string): Promise<void> => {
+  const storyRef = doc(firestore, 'stories', storyId);
+  await deleteDoc(storyRef);
 };
