@@ -7,6 +7,7 @@ import { auth } from '../services/firebase';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
 import { fetchUsername, updateUsername } from '../services/userService';
+import { deleteStory } from '../services/storyService';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { useNavigation } from '@react-navigation/native';
@@ -53,6 +54,14 @@ export const ProfileScreen = () => {
 
   const handleSignOut = () => {
     auth.signOut();
+  };
+
+  const handleRemoveStory = async (storyId: string) => {
+    try {
+      await deleteStory(storyId);
+    } catch (error) {
+      console.error('Failed to delete story:', error);
+    }
   };
 
   const handleEditUsername = () => {
@@ -194,6 +203,7 @@ export const ProfileScreen = () => {
         venueName="My Stories"
         canAddStory={false}
         onAddStory={() => {}}
+        onRemoveStory={handleRemoveStory}
       />
     </SafeAreaView>
   );

@@ -9,10 +9,11 @@ import {
   Text,
   Animated,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Video, ResizeMode, Audio } from 'expo-av';
-import { X, Plus, ArrowLeft, User as UserIcon } from 'lucide-react-native';
+import { X, Plus, ArrowLeft, User as UserIcon, Trash2 } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StoryData } from '../services/storyService';
 import { fetchUsername } from '../services/userService';
@@ -26,6 +27,8 @@ interface StoryViewerProps {
   venueName?: string;
   canAddStory: boolean;
   onAddStory: () => void;
+  /** When provided, a "Remove Story" button is shown and this callback is invoked with the story id */
+  onRemoveStory?: (storyId: string) => void;
 }
 
 const { width, height } = Dimensions.get('window');
@@ -38,7 +41,10 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   venueName,
   canAddStory,
   onAddStory,
+  onRemoveStory,
 }) => {
+  const insets = useSafeAreaInsets();
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
@@ -54,7 +60,6 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const currentStory = stories.length > 0 ? stories[currentIndex] : null;
 
   // ─── Prefetch usernames for all stories at once ──────────────────────────
-  // This runs once when the story list changes, so usernames are ready instantly
   useEffect(() => {
     if (!isVisible || stories.length === 0) return;
     const uniqueIds = [...new Set(stories.map(s => s.user_id))];
@@ -75,8 +80,6 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   // ─── Audio session: override iOS silent switch when viewer opens ────────
   useEffect(() => {
     if (isVisible) {
-      // playsInSilentModeIOS: true makes audio play even when the device
-      // ringer/silent switch is toggled off — required for story videos.
       Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
         allowsRecordingIOS: false,
@@ -84,7 +87,6 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         shouldDuckAndroid: false,
       }).catch(() => {});
     } else {
-      // Restore default audio behaviour when viewer closes
       Audio.setAudioModeAsync({
         playsInSilentModeIOS: false,
         allowsRecordingIOS: false,
@@ -133,7 +135,6 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         imageTimerRef.current = null;
       }
     } else if (progressValue.current > 0) {
-      // Resume from where we paused
       const remaining = IMAGE_DURATION_MS * (1 - progressValue.current);
       const anim = Animated.timing(progressAnim, {
         toValue: 1,
@@ -200,6 +201,31 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     return Math.floor(diff / 3600000);
   };
 
+  // ─── Remove story ────────────────────────────────────────────────────────
+  const handleRemoveStory = useCallback(() => {
+    if (!currentStory?.id || !onRemoveStory) return;
+    Alert.alert(
+      'Remove Story',
+      'Are you sure you want to delete this story? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            onRemoveStory(currentStory.id!);
+            // If this was the last story, close the viewer
+            if (stories.length <= 1) {
+              onClose();
+            } else if (currentIndex >= stories.length - 1) {
+              setCurrentIndex(prev => prev - 1);
+            }
+          },
+        },
+      ]
+    );
+  }, [currentStory, onRemoveStory, stories.length, currentIndex, onClose]);
+
   // ─── Progress bar interpolations (memoised per story count) ──────────────
   const progressInterpolation = useMemo(() =>
     progressAnim.interpolate({
@@ -210,6 +236,9 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     [progressAnim]
   );
 
+  // Safe-area aware top offset for header elements
+  const headerTop = Math.max(insets.top, 12);
+
   // ─── Render ──────────────────────────────────────────────────────────────
   return (
     <Modal visible={isVisible} animationType="fade" transparent={false} statusBarTranslucent>
@@ -218,7 +247,10 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         {stories.length === 0 ? (
           /* ── Empty state ─────────────────────────────── */
           <View style={styles.emptyContainer}>
-            <Pressable style={styles.backButtonAbsolute} onPress={onClose}>
+            <Pressable
+              style={[styles.backButtonAbsolute, { top: headerTop }]}
+              onPress={onClose}
+            >
               <ArrowLeft color="#FFF" size={28} />
             </Pressable>
             <Text style={styles.emptyText}>No stories here yet.</Text>
@@ -242,8 +274,8 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                 resizeMode={ResizeMode.COVER}
                 shouldPlay={!isPaused && isVisible}
                 isLooping={false}
-                volume={1.0}          // ← explicit full volume, fixes muted videos
-                isMuted={false}       // ← explicitly unmuted
+                volume={1.0}
+                isMuted={false}
                 progressUpdateIntervalMillis={100}
                 onPlaybackStatusUpdate={handleVideoUpdate}
                 onError={() => {
@@ -296,7 +328,8 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
             />
 
             {/* ── Header (progress + metadata) ─────────── */}
-            <SafeAreaView style={styles.headerContainer} pointerEvents="none" edges={['top']}>
+            {/* Uses safe-area inset so it's never hidden behind notch/island */}
+            <View style={[styles.headerContainer, { paddingTop: headerTop }]} pointerEvents="none">
               {/* Progress bars */}
               <View style={styles.progressContainer}>
                 {stories.map((_, index) => {
@@ -339,21 +372,35 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                   <Text style={styles.timeText}>{calculateHoursAgo(currentStory.created_at)}h</Text>
                 </View>
               </View>
-            </SafeAreaView>
+            </View>
+
+            {/* ── Close button (safe-area aware) ────────── */}
+            <Pressable
+              style={[styles.closeButtonAbsolute, { top: headerTop + 44 }]}
+              onPress={onClose}
+            >
+              <X color="#FFF" size={28} />
+            </Pressable>
 
             {/* ── Add Story button ──────────────────────── */}
             {canAddStory && (
-              <View style={styles.controlsRow}>
+              <View style={[styles.controlsRow, { bottom: Math.max(insets.bottom, 40) }]}>
                 <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
                   <Plus color="#000" size={24} />
                 </Pressable>
               </View>
             )}
 
-            {/* ── Close button ──────────────────────────── */}
-            <Pressable style={styles.closeButtonAbsolute} onPress={onClose}>
-              <X color="#FFF" size={28} />
-            </Pressable>
+            {/* ── Remove Story button (shown only when onRemoveStory is provided) ── */}
+            {onRemoveStory && (
+              <Pressable
+                style={[styles.removeButton, { bottom: Math.max(insets.bottom + 16, 40) }]}
+                onPress={handleRemoveStory}
+              >
+                <Trash2 color="#FF3B30" size={18} />
+                <Text style={styles.removeButtonText}>Remove Story</Text>
+              </Pressable>
+            )}
           </>
         ) : null}
       </View>
@@ -419,7 +466,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 180,
+    height: 200,
     zIndex: 2,
   },
   headerContainer: {
@@ -428,7 +475,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     paddingHorizontal: 12,
-    paddingTop: 8,
+    // paddingTop is set dynamically via insets
     zIndex: 3,
   },
   progressContainer: {
@@ -501,10 +548,25 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
   },
 
-  // ── Controls ──────────────────────────────────────────────────────────────
+  // ── Close button ──────────────────────────────────────────────────────────
+  closeButtonAbsolute: {
+    position: 'absolute',
+    right: 16,
+    zIndex: 4,
+    padding: 8,
+  },
+
+  // ── Back button (empty state) ──────────────────────────────────────────────
+  backButtonAbsolute: {
+    position: 'absolute',
+    left: 16,
+    zIndex: 4,
+    padding: 8,
+  },
+
+  // ── Add Story button ──────────────────────────────────────────────────────
   controlsRow: {
     position: 'absolute',
-    bottom: 40,
     width: '100%',
     alignItems: 'center',
     zIndex: 4,
@@ -522,18 +584,29 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 8,
   },
-  closeButtonAbsolute: {
+
+  // ── Remove Story button ───────────────────────────────────────────────────
+  removeButton: {
     position: 'absolute',
-    top: 56,
-    right: 16,
-    zIndex: 4,
-    padding: 8,
+    alignSelf: 'center',
+    left: '50%',
+    transform: [{ translateX: -80 }],
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255,59,48,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,59,48,0.5)',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 30,
+    zIndex: 5,
+    width: 160,
+    justifyContent: 'center',
   },
-  backButtonAbsolute: {
-    position: 'absolute',
-    top: 56,
-    left: 16,
-    zIndex: 4,
-    padding: 8,
+  removeButtonText: {
+    color: '#FF3B30',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
