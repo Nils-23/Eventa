@@ -3,7 +3,7 @@ import { auth, firestore } from './firebase';
 import { User, GoogleAuthProvider, signInWithCredential, OAuthProvider, PhoneAuthProvider, ApplicationVerifier, AuthError } from 'firebase/auth';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 
 // Configure Google Sign in
 // IMPORTANT: You will need to replace this with your actual Web Client ID from Firebase Console later
@@ -54,8 +54,10 @@ export const checkAndCreateUser = async (user: User) => {
         last_active: serverTimestamp(),
       }, { merge: true });
     }
-  } catch (error) {
-    console.error('Error in checkAndCreateUser:', error);
+  } catch (error: any) {
+    if (error.message !== 'ACCOUNT_SUSPENDED') {
+      console.error('Error in checkAndCreateUser:', error);
+    }
     throw error;
   }
 };
@@ -67,8 +69,10 @@ export const handleGoogleLogin = async () => {
   try {
     await GoogleSignin.hasPlayServices();
     const userInfo = await GoogleSignin.signIn();
+
+    // User cancelled — idToken will be absent. Treat as a silent no-op.
     if (!userInfo.data?.idToken) {
-      throw new Error('No ID token present!');
+      return null;
     }
 
     const credential = GoogleAuthProvider.credential(userInfo.data.idToken);
@@ -77,10 +81,27 @@ export const handleGoogleLogin = async () => {
     await checkAndCreateUser(userCredential.user);
     return userCredential.user;
   } catch (error: any) {
-    console.error('Google Sign-In Error:', error);
+    // SIGN_IN_CANCELLED is thrown when the user dismisses the Google sheet.
+    // Also guard against the statusCode-based cancellation from older SDK versions.
+    const isCancellation =
+      error?.code === 'SIGN_IN_CANCELLED' ||
+      error?.code === statusCodes?.SIGN_IN_CANCELLED ||
+      error?.message?.includes('cancelled') ||
+      error?.message?.includes('canceled') ||
+      error?.message?.includes('No ID token');
+
+    if (isCancellation) {
+      // Silently ignore — user just changed their mind
+      return null;
+    }
+
+    if (error.message !== 'ACCOUNT_SUSPENDED') {
+      console.error('Google Sign-In Error:', error);
+    }
     throw error;
   }
 };
+
 
 /**
  * Handles Apple Login flow
@@ -117,7 +138,9 @@ export const handleAppleLogin = async () => {
     return userCredential.user;
   } catch (error: any) {
     if (error.code !== 'ERR_REQUEST_CANCELED') {
-      console.error('Apple Sign-In Error:', error);
+      if (error.message !== 'ACCOUNT_SUSPENDED') {
+        console.error('Apple Sign-In Error:', error);
+      }
       throw error;
     }
   }
@@ -152,7 +175,9 @@ export const handlePhoneOTPConfirm = async (
     await checkAndCreateUser(userCredential.user);
     return userCredential.user;
   } catch (error: any) {
-    console.error('Phone OTP Confirm Error:', error);
+    if (error.message !== 'ACCOUNT_SUSPENDED') {
+      console.error('Phone OTP Confirm Error:', error);
+    }
     throw error;
   }
 };

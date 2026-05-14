@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,8 @@ import {
   Image,
   Alert,
   ScrollView,
+  Animated,
+  Dimensions,
 } from 'react-native';
 import { Apple, Smartphone, ArrowLeft } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
@@ -24,6 +26,100 @@ import {
 import app from '../services/firebase';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+
+// ─── Animated Light Ray ───────────────────────────────────────────────────────
+interface RayConfig {
+  color: string;
+  rotation: string;
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+  initialOpacity: number;
+  animDuration: number;
+  animDelay: number;
+}
+
+const RAY_CONFIGS: RayConfig[] = [
+  // Teal rays (top-right)
+  { color: 'rgba(0, 210, 200, 0.18)', rotation: '-35deg', top: -80, left: SCREEN_W * 0.25, width: SCREEN_W * 1.2, height: 140, initialOpacity: 0.6, animDuration: 4200, animDelay: 0 },
+  { color: 'rgba(0, 180, 210, 0.14)', rotation: '-28deg', top: 30, left: SCREEN_W * 0.1, width: SCREEN_W * 1.4, height: 90, initialOpacity: 0.4, animDuration: 5500, animDelay: 800 },
+  { color: 'rgba(80, 200, 220, 0.12)', rotation: '-42deg', top: 110, left: SCREEN_W * 0.3, width: SCREEN_W * 1.1, height: 60, initialOpacity: 0.3, animDuration: 6000, animDelay: 400 },
+  // Purple rays (left)
+  { color: 'rgba(140, 70, 230, 0.20)', rotation: '25deg', top: SCREEN_H * 0.3, left: -SCREEN_W * 0.3, width: SCREEN_W * 1.3, height: 120, initialOpacity: 0.5, animDuration: 4800, animDelay: 1200 },
+  { color: 'rgba(160, 80, 240, 0.14)', rotation: '18deg', top: SCREEN_H * 0.45, left: -SCREEN_W * 0.2, width: SCREEN_W * 1.1, height: 70, initialOpacity: 0.3, animDuration: 5800, animDelay: 600 },
+  // Bottom teal wave
+  { color: 'rgba(0, 200, 190, 0.16)', rotation: '-15deg', top: SCREEN_H * 0.6, left: -SCREEN_W * 0.1, width: SCREEN_W * 1.5, height: 100, initialOpacity: 0.4, animDuration: 5200, animDelay: 1600 },
+  { color: 'rgba(100, 60, 220, 0.18)', rotation: '10deg', top: SCREEN_H * 0.72, left: -SCREEN_W * 0.2, width: SCREEN_W * 1.4, height: 80, initialOpacity: 0.35, animDuration: 4600, animDelay: 900 },
+];
+
+const AnimatedRay: React.FC<RayConfig> = ({
+  color, rotation, top, left, width, height,
+  initialOpacity, animDuration, animDelay,
+}) => {
+  const opacity = useRef(new Animated.Value(initialOpacity)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const opacityAnim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: initialOpacity * 1.7,
+          duration: animDuration,
+          delay: animDelay,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: initialOpacity * 0.3,
+          duration: animDuration,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    const translateAnim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(translateY, {
+          toValue: 18,
+          duration: animDuration * 1.1,
+          delay: animDelay,
+          useNativeDriver: true,
+        }),
+        Animated.timing(translateY, {
+          toValue: -10,
+          duration: animDuration * 0.9,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    opacityAnim.start();
+    translateAnim.start();
+    return () => {
+      opacityAnim.stop();
+      translateAnim.stop();
+    };
+  }, []);
+
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        top,
+        left,
+        width,
+        height,
+        backgroundColor: color,
+        borderRadius: height / 2,
+        transform: [{ rotate: rotation }, { translateY }],
+        opacity,
+      }}
+    />
+  );
+};
+
+// ─── Main Login Screen ────────────────────────────────────────────────────────
 export const LoginScreen = () => {
   const [isLoading, setIsLoading] = useState<string | null>(null);
 
@@ -92,11 +188,9 @@ export const LoginScreen = () => {
       Toast.show({ type: 'error', text1: 'Invalid Number', text2: 'Please enter a valid phone number with country code.' });
       return;
     }
-
     try {
       setIsLoading('phone');
       const formattedPhone = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
-      // Trigger invisible reCAPTCHA -> send SMS
       const vId = await handlePhoneLoginStart(formattedPhone, recaptchaVerifier.current as any);
       setVerificationId(vId);
       Toast.show({ type: 'info', text1: 'Code Sent', text2: 'Please check your messages.' });
@@ -136,273 +230,405 @@ export const LoginScreen = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.root}>
+      {/* ── Animated Background ─────────────────────────────────────────── */}
+      {/* Deep purple → near-black gradient base */}
+      <View style={styles.bgBase} />
+
+      {/* Animated light rays */}
+      {RAY_CONFIGS.map((cfg, i) => (
+        <AnimatedRay key={i} {...cfg} />
+      ))}
+
+      {/* Subtle vignette overlay */}
+      <View style={styles.vignette} />
+
+      {/* ── Content ─────────────────────────────────────────────────────── */}
       <FirebaseRecaptchaVerifierModal
         ref={recaptchaVerifier}
         firebaseConfig={app.options}
         attemptInvisibleVerification={true}
       />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
-      >
-        <ScrollView 
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          bounces={false}
+
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
         >
-          <View style={styles.header}>
-          <Image
-            source={require('../assets/EventasNewLogo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <Text style={styles.subtitle}>Sign in to discover your next vibe.</Text>
-        </View>
-
-        <View style={styles.actionContainer}>
-          {Platform.OS === 'ios' && (
-            <TouchableOpacity
-              style={[styles.providerButton, styles.appleButton]}
-              onPress={onApplePress}
-              disabled={!!isLoading}
-            >
-              {isLoading === 'apple' ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <>
-                  <Apple color="#FFFFFF" size={24} style={styles.icon} />
-                  <Text style={styles.appleButtonText}>Continue with Apple</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={[styles.providerButton, styles.googleButton]}
-            onPress={onGooglePress}
-            disabled={!!isLoading}
+          <ScrollView
+            contentContainerStyle={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            bounces={false}
           >
-            {isLoading === 'google' ? (
-              <ActivityIndicator color="#000000" />
-            ) : (
-              <>
-                {/* Simplified "G" icon standard placeholder. Use SVG in production */}
-                <Text style={[styles.icon, { fontWeight: 'bold', fontSize: 20, color: '#DB4437' }]}>G</Text>
-                <Text style={styles.googleButtonText}>Continue with Google</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <View style={styles.dividerContainer}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          {showPhoneInput ? (
-            verificationId ? (
-              // ── Step 2: Enter OTP Code ───────────────────────────────────────────
-              <View style={styles.otpOuterContainer}>
-                <TouchableOpacity onPress={onResetPhoneFlow} style={styles.backButton}>
-                  <ArrowLeft color="#1A1A1A" size={20} />
-                  <Text style={styles.backText}>Change number</Text>
-                </TouchableOpacity>
-                <View style={styles.phoneInputContainer}>
-                  <TextInput
-                    style={[styles.phoneInput, { textAlign: 'center', letterSpacing: 8, fontSize: 22 }]}
-                    placeholder="000000"
-                    keyboardType="number-pad"
-                    value={verificationCode}
-                    onChangeText={setVerificationCode}
-                    maxLength={6}
-                    autoFocus
-                    placeholderTextColor="#999"
-                  />
-                  <TouchableOpacity
-                    style={styles.phoneSubmitButton}
-                    onPress={onVerifyOTPPress}
-                    disabled={!!isLoading}
-                  >
-                    {isLoading === 'phone' ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.phoneSubmitText}>Verify</Text>}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              // ── Step 1: Enter Phone Number ───────────────────────────────────────
-              <View style={styles.phoneInputContainer}>
-                <TextInput
-                  style={styles.phoneInput}
-                  placeholder="+254712345678"
-                  keyboardType="phone-pad"
-                  value={phoneNumber}
-                  onChangeText={setPhoneNumber}
-                  autoFocus
-                  placeholderTextColor="#999"
+            {/* Logo + Brand */}
+            <View style={styles.heroSection}>
+              <View style={styles.logoWrapper}>
+                <Image
+                  source={require('../assets/EventasNewLogo.png')}
+                  style={styles.logo}
+                  resizeMode="contain"
                 />
-                <TouchableOpacity
-                  style={styles.phoneSubmitButton}
-                  onPress={onSendOTPPress}
-                  disabled={!!isLoading}
-                >
-                  {isLoading === 'phone' ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.phoneSubmitText}>Send OTP</Text>}
-                </TouchableOpacity>
               </View>
-            )
-          ) : (
-            <TouchableOpacity
-              style={[styles.providerButton, styles.phoneButtonOutline]}
-              onPress={onPhonePress}
-              disabled={!!isLoading}
-            >
-              <Smartphone color="#1A1A1A" size={24} style={styles.icon} />
-              <Text style={styles.phoneButtonText}>Continue with Phone</Text>
-            </TouchableOpacity>
-          )}
+              <Text style={styles.tagline}>Sign in to discover your next vibe.</Text>
+            </View>
 
-        </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+            {/* Auth Buttons */}
+            <View style={styles.buttonsSection}>
+
+              {/* Apple */}
+              {Platform.OS === 'ios' && (
+                <TouchableOpacity
+                  style={styles.appleBtn}
+                  onPress={onApplePress}
+                  disabled={!!isLoading}
+                  activeOpacity={0.85}
+                >
+                  {isLoading === 'apple' ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <View style={styles.btnIconWrap}>
+                        <Apple color="#FFFFFF" size={22} />
+                      </View>
+                      <Text style={styles.appleBtnText}>Continue with Apple</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {/* Google */}
+              <TouchableOpacity
+                style={styles.googleBtn}
+                onPress={onGooglePress}
+                disabled={!!isLoading}
+                activeOpacity={0.85}
+              >
+                {isLoading === 'google' ? (
+                  <ActivityIndicator color="#1A1A1A" />
+                ) : (
+                  <>
+                    <View style={styles.btnIconWrap}>
+                      <Text style={styles.googleG}>G</Text>
+                    </View>
+                    <Text style={styles.googleBtnText}>Continue with Google</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              {/* OR Divider */}
+              <View style={styles.orRow}>
+                <View style={styles.orLine} />
+                <Text style={styles.orText}>OR</Text>
+                <View style={styles.orLine} />
+              </View>
+
+              {/* Phone — expands into input flow */}
+              {showPhoneInput ? (
+                verificationId ? (
+                  // Step 2: OTP Entry
+                  <View style={styles.phoneFlowWrap}>
+                    <TouchableOpacity onPress={onResetPhoneFlow} style={styles.backBtn}>
+                      <ArrowLeft color="rgba(255,255,255,0.7)" size={18} />
+                      <Text style={styles.backText}>Change number</Text>
+                    </TouchableOpacity>
+                    <View style={styles.phoneInputRow}>
+                      <TextInput
+                        style={[styles.phoneInput, { textAlign: 'center', letterSpacing: 10, fontSize: 24 }]}
+                        placeholder="000000"
+                        placeholderTextColor="rgba(255,255,255,0.3)"
+                        keyboardType="number-pad"
+                        value={verificationCode}
+                        onChangeText={setVerificationCode}
+                        maxLength={6}
+                        autoFocus
+                      />
+                      <TouchableOpacity
+                        style={styles.phoneSubmitBtn}
+                        onPress={onVerifyOTPPress}
+                        disabled={!!isLoading}
+                        activeOpacity={0.85}
+                      >
+                        {isLoading === 'phone'
+                          ? <ActivityIndicator color="#FFFFFF" />
+                          : <Text style={styles.phoneSubmitText}>Verify</Text>}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  // Step 1: Phone Number
+                  <View style={styles.phoneInputRow}>
+                    <TextInput
+                      style={styles.phoneInput}
+                      placeholder="+254712345678"
+                      placeholderTextColor="rgba(255,255,255,0.3)"
+                      keyboardType="phone-pad"
+                      value={phoneNumber}
+                      onChangeText={setPhoneNumber}
+                      autoFocus
+                    />
+                    <TouchableOpacity
+                      style={styles.phoneSubmitBtn}
+                      onPress={onSendOTPPress}
+                      disabled={!!isLoading}
+                      activeOpacity={0.85}
+                    >
+                      {isLoading === 'phone'
+                        ? <ActivityIndicator color="#FFFFFF" />
+                        : <Text style={styles.phoneSubmitText}>Send OTP</Text>}
+                    </TouchableOpacity>
+                  </View>
+                )
+              ) : (
+                <TouchableOpacity
+                  style={styles.phoneBtn}
+                  onPress={onPhonePress}
+                  disabled={!!isLoading}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.btnIconWrap}>
+                    <Smartphone color="rgba(255,255,255,0.85)" size={22} />
+                  </View>
+                  <Text style={styles.phoneBtnText}>Continue with Phone</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Footer tagline */}
+            <Text style={styles.footer}>
+              A universe of moments is just{'\n'}a location away.
+            </Text>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 };
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: '#FAFAFA',
+    backgroundColor: '#120825', // Deep purple-black base
   },
-  content: {
+  bgBase: {
+    ...StyleSheet.absoluteFillObject,
+    // Deep purple on left → dark navy on right
+    backgroundColor: '#1a0d35',
+  },
+  vignette: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  safeArea: {
+    flex: 1,
+  },
+  scroll: {
     flexGrow: 1,
-    padding: 24,
+    paddingHorizontal: 28,
+    paddingTop: 24,
+    paddingBottom: 40,
     justifyContent: 'center',
   },
-  header: {
-    marginBottom: 40,
+
+  // ── Hero ──────────────────────────────────────────────────────────────────
+  heroSection: {
     alignItems: 'center',
+    marginBottom: 44,
+    marginTop: 16,
+  },
+  logoWrapper: {
+    width: 220,
+    height: 180,
+    marginBottom: 8,
+    // Subtle glow behind logo
+    shadowColor: '#7B4FD4',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 30,
+    elevation: 12,
   },
   logo: {
-    width: 3640,
-    height: 230,
-    marginBottom: -10,
+    width: 220,
+    height: 180,
   },
-  title: {
-    fontSize: 42,
+  brandName: {
+    fontSize: 32,
     fontWeight: '800',
-    color: '#1A1A1A',
+    letterSpacing: 6,
+    // Gradient text via color — we use a bright purple-to-teal-ish color
+    color: '#A78BFA', // Vibrant violet
+    textShadowColor: 'rgba(100, 200, 255, 0.4)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 12,
     marginBottom: 12,
   },
-  subtitle: {
-    fontSize: 18,
-    color: '#666666',
+  tagline: {
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.75)',
+    textAlign: 'center',
+    fontWeight: '400',
+    letterSpacing: 0.2,
   },
-  actionContainer: {
+
+  // ── Auth Buttons ──────────────────────────────────────────────────────────
+  buttonsSection: {
     width: '100%',
-    gap: 16,
+    gap: 14,
   },
-  providerButton: {
+  btnIconWrap: {
+    position: 'absolute',
+    left: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Apple
+  appleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 30,
-    width: '100%',
-    position: 'relative',
-  },
-  icon: {
-    position: 'absolute',
-    left: 20,
-  },
-  appleButton: {
     backgroundColor: '#000000',
-  },
-  appleButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  googleButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E5E5',
+    borderRadius: 32,
+    paddingVertical: 17,
+    paddingHorizontal: 24,
+    position: 'relative',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 6,
   },
-  googleButtonText: {
-    color: '#000000',
-    fontSize: 18,
+  appleBtnText: {
+    color: '#FFFFFF',
+    fontSize: 17,
     fontWeight: '600',
+    letterSpacing: 0.2,
   },
-  dividerContainer: {
+
+  // Google
+  googleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 12,
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 32,
+    paddingVertical: 17,
+    paddingHorizontal: 24,
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 6,
   },
-  dividerLine: {
+  googleBtnText: {
+    color: '#1A1A1A',
+    fontSize: 17,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  googleG: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#DB4437',
+  },
+
+  // OR
+  orRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 2,
+  },
+  orLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#E5E5E5',
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
-  dividerText: {
-    marginHorizontal: 16,
-    color: '#999999',
-    fontWeight: '600',
+  orText: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 2,
   },
-  phoneButtonOutline: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#1A1A1A',
-  },
-  phoneButtonText: {
-    color: '#1A1A1A',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  phoneInputContainer: {
+
+  // Phone
+  phoneBtn: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 32,
+    paddingVertical: 17,
+    paddingHorizontal: 24,
+    position: 'relative',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  phoneBtnText: {
+    color: 'rgba(255,255,255,0.90)',
+    fontSize: 17,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+
+  // Phone input flow
+  phoneFlowWrap: {
     gap: 12,
+  },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  backText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  phoneInputRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
   phoneInput: {
     flex: 1,
     height: 56,
-    borderWidth: 1,
-    borderColor: '#E5E5E5',
+    backgroundColor: 'rgba(255,255,255,0.1)',
     borderRadius: 28,
-    paddingHorizontal: 24,
+    paddingHorizontal: 22,
     fontSize: 16,
-    backgroundColor: '#FFFFFF',
-    color: '#1A1A1A',
+    color: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
   },
-  phoneSubmitButton: {
-    backgroundColor: '#1A1A1A',
+  phoneSubmitBtn: {
+    backgroundColor: '#7B4FD4',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: 22,
     borderRadius: 28,
     height: 56,
+    shadowColor: '#7B4FD4',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 8,
   },
   phoneSubmitText: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
   },
-  otpOuterContainer: {
-    width: '100%',
-    gap: 12,
-  },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    gap: 4,
-  },
-  backText: {
-    color: '#1A1A1A',
-    fontWeight: '600',
+
+  // ── Footer ────────────────────────────────────────────────────────────────
+  footer: {
+    marginTop: 44,
+    color: 'rgba(255,255,255,0.35)',
     fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 22,
+    fontWeight: '400',
   },
 });
