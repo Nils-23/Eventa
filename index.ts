@@ -1,3 +1,6 @@
+// ⚠️ MUST be first — attaches global error interception before any other module loads
+import './utils/globalErrorHandler';
+
 import { registerRootComponent } from 'expo';
 
 import App from './App';
