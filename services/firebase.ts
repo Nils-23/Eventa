@@ -1,8 +1,9 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { initializeAuth, getAuth, getReactNativePersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getDatabase } from 'firebase/database';
 import { getStorage } from 'firebase/storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -14,10 +15,21 @@ const firebaseConfig = {
   databaseURL: process.env.EXPO_PUBLIC_FIREBASE_DATABASE_URL,
 };
 
-// Initialize Firebase only if it hasn't been initialized already
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Capture whether Firebase has already been initialized BEFORE we call initializeApp.
+const alreadyInitialized = getApps().length > 0;
 
-export const auth = getAuth(app);
+// Initialize Firebase only if it hasn't been initialized already
+const app = alreadyInitialized ? getApp() : initializeApp(firebaseConfig);
+
+// Use AsyncStorage persistence so the user stays logged in across app restarts.
+// initializeAuth must only be called once on the first initialization;
+// subsequent module evaluations (e.g. Expo hot-reload) use getAuth() instead.
+export const auth = alreadyInitialized
+  ? getAuth(app)
+  : initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage),
+    });
+
 export const firestore = getFirestore(app);
 export const realtimeDB = getDatabase(app);
 export const storage = getStorage(app);
