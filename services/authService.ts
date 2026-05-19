@@ -4,6 +4,7 @@ import { User, GoogleAuthProvider, signInWithCredential, OAuthProvider, PhoneAut
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Configure Google Sign in
 // IMPORTANT: You will need to replace this with your actual Web Client ID from Firebase Console later
@@ -36,12 +37,22 @@ export const checkAndCreateUser = async (user: User) => {
 
     if (!userSnap.exists()) {
       // First time login - create account
-      await setDoc(userRef, {
+      const referredBy = await AsyncStorage.getItem('referredBy');
+      const userData: any = {
         user_id: user.uid,
         username: generateRandomUsername(),
         created_at: serverTimestamp(),
         last_active: serverTimestamp(),
-      });
+        points: 0,
+        hasAttendedFirstVenue: false,
+      };
+      if (referredBy) {
+        userData.referredBy = referredBy;
+      }
+      await setDoc(userRef, userData);
+      if (referredBy) {
+        await AsyncStorage.removeItem('referredBy');
+      }
       console.log('New user created successfully!');
     } else {
       const data = userSnap.data();

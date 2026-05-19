@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LogOut, Settings, Award, CircleUserRound, Edit2, Check } from 'lucide-react-native';
+import { LogOut, Settings, Award, CircleUserRound, Edit2, Check, UserPlus } from 'lucide-react-native';
 import { useAppStore } from '../hooks/useAppStore';
 import { auth } from '../services/firebase';
 import { useStories } from '../hooks/useStories';
@@ -23,7 +23,7 @@ export const ProfileScreen = () => {
   const [editedUsername, setEditedUsername] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   
-  const [stats, setStats] = useState({ venues: 0, hotstreaks: 0 });
+  const [stats, setStats] = useState({ venues: 0, points: 0 });
   const [unlockedAchievements, setUnlockedAchievements] = useState<string[]>([]);
   const navigation = useNavigation();
 
@@ -36,10 +36,10 @@ export const ProfileScreen = () => {
         if (docSnap.exists()) {
           const data = docSnap.data();
           const attendedVenues = data.attendedVenues || [];
-          const activeNights = data.activeNights || [];
+          const points = data.points || 0;
           setStats({
             venues: attendedVenues.length,
-            hotstreaks: activeNights.length,
+            points: points,
           });
           setUnlockedAchievements(data.unlockedAchievements || []);
         }
@@ -83,6 +83,19 @@ export const ProfileScreen = () => {
     } finally {
       setIsSaving(false);
       setIsEditingUsername(false);
+    }
+  };
+
+  const handleReferFriend = async () => {
+    if (!user?.uid) return;
+    try {
+      const inviteLink = `https://eventas.live/invite/${user.uid}`;
+      await Share.share({
+        message: `Join me on Eventas! Use my invite link to sign up: ${inviteLink}\nAttend your first venue and I'll earn 20 points!`,
+        title: 'Invite a Friend to Eventas',
+      });
+    } catch (error) {
+      console.error('Error sharing invite link:', error);
     }
   };
 
@@ -137,8 +150,8 @@ export const ProfileScreen = () => {
           </View>
           <View style={styles.divider} />
           <View style={styles.statBox}>
-            <Text style={styles.statValue}>{stats.hotstreaks}</Text>
-            <Text style={styles.statLabel}>Hotstreaks</Text>
+            <Text style={styles.statValue}>{stats.points}</Text>
+            <Text style={styles.statLabel}>Points</Text>
           </View>
         </View>
 
@@ -181,6 +194,12 @@ export const ProfileScreen = () => {
             <View style={styles.rowItemLeft}>
                <Award color="#FFFFFF" size={20} />
                <Text style={styles.rowText}>Achievements</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.row} onPress={handleReferFriend}>
+            <View style={styles.rowItemLeft}>
+               <UserPlus color="#00FFCC" size={20} />
+               <Text style={styles.rowText}>Refer a Friend</Text>
             </View>
           </TouchableOpacity>
         </View>
