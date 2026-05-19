@@ -141,13 +141,9 @@ export const LeaderboardScreen = () => {
     return (
       <View style={[styles.card, { borderColor: cardBorderColor, backgroundColor: cardBgColor }]}>
         <View style={styles.rankCol}>
-          {index === 0 ? (
-            <Trophy color={rankColor} size={22} style={styles.trophyIcon} />
-          ) : (
-            <Text style={[styles.rankNum, { color: rankColor }, glowStyle]}>
-              {index + 1}
-            </Text>
-          )}
+          <Text style={[styles.rankNum, { color: rankColor }, glowStyle]}>
+            {index + 1}
+          </Text>
         </View>
 
         <CircleUserRound color={isTop3 ? rankColor : '#666'} size={40} strokeWidth={1} style={styles.avatar} />
