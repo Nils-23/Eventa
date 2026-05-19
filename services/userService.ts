@@ -63,3 +63,14 @@ export const updateUsername = async (userId: string, newUsername: string): Promi
     throw error;
   }
 };
+
+/**
+ * Returns the points key string for the current month, formatted as points_YYYY_MM
+ */
+export const getMonthlyPointsKey = (): string => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `points_${year}_${month}`;
+};
+

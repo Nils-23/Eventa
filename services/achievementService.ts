@@ -1,5 +1,6 @@
 import { doc, getDoc, updateDoc, arrayUnion, increment } from 'firebase/firestore';
 import { firestore } from './firebase';
+import { getMonthlyPointsKey } from './userService';
 
 export type AchievementCategory = 'Activity' | 'Explorer' | 'Creator' | 'Social' | 'Personality';
 
@@ -79,9 +80,11 @@ export const checkAndUnlockAchievements = async (userId: string) => {
 
     if (newUnlocks.length > 0) {
       const pointsToAward = newUnlocks.length * 10;
+      const monthlyKey = getMonthlyPointsKey();
       await updateDoc(userDocRef, {
         unlockedAchievements: arrayUnion(...newUnlocks),
         points: increment(pointsToAward),
+        [monthlyKey]: increment(pointsToAward),
         // If they don't have an active badge yet, set the most recent one as active
         ...( !data.activeBadge ? { activeBadge: newUnlocks[newUnlocks.length - 1] } : {} )
       });
