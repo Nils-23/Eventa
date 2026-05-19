@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   StatusBar,
   ActivityIndicator,
   Animated,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Flame, Navigation, Users } from 'lucide-react-native';
@@ -105,6 +106,11 @@ const VenueCard = ({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 export const ListScreen = () => {
   const { venues, isLoading } = useLiveVenues();
+  const [selectedFilter, setSelectedFilter] = useState<'All' | 'Club' | 'Bar' | 'Festival' | 'Event'>('All');
+
+  const filteredVenues = venues.filter((v) => 
+    selectedFilter === 'All' || v.type === selectedFilter
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -122,6 +128,23 @@ export const ListScreen = () => {
         </View>
       </View>
 
+      {/* Filter Row */}
+      <View style={styles.filterContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+          {(['All', 'Club', 'Bar', 'Festival', 'Event'] as const).map((filter) => (
+            <TouchableOpacity
+              key={filter}
+              style={[styles.filterPill, selectedFilter === filter && styles.filterPillActive]}
+              onPress={() => setSelectedFilter(filter)}
+            >
+              <Text style={[styles.filterPillText, selectedFilter === filter && styles.filterPillTextActive]}>
+                {filter}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
       {/* Legend */}
       <View style={styles.legend}>
         {(['Crazy', 'High', 'Medium', 'Low'] as const).map((lvl) => (
@@ -137,13 +160,13 @@ export const ListScreen = () => {
           <ActivityIndicator color="#00FFCC" size="large" />
           <Text style={styles.loadingText}>Scanning Nairobi…</Text>
         </View>
-      ) : venues.length === 0 ? (
+      ) : filteredVenues.length === 0 ? (
         <View style={styles.ctr}>
-          <Text style={styles.emptyText}>No venues found</Text>
+          <Text style={styles.emptyText}>No venues found for this filter</Text>
         </View>
       ) : (
         <FlatList
-          data={venues}
+          data={filteredVenues}
           keyExtractor={(item) => item.id}
           renderItem={({ item, index }) => <VenueCard item={item} index={index} />}
           contentContainerStyle={styles.list}
@@ -168,6 +191,28 @@ const styles = StyleSheet.create({
   legendItem:   { flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot:    { width: 7, height: 7, borderRadius: 4 },
   legendLabel:  { color: '#666', fontSize: 12, fontWeight: '600' },
+  filterContainer: { marginBottom: 12 },
+  filterScroll: { paddingHorizontal: 24, gap: 8 },
+  filterPill: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  filterPillActive: {
+    backgroundColor: 'rgba(0, 255, 204, 0.15)',
+    borderColor: '#00FFCC',
+  },
+  filterPillText: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  filterPillTextActive: {
+    color: '#00FFCC',
+  },
   list:         { paddingHorizontal: 16, paddingBottom: 40 },
   sep:          { height: 8 },
   card: {

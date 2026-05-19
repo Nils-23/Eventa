@@ -5,10 +5,11 @@ import { ArrowLeft, Users, Plus, Save, X, UploadCloud } from 'lucide-react-nativ
 import { useNavigation } from '@react-navigation/native';
 import { useLiveVenues, LiveVenue as Venue } from '../hooks/useLiveVenues';
 import { firestore } from '../services/firebase';
-import { doc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 import * as ImagePicker from 'expo-image-picker';
 import { uploadStoryMedia, createSimulatedStory } from '../services/storyService';
+import { Trash2 } from 'lucide-react-native';
 
 export const AdminSimulationScreen = () => {
   const navigation = useNavigation();
@@ -22,6 +23,8 @@ export const AdminSimulationScreen = () => {
   const [newVenueLat, setNewVenueLat] = useState('');
   const [newVenueLng, setNewVenueLng] = useState('');
   const [newVenueDesc, setNewVenueDesc] = useState('');
+  const [newVenueType, setNewVenueType] = useState<'Club' | 'Bar' | 'Festival' | 'Event'>('Club');
+  const [newVenueExpiration, setNewVenueExpiration] = useState('');
 
   const handleUpdateCount = async (venueId: string) => {
     const value = editingCounts[venueId];
@@ -47,8 +50,23 @@ export const AdminSimulationScreen = () => {
 
   const handleCreateVenue = async () => {
     if (!newVenueName || !newVenueLat || !newVenueLng || !newVenueDesc) {
-      Toast.show({ type: 'error', text1: 'Missing Fields', text2: 'Please fill in all fields.' });
+      Toast.show({ type: 'error', text1: 'Missing Fields', text2: 'Please fill in all basic fields.' });
       return;
+    }
+
+    if ((newVenueType === 'Festival' || newVenueType === 'Event') && !newVenueExpiration) {
+      Toast.show({ type: 'error', text1: 'Missing Expiration', text2: `${newVenueType}s must have an expiration date.` });
+      return;
+    }
+
+    let expirationDate = null;
+    if (newVenueExpiration) {
+      const parsedDate = new Date(newVenueExpiration);
+      if (isNaN(parsedDate.getTime())) {
+        Toast.show({ type: 'error', text1: 'Invalid Date', text2: 'Please use YYYY-MM-DD format.' });
+        return;
+      }
+      expirationDate = parsedDate.getTime();
     }
 
     const lat = parseFloat(newVenueLat);
@@ -62,13 +80,21 @@ export const AdminSimulationScreen = () => {
     try {
       const newVenueId = `venue_${Date.now()}`;
       const venueRef = doc(firestore, 'venues', newVenueId);
-      await setDoc(venueRef, {
+      
+      const venueData: any = {
         name: newVenueName,
         latitude: lat,
         longitude: lng,
         description: newVenueDesc,
+        type: newVenueType,
         simulatedUsersCount: 0
-      });
+      };
+      
+      if (expirationDate) {
+        venueData.expirationDate = expirationDate;
+      }
+
+      await setDoc(venueRef, venueData);
 
       Toast.show({ type: 'success', text1: 'Venue Created', text2: `${newVenueName} has been added.` });
       setIsModalVisible(false);
@@ -76,6 +102,8 @@ export const AdminSimulationScreen = () => {
       setNewVenueLat('');
       setNewVenueLng('');
       setNewVenueDesc('');
+      setNewVenueType('Club');
+      setNewVenueExpiration('');
     } catch (error) {
       console.error('Error creating venue:', error);
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to create new venue.' });
@@ -124,6 +152,29 @@ export const AdminSimulationScreen = () => {
     }
   };
 
+  const handleDeleteVenue = (venue: Venue) => {
+    Alert.alert(
+      'Delete Venue',
+      `Are you sure you want to delete ${venue.name}? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(firestore, 'venues', venue.id));
+              Toast.show({ type: 'success', text1: 'Venue Deleted', text2: `${venue.name} has been removed.` });
+            } catch (error) {
+              console.error('Error deleting venue:', error);
+              Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to delete venue.' });
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
@@ -155,6 +206,9 @@ export const AdminSimulationScreen = () => {
                 <Text style={styles.venueCurrentCount}>
                   Current Target: {venue.simulatedUsersCount ?? 20}
                 </Text>
+                {venue.type && (
+                  <Text style={styles.venueType}>Type: {venue.type}</Text>
+                )}
               </View>
               
               <View style={styles.venueControls}>
@@ -188,6 +242,13 @@ export const AdminSimulationScreen = () => {
                     </>
                   )}
                 </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.deleteButton}
+                  onPress={() => handleDeleteVenue(venue)}
+                >
+                  <Trash2 color="#FFF" size={16} />
+                </TouchableOpacity>
               </View>
             </View>
           ))
@@ -215,6 +276,36 @@ export const AdminSimulationScreen = () => {
                 onChangeText={setNewVenueName}
               />
             </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Venue Type</Text>
+              <View style={styles.typeSelectorRow}>
+                {(['Club', 'Bar', 'Festival', 'Event'] as const).map((type) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={[styles.typePill, newVenueType === type && styles.typePillSelected]}
+                    onPress={() => setNewVenueType(type)}
+                  >
+                    <Text style={[styles.typePillText, newVenueType === type && styles.typePillTextSelected]}>
+                      {type}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {(newVenueType === 'Festival' || newVenueType === 'Event') && (
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Expiration Date (Mandatory for {newVenueType}s)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor="#666"
+                  value={newVenueExpiration}
+                  onChangeText={setNewVenueExpiration}
+                />
+              </View>
+            )}
 
             <View style={styles.rowFormGroup}>
               <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
@@ -338,6 +429,11 @@ const styles = StyleSheet.create({
     color: '#00FFCC',
     fontSize: 12,
   },
+  venueType: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
+  },
   venueControls: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -375,6 +471,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     gap: 4,
+  },
+  deleteButton: {
+    backgroundColor: '#FF3333',
+    padding: 8,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   // Modal Styles
   modalOverlay: {
@@ -437,5 +540,30 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  typeSelectorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  typePill: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  typePillSelected: {
+    backgroundColor: 'rgba(255, 0, 204, 0.2)',
+    borderColor: '#FF00CC',
+  },
+  typePillText: {
+    color: '#888',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  typePillTextSelected: {
+    color: '#FF00CC',
   },
 });

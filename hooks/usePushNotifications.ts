@@ -5,6 +5,8 @@ import * as Notifications from 'expo-notifications';
 import { doc, setDoc } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { useAppStore } from './useAppStore';
+import { useLiveVenues } from './useLiveVenues';
+import { useNavigation } from '@react-navigation/native';
 import Constants from 'expo-constants';
 
 Notifications.setNotificationHandler({
@@ -17,7 +19,14 @@ Notifications.setNotificationHandler({
 
 export function usePushNotifications() {
   const [expoPushToken, setExpoPushToken] = useState<string>('');
-  const { user } = useAppStore();
+  const { user, setSelectedMapVenue } = useAppStore();
+  const navigation = useNavigation<any>();
+  const { venues } = useLiveVenues();
+  const venuesRef = useRef(venues);
+
+  useEffect(() => {
+    venuesRef.current = venues;
+  }, [venues]);
 
   useEffect(() => {
     registerForPushNotificationsAsync().then(token => {
@@ -30,14 +39,21 @@ export function usePushNotifications() {
     });
 
     const subscription = Notifications.addNotificationResponseReceivedListener(response => {
-      // Handle notification tap here if needed
       console.log('Notification tapped:', response);
+      const data = response.notification.request.content.data;
+      if (data?.venueId) {
+        const venue = venuesRef.current.find(v => v.id === data.venueId);
+        if (venue) {
+          setSelectedMapVenue(venue);
+          navigation.navigate('Main', { screen: 'Map' });
+        }
+      }
     });
 
     return () => {
       subscription.remove();
     };
-  }, [user?.uid]);
+  }, [user?.uid, navigation, setSelectedMapVenue]);
 
   const saveTokenToFirestore = async (userId: string, token: string) => {
     try {

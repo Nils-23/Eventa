@@ -17,6 +17,8 @@ export interface LiveVenue {
   description: string;
   address?: string;
   simulatedUsersCount?: number;
+  type?: 'Club' | 'Bar' | 'Festival' | 'Event';
+  expirationDate?: number; // timestamp in ms
   userCount: number;
   activityLevel: ActivityLevel;
   activityColor: string;
@@ -45,6 +47,8 @@ interface RawVenue {
   description: string;
   address?: string;
   simulatedUsersCount?: number;
+  type?: 'Club' | 'Bar' | 'Festival' | 'Event';
+  expirationDate?: number;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -111,6 +115,11 @@ function computeLiveData(
 
   for (const venue of venues) {
     if (!venue.latitude || !venue.longitude) continue;
+
+    // Filter out expired venues (like Festivals)
+    if (venue.expirationDate && venue.expirationDate < now) {
+      continue;
+    }
 
     const realUserCount = realActiveLocs.filter((loc) => {
       if (loc.venueId) return loc.venueId === venue.id;
