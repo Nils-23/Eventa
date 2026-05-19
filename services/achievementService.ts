@@ -1,4 +1,4 @@
-import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, increment } from 'firebase/firestore';
 import { firestore } from './firebase';
 
 export type AchievementCategory = 'Activity' | 'Explorer' | 'Creator' | 'Social' | 'Personality';
@@ -11,15 +11,15 @@ export interface Achievement {
   iconName: string; // Lucide icon name or image ref
   glowColor: string; // Neon color for UI
   target: number; // Value needed to unlock
-  statKey: 'hotstreaks' | 'venues' | 'stories' | 'chats'; // The user stat to compare against
+  statKey: 'points' | 'venues' | 'stories' | 'chats'; // The user stat to compare against
 }
 
 export const ACHIEVEMENTS: Achievement[] = [
-  // Activity (Based on active nights / hotstreaks)
-  { id: 'act_1', name: 'Night Owl', description: 'Go out at night for the first time.', category: 'Activity', iconName: 'Moon', glowColor: '#00FFCC', target: 1, statKey: 'hotstreaks' },
-  { id: 'act_3', name: 'Weekend Warrior', description: 'Be active for 3 nights.', category: 'Activity', iconName: 'Zap', glowColor: '#00FFCC', target: 3, statKey: 'hotstreaks' },
-  { id: 'act_5', name: 'Party Animal', description: 'Be active for 5 nights.', category: 'Activity', iconName: 'Flame', glowColor: '#FF5E00', target: 5, statKey: 'hotstreaks' },
-  { id: 'act_10', name: 'Unstoppable', description: 'Reach a 10 night streak.', category: 'Activity', iconName: 'Trophy', glowColor: '#FF0055', target: 10, statKey: 'hotstreaks' },
+  // Activity (Based on points)
+  { id: 'act_1', name: 'Getting Started', description: 'Earn your first 10 points.', category: 'Activity', iconName: 'Moon', glowColor: '#00FFCC', target: 10, statKey: 'points' },
+  { id: 'act_3', name: 'Rising Star', description: 'Reach 50 points.', category: 'Activity', iconName: 'Zap', glowColor: '#00FFCC', target: 50, statKey: 'points' },
+  { id: 'act_5', name: 'Party Animal', description: 'Reach 100 points.', category: 'Activity', iconName: 'Flame', glowColor: '#FF5E00', target: 100, statKey: 'points' },
+  { id: 'act_10', name: 'Unstoppable', description: 'Reach 250 points.', category: 'Activity', iconName: 'Trophy', glowColor: '#FF0055', target: 250, statKey: 'points' },
   
   // Explorer (Based on unique venues attended)
   { id: 'exp_1', name: 'First Steps', description: 'Visit your first venue.', category: 'Explorer', iconName: 'MapPin', glowColor: '#4169E1', target: 1, statKey: 'venues' },
@@ -38,7 +38,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'soc_50', name: 'Socialite', description: 'Send 50 messages in live chats.', category: 'Social', iconName: 'Users', glowColor: '#FF00CC', target: 50, statKey: 'chats' },
 
   // Admin / Special
-  { id: 'cert_1', name: 'Eventas Certified', description: 'Official certification of prestige. Recognized by Eventas.', category: 'Personality', iconName: 'BadgeCheck', glowColor: '#FFD700', target: 999999, statKey: 'hotstreaks' },
+  { id: 'cert_1', name: 'Eventas Certified', description: 'Official certification of prestige. Recognized by Eventas.', category: 'Personality', iconName: 'BadgeCheck', glowColor: '#FFD700', target: 999999, statKey: 'points' },
 ];
 
 /**
@@ -57,12 +57,12 @@ export const checkAndUnlockAchievements = async (userId: string) => {
     const data = docSnap.data();
     
     // Extract stats
-    const hotstreaks = (data.activeNights || []).length;
+    const points = data.points || 0;
     const venues = (data.attendedVenues || []).length;
     const stories = data.storyCount || 0;
     const chats = data.chatMessageCount || 0;
     
-    const statsMap = { hotstreaks, venues, stories, chats };
+    const statsMap = { points, venues, stories, chats };
     const unlockedAchievements: string[] = data.unlockedAchievements || [];
     
     const newUnlocks: string[] = [];
@@ -78,8 +78,10 @@ export const checkAndUnlockAchievements = async (userId: string) => {
     }
 
     if (newUnlocks.length > 0) {
+      const pointsToAward = newUnlocks.length * 10;
       await updateDoc(userDocRef, {
         unlockedAchievements: arrayUnion(...newUnlocks),
+        points: increment(pointsToAward),
         // If they don't have an active badge yet, set the most recent one as active
         ...( !data.activeBadge ? { activeBadge: newUnlocks[newUnlocks.length - 1] } : {} )
       });

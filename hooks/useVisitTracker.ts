@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { doc, getDoc, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, setDoc, increment } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { useAppStore } from './useAppStore';
 import { useLiveVenues } from './useLiveVenues';
@@ -10,8 +10,7 @@ export const useVisitTracker = () => {
   const { venues } = useLiveVenues();
   
   // We use refs to avoid triggering unnecessary effect runs and spamming Firestore
-  const hasTrackedToday = useRef(false);
-  const trackedVenuesRef = useRef<Set<string>>(new Set());
+  const trackedDailyVenuesRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user) return;
@@ -30,49 +29,68 @@ export const useVisitTracker = () => {
         const docSnap = await getDoc(userDocRef);
         let data = docSnap.exists() ? docSnap.data() : null;
         
-        // If doc doesn't exist, create it (should exist from registration, but just in case)
+        // If doc doesn't exist, create it
         if (!data) {
-          await setDoc(userDocRef, { attendedVenues: [], activeNights: [] }, { merge: true });
-          data = { attendedVenues: [], activeNights: [] };
+          await setDoc(userDocRef, { attendedVenues: [], dailyVenueVisits: [], points: 0 }, { merge: true });
+          data = { attendedVenues: [], dailyVenueVisits: [], points: 0 };
         }
         
         let needsUpdate = false;
         const updates: any = {};
+        let pointsEarned = 0;
+        let isFirstVenueEver = (data.attendedVenues || []).length === 0;
         
-        // Check active nights (Hotstreaks)
-        const activeNights: string[] = data.activeNights || [];
-        if (!activeNights.includes(todayStr) && !hasTrackedToday.current) {
-          updates.activeNights = arrayUnion(todayStr);
-          needsUpdate = true;
-          hasTrackedToday.current = true;
-        } else if (activeNights.includes(todayStr)) {
-          hasTrackedToday.current = true; // Already tracked today
-        }
+        const dailyVenueVisits: string[] = data.dailyVenueVisits || [];
+        // Add to our local set
+        dailyVenueVisits.forEach(v => trackedDailyVenuesRef.current.add(v));
         
-        // Check attended venues
         const attendedVenues: string[] = data.attendedVenues || [];
-        // Add to our local set to avoid checking Firestore again
-        attendedVenues.forEach(v => trackedVenuesRef.current.add(v));
+        const newVenues: string[] = [];
         
         for (const venue of nearbyVenues) {
-          if (!trackedVenuesRef.current.has(venue.id)) {
-            if (!updates.attendedVenues) updates.attendedVenues = arrayUnion(venue.id);
-            // If there's already an arrayUnion, we should combine them or just let Firebase handle multiple updates? 
-            // arrayUnion takes multiple arguments! arrayUnion(...newVenues)
-            trackedVenuesRef.current.add(venue.id);
+          const dailyKey = `${todayStr}_${venue.id}`;
+          if (!trackedDailyVenuesRef.current.has(dailyKey)) {
+            updates.dailyVenueVisits = updates.dailyVenueVisits || arrayUnion();
+            // Just tracking locally, will use arrayUnion later
+            trackedDailyVenuesRef.current.add(dailyKey);
+            pointsEarned += 10;
+            needsUpdate = true;
+          }
+          if (!attendedVenues.includes(venue.id)) {
+            newVenues.push(venue.id);
             needsUpdate = true;
           }
         }
         
         if (needsUpdate) {
-          // Fix for arrayUnion with multiple venues
-          const newVenues = nearbyVenues.map(v => v.id).filter(id => !attendedVenues.includes(id));
-          if (newVenues.length > 0) {
-              updates.attendedVenues = arrayUnion(...newVenues);
+          // Prepare actual daily visits strings to union
+          const newDailyKeys = nearbyVenues.map(v => `${todayStr}_${v.id}`).filter(k => !dailyVenueVisits.includes(k));
+          if (newDailyKeys.length > 0) {
+            updates.dailyVenueVisits = arrayUnion(...newDailyKeys);
           }
+          if (newVenues.length > 0) {
+            updates.attendedVenues = arrayUnion(...newVenues);
+          }
+          if (pointsEarned > 0) {
+            updates.points = increment(pointsEarned);
+          }
+          
+          if (isFirstVenueEver && newVenues.length > 0 && !data.hasAttendedFirstVenue) {
+            updates.hasAttendedFirstVenue = true;
+            if (data.referredBy) {
+              // Award 20 points to the referrer
+              const referrerDocRef = doc(firestore, 'users', data.referredBy);
+              try {
+                await updateDoc(referrerDocRef, { points: increment(20) });
+              } catch (referrerErr) {
+                console.error('[useVisitTracker] Failed to award referrer points:', referrerErr);
+              }
+            }
+          }
+
           await updateDoc(userDocRef, updates);
           
-          // Check for achievements based on updated visits/nights
+          // Check for achievements based on updated visits
           await checkAndUnlockAchievements(user.uid);
         }
         

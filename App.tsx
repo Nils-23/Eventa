@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Linking } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import Toast from 'react-native-toast-message';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { toastConfig } from './config/toast';
 import { MainTabs } from './navigation/MainTabs';
 import { LoginScreen } from './screens/LoginScreen';
@@ -28,6 +29,20 @@ export default function App() {
   
   // Start serverless background engines
   useSimulationEngine();
+
+  React.useEffect(() => {
+    const handleUrl = async (url: string | null) => {
+      if (!url) return;
+      const inviteMatch = url.match(/\/invite\/([a-zA-Z0-9_-]+)/);
+      if (inviteMatch && inviteMatch[1]) {
+        await AsyncStorage.setItem('referredBy', inviteMatch[1]);
+      }
+    };
+
+    Linking.getInitialURL().then(handleUrl);
+    const subscription = Linking.addEventListener('url', ({ url }) => handleUrl(url));
+    return () => subscription.remove();
+  }, []);
 
   const { user, isLoading } = useAppStore();
 
