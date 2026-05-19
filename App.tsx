@@ -13,7 +13,6 @@ import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
 import { AdminUsersScreen } from './screens/AdminUsersScreen';
 import { useAuth } from './hooks/useAuth';
 import { useAppStore } from './hooks/useAppStore';
-import { useNotificationEngine } from './hooks/useNotificationEngine';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LiveVenuesProvider } from './contexts/LiveVenuesContext';
@@ -28,7 +27,6 @@ export default function App() {
   useAuth();
   
   // Start serverless background engines
-  useNotificationEngine();
   useSimulationEngine();
 
   const { user, isLoading } = useAppStore();
