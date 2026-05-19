@@ -6,9 +6,9 @@ import { useAppStore } from '../hooks/useAppStore';
 import { auth } from '../services/firebase';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
-import { fetchUsername, updateUsername } from '../services/userService';
+import { fetchUsername, updateUsername, getMonthlyPointsKey } from '../services/userService';
 import { deleteStory } from '../services/storyService';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { useNavigation } from '@react-navigation/native';
 import { ACHIEVEMENTS } from '../services/achievementService';
@@ -42,6 +42,12 @@ export const ProfileScreen = () => {
             points: points,
           });
           setUnlockedAchievements(data.unlockedAchievements || []);
+          
+          // Self-heal: if user has points but monthly points field is missing, initialize it
+          const monthlyKey = getMonthlyPointsKey();
+          if (points > 0 && data[monthlyKey] === undefined) {
+            updateDoc(userDocRef, { [monthlyKey]: points }).catch(console.error);
+          }
         }
       });
       

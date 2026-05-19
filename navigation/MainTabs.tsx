@@ -2,8 +2,9 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MapScreen } from '../screens/MapScreen';
 import { ListScreen } from '../screens/ListScreen';
+import { LeaderboardScreen } from '../screens/LeaderboardScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
-import { Map, List, User } from 'lucide-react-native';
+import { Map, List, Trophy, User } from 'lucide-react-native';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useVisitTracker } from '../hooks/useVisitTracker';
@@ -54,6 +55,13 @@ export const MainTabs = () => {
           tabBarIcon: ({ color, size }) => <List color={color} size={size} />,
         }}
       />
+      <Tab.Screen 
+        name="Leaderboard" 
+        component={LeaderboardScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => <Trophy color={color} size={size} />,
+        }}
+      />
       {/* Chats tab hidden — users access venue chats from the Map directly */}
       <Tab.Screen 
         name="Profile" 
@@ -65,4 +73,5 @@ export const MainTabs = () => {
     </Tab.Navigator>
   );
 };
+
 
