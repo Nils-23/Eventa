@@ -13,6 +13,7 @@ import { uploadStoryMedia, createStory } from '../services/storyService';
 import { getDistanceInMeters } from '../utils/locationUtils';
 import { useAppStore } from '../hooks/useAppStore';
 import { VenueChat } from '../components/VenueChat';
+import { VenueImage } from '../components/VenueImage';
 
 const DARK_MAP_STYLE = [
   {
@@ -706,34 +707,48 @@ export const MapScreen = () => {
 
       {/* LiveVenue Info Overlay Card */}
       {selectedMapVenue && (
-        <View style={[styles.venueInfoCard, { bottom: insets.bottom + 40 }]}>
-          <TouchableOpacity
-            style={styles.closeCardButton}
-            onPress={() => setSelectedMapVenue(null)}
-          >
-            <X color="#888" size={20} />
-          </TouchableOpacity>
-          <Text style={styles.venueCardTitle} numberOfLines={1}>{selectedMapVenue.name}</Text>
-          <Text style={styles.venueCardAddress} numberOfLines={1}>{selectedMapVenue.address || 'Nairobi, Kenya'}</Text>
-          <View style={styles.cardActionRow}>
+        <View style={[styles.venueInfoCard, { bottom: insets.bottom + 20 }]}>
+          {/* Top Banner Image with themed filter */}
+          <View style={styles.cardImageContainer}>
+            <VenueImage
+              venue={selectedMapVenue}
+              style={styles.cardImage}
+              isBanner={true}
+            />
+            {/* Close Button overlaying the image */}
             <TouchableOpacity
-              style={styles.viewStoriesBtn}
-              onPress={() => {
-                setSelectedMapVenue(selectedMapVenue);
-                setIsViewerVisible(true);
-              }}
+              style={styles.closeCardButtonOverlay}
+              onPress={() => setSelectedMapVenue(null)}
             >
-              <Text style={styles.viewStoriesText}>View Stories</Text>
+              <X color="#FFF" size={18} />
             </TouchableOpacity>
+          </View>
 
-            <TouchableOpacity
-              style={styles.accessChatBtn}
-              onPress={() => {
-                setIsChatVisible(true);
-              }}
-            >
-              <Text style={styles.accessChatText}>Access chat</Text>
-            </TouchableOpacity>
+          <View style={styles.cardContent}>
+            <Text style={styles.venueCardTitle} numberOfLines={1}>{selectedMapVenue.name}</Text>
+            <Text style={styles.venueCardAddress} numberOfLines={1}>{selectedMapVenue.address || 'Nairobi, Kenya'}</Text>
+            <Text style={styles.venueCardDescription} numberOfLines={2}>{selectedMapVenue.description}</Text>
+            
+            <View style={styles.cardActionRow}>
+              <TouchableOpacity
+                style={styles.viewStoriesBtn}
+                onPress={() => {
+                  setSelectedMapVenue(selectedMapVenue);
+                  setIsViewerVisible(true);
+                }}
+              >
+                <Text style={styles.viewStoriesText}>View Stories</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.accessChatBtn}
+                onPress={() => {
+                  setIsChatVisible(true);
+                }}
+              >
+                <Text style={styles.accessChatText}>Access chat</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       )}
@@ -877,10 +892,9 @@ const styles = StyleSheet.create({
   venueInfoCard: {
     position: 'absolute',
     left: 16,
-    right: 80, // leave space for controls
-    backgroundColor: 'rgba(26,26,26,0.95)',
+    right: 16, // full width except margins
+    backgroundColor: '#1A1A1A',
     borderRadius: 16,
-    padding: 16,
     borderWidth: 1,
     borderColor: '#00FFCC',
     shadowColor: '#00FFCC',
@@ -889,24 +903,47 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 8,
     zIndex: 20,
+    overflow: 'hidden', // required for rounded image corners
   },
-  closeCardButton: {
+  cardImageContainer: {
+    width: '100%',
+    height: 130,
+    position: 'relative',
+  },
+  cardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  closeCardButtonOverlay: {
     position: 'absolute',
     top: 12,
     right: 12,
     zIndex: 2,
-    padding: 4,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardContent: {
+    padding: 16,
   },
   venueCardTitle: {
     color: '#FFF',
     fontSize: 20,
     fontWeight: '800',
     marginBottom: 4,
-    paddingRight: 24,
   },
   venueCardAddress: {
     color: '#AAA',
     fontSize: 14,
+    marginBottom: 8,
+  },
+  venueCardDescription: {
+    color: '#BBB',
+    fontSize: 13,
+    lineHeight: 18,
     marginBottom: 16,
   },
   cardActionRow: {
