@@ -272,6 +272,27 @@ export const MapScreen = () => {
   const { user, selectedMapVenue, setSelectedMapVenue, isAdmin } = useAppStore();
   const { stories } = useStories();
 
+  // Dynamically calculate radius and scale heatmap weights to counter native kernel normalization and screenspace dispersion
+  const { scaledHeatPoints, heatmapRadius } = useMemo(() => {
+    const lat = region?.latitude || -1.286389;
+    const mPx = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, currentZoom);
+    const calculatedRadius = Math.floor(250 / mPx);
+    // Lower minimum radius to 35px to keep heat concentrated and sharp at low zoom levels
+    const rPx = Math.max(35, Math.min(250, calculatedRadius));
+
+    // Boost base intensity by 15x across the board, and scale it up further
+    // when zooming out (lower zoom levels) to keep the heatmap vibrant and hot from a distance.
+    const zoomFactor = Math.pow(1.4, Math.max(0, 14 - currentZoom));
+    const weightScale = Math.pow(Math.max(50, rPx) / 50, 2) * 15.0 * zoomFactor;
+
+    const scaled = heatPoints.map((pt) => ({
+      ...pt,
+      weight: pt.weight * weightScale,
+    }));
+
+    return { scaledHeatPoints: scaled, heatmapRadius: rPx };
+  }, [heatPoints, currentZoom, region]);
+
   // ─── Diagnostic: track every MapScreen render ───────────────────────────
   const renderCountRef = useRef(0);
   renderCountRef.current++;
@@ -296,9 +317,20 @@ export const MapScreen = () => {
   const [region, setRegion] = useState<Region | null>(null);
   const [currentZoom, setCurrentZoom] = useState(14);
 
-  const handleRegionChange = (newRegion: Region) => {
+  const handleRegionChange = async (newRegion: Region) => {
     setRegion(newRegion);
-    // Derive zoom from longitudeDelta: zoom ≈ log2(360 / longitudeDelta)
+    if (mapRef.current) {
+      try {
+        const cam = await mapRef.current.getCamera();
+        if (cam && typeof cam.zoom === 'number') {
+          setCurrentZoom(Math.max(1, Math.min(20, cam.zoom)));
+          return;
+        }
+      } catch (err) {
+        console.warn('[MAP-DEBUG] Failed to get camera zoom:', err);
+      }
+    }
+    // Fallback: Derive zoom from longitudeDelta: zoom ≈ log2(360 / longitudeDelta)
     if (newRegion.longitudeDelta > 0) {
       const zoom = Math.log2(360 / newRegion.longitudeDelta);
       setCurrentZoom(Math.max(1, Math.min(20, zoom)));
@@ -625,11 +657,21 @@ export const MapScreen = () => {
              seamless blending and KDE (Kernel Density Estimation).
              Wrapped in StableHeatmap to prevent native tile cache wipe on
              unrelated parent re-renders (notifications, location, etc).       */}
-        {/* Dynamically scale radius based on zoom level, safely capped at 90 to prevent iOS square rendering artifacts */}
+        {/* Dynamically scale radius based on zoom level to keep geographic size constant and keep intensity strong */}
         {showHeatmapOverlay && (
           <StableHeatmap
             points={heatPoints}
-            radius={Math.max(50, Math.min(90, Math.floor(50 * Math.pow(1.15, currentZoom - 14))))}
+            radius={Math.max(
+              50,
+              Math.min(
+                250,
+                Math.floor(
+                  250 /
+                  ((156543.03392 * Math.cos(((region?.latitude || -1.286389) * Math.PI) / 180)) /
+                    Math.pow(2, currentZoom))
+                )
+              )
+            )}
           />
         )}
         {/* LiveVenue markers */}
@@ -728,7 +770,7 @@ export const MapScreen = () => {
             <Text style={styles.venueCardTitle} numberOfLines={1}>{selectedMapVenue.name}</Text>
             <Text style={styles.venueCardAddress} numberOfLines={1}>{selectedMapVenue.address || 'Nairobi, Kenya'}</Text>
             <Text style={styles.venueCardDescription} numberOfLines={2}>{selectedMapVenue.description}</Text>
-            
+
             <View style={styles.cardActionRow}>
               <TouchableOpacity
                 style={styles.viewStoriesBtn}
