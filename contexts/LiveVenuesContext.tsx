@@ -4,6 +4,7 @@ import { collection, onSnapshot, query, doc, getDoc } from 'firebase/firestore';
 import { ref, onValue } from 'firebase/database';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, firestore, realtimeDB } from '../services/firebase';
+import { resolveVenueImages } from '../utils/venueImageUtils';
 
 
 // ─── Types (re-exported so consumers don't need to change) ────────────────────
@@ -15,6 +16,7 @@ export interface LiveVenue {
   latitude: number;
   longitude: number;
   description: string;
+  imageUrl?: string;
   address?: string;
   simulatedUsersCount?: number;
   type?: 'Club' | 'Bar' | 'Festival' | 'Event';
@@ -45,6 +47,7 @@ interface RawVenue {
   latitude: number;
   longitude: number;
   description: string;
+  imageUrl?: string;
   address?: string;
   simulatedUsersCount?: number;
   type?: 'Club' | 'Bar' | 'Festival' | 'Event';
@@ -92,7 +95,8 @@ function computeLiveData(
   simLocations: Record<string, RawLocation>,
   userLat: number | null,
   userLng: number | null,
-  includeSimulated: boolean
+  includeSimulated: boolean,
+  resolvedImages: Record<string, string>
 ): { venues: LiveVenue[]; heatPoints: HeatPoint[]; hash: string } {
   const now = Date.now();
 
@@ -147,6 +151,7 @@ function computeLiveData(
     const activityLevel = toActivityLevel(userCount);
     liveVenues.push({
       ...venue,
+      imageUrl: venue.imageUrl || resolvedImages[venue.id],
       userCount,
       activityLevel,
       activityColor: toActivityColor(activityLevel),
@@ -197,6 +202,7 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [venues, setVenues] = useState<LiveVenue[]>([]);
   const [heatPoints, setHeatPoints] = useState<HeatPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [resolvedImages, setResolvedImages] = useState<Record<string, string>>({});
 
   const venuesRef = useRef<RawVenue[]>([]);
   const locationsRef = useRef<Record<string, RawLocation>>({});
@@ -216,6 +222,12 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     processData();
   };
 
+  useEffect(() => {
+    if (venuesRef.current.length > 0) {
+      requestRecalculate();
+    }
+  }, [resolvedImages]);
+
   const processData = () => {
     isProcessingRef.current = true;
 
@@ -233,7 +245,8 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         simLocationsRef.current,
         userPosRef.current.lat,
         userPosRef.current.lng,
-        includeSimulated
+        includeSimulated,
+        resolvedImages
       );
 
       setVenues(result.venues);
@@ -307,7 +320,19 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const unsubVenues = onSnapshot(
         query(collection(firestore, 'venues')),
         (snap) => {
-          venuesRef.current = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RawVenue, 'id'>) }));
+          const rawVenues = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RawVenue, 'id'>) }));
+          venuesRef.current = rawVenues;
+
+          // Asynchronously resolve venue images and update state to re-trigger calculations
+          resolveVenueImages(rawVenues).then((imgMap) => {
+            setResolvedImages((prev) => {
+              // Only update if there are new images resolved to avoid loops
+              const hasNew = Object.keys(imgMap).some(k => prev[k] !== imgMap[k]);
+              if (!hasNew) return prev;
+              return { ...prev, ...imgMap };
+            });
+          });
+
           requestRecalculate();
         },
         (e) => console.warn('[LiveVenuesContext] Venues snapshot error:', e)
