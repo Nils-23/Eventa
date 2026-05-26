@@ -25,6 +25,7 @@ import {
 } from '../services/authService';
 import app from '../services/firebase';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { getFriendlyErrorMessage } from '../utils/errorUtils';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -145,7 +146,7 @@ export const LoginScreen = () => {
         Toast.show({
           type: 'error',
           text1: 'Apple Login Failed',
-          text2: e.message || 'Check your network connection and try again.',
+          text2: getFriendlyErrorMessage(e),
         });
       }
     } finally {
@@ -168,7 +169,7 @@ export const LoginScreen = () => {
         Toast.show({
           type: 'error',
           text1: 'Google Login Failed',
-          text2: e.message || 'Check your network connection and try again.',
+          text2: getFriendlyErrorMessage(e),
         });
       }
     } finally {
@@ -195,7 +196,7 @@ export const LoginScreen = () => {
       setVerificationId(vId);
       Toast.show({ type: 'info', text1: 'Code Sent', text2: 'Please check your messages.' });
     } catch (e: any) {
-      Toast.show({ type: 'error', text1: 'SMS Failed', text2: e.message });
+      Toast.show({ type: 'error', text1: 'SMS Failed', text2: getFriendlyErrorMessage(e) });
     } finally {
       setIsLoading(null);
     }
@@ -214,9 +215,7 @@ export const LoginScreen = () => {
           [{ text: 'OK' }]
         );
       } else {
-        let msg = e.message;
-        if (e.code === 'auth/invalid-verification-code') msg = 'Invalid code entered. Try again.';
-        Toast.show({ type: 'error', text1: 'Verification Failed', text2: msg });
+        Toast.show({ type: 'error', text1: 'Verification Failed', text2: getFriendlyErrorMessage(e) });
       }
     } finally {
       setIsLoading(null);

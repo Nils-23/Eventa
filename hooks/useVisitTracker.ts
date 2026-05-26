@@ -93,7 +93,7 @@ export const useVisitTracker = () => {
                   await updateDoc(referrerDocRef, referrerUpdates);
                 }
               } catch (referrerErr) {
-                console.error('[useVisitTracker] Failed to award referrer points:', referrerErr);
+                console.warn('[useVisitTracker] Failed to award referrer points:', referrerErr);
               }
             }
           }
@@ -105,7 +105,7 @@ export const useVisitTracker = () => {
         }
         
       } catch (err) {
-        console.error('[useVisitTracker] Failed to update visit stats:', err);
+        console.warn('[useVisitTracker] Failed to update visit stats:', err);
       }
     };
 

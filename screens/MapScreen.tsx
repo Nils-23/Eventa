@@ -14,6 +14,7 @@ import { getDistanceInMeters } from '../utils/locationUtils';
 import { useAppStore } from '../hooks/useAppStore';
 import { VenueChat } from '../components/VenueChat';
 import { VenueImage } from '../components/VenueImage';
+import { getFriendlyErrorMessage } from '../utils/errorUtils';
 
 const DARK_MAP_STYLE = [
   {
@@ -272,6 +273,14 @@ export const MapScreen = () => {
   const { user, selectedMapVenue, setSelectedMapVenue, isAdmin } = useAppStore();
   const { stories } = useStories();
 
+  // ─── Region + zoom tracking ───────────────────────────────────────────────
+  // We track the current zoom level so we can convert screen-pixel sizes to
+  // geo-accurate meter radii. This fixes the zoom-in issue (GitHub #371):
+  // fixed-meter circles balloon on screen as you zoom in, but pixel-based
+  // circles stay a constant visual size at all zoom levels.
+  const [region, setRegion] = useState<Region | null>(null);
+  const [currentZoom, setCurrentZoom] = useState(14);
+
   // Dynamically calculate radius and scale heatmap weights to counter native kernel normalization and screenspace dispersion
   const { scaledHeatPoints, heatmapRadius } = useMemo(() => {
     const lat = region?.latitude || -1.286389;
@@ -309,31 +318,40 @@ export const MapScreen = () => {
   const [showHeatmapOverlay, setShowHeatmapOverlay] = useState(true);
   const [showRawPoints, setShowRawPoints] = useState(false);
 
-  // ─── Region + zoom tracking ───────────────────────────────────────────────
-  // We track the current zoom level so we can convert screen-pixel sizes to
-  // geo-accurate meter radii. This fixes the zoom-in issue (GitHub #371):
-  // fixed-meter circles balloon on screen as you zoom in, but pixel-based
-  // circles stay a constant visual size at all zoom levels.
-  const [region, setRegion] = useState<Region | null>(null);
-  const [currentZoom, setCurrentZoom] = useState(14);
-
   const handleRegionChange = async (newRegion: Region) => {
-    setRegion(newRegion);
+    // 1. Determine new zoom level
+    let newZoom = currentZoom;
     if (mapRef.current) {
       try {
         const cam = await mapRef.current.getCamera();
         if (cam && typeof cam.zoom === 'number') {
-          setCurrentZoom(Math.max(1, Math.min(20, cam.zoom)));
-          return;
+          newZoom = Math.max(1, Math.min(20, cam.zoom));
         }
       } catch (err) {
         console.warn('[MAP-DEBUG] Failed to get camera zoom:', err);
+        if (newRegion.longitudeDelta > 0) {
+          newZoom = Math.max(1, Math.min(20, Math.log2(360 / newRegion.longitudeDelta)));
+        }
       }
+    } else if (newRegion.longitudeDelta > 0) {
+      newZoom = Math.max(1, Math.min(20, Math.log2(360 / newRegion.longitudeDelta)));
     }
-    // Fallback: Derive zoom from longitudeDelta: zoom ≈ log2(360 / longitudeDelta)
-    if (newRegion.longitudeDelta > 0) {
-      const zoom = Math.log2(360 / newRegion.longitudeDelta);
-      setCurrentZoom(Math.max(1, Math.min(20, zoom)));
+
+    // 2. Compare with existing values (using a micro-threshold) to prevent infinite re-render loops on Android
+    const isRegionSame =
+      region &&
+      Math.abs(region.latitude - newRegion.latitude) < 0.00001 &&
+      Math.abs(region.longitude - newRegion.longitude) < 0.00001 &&
+      Math.abs(region.latitudeDelta - newRegion.latitudeDelta) < 0.00001 &&
+      Math.abs(region.longitudeDelta - newRegion.longitudeDelta) < 0.00001;
+
+    const isZoomSame = Math.abs(currentZoom - newZoom) < 0.01;
+
+    if (!isRegionSame) {
+      setRegion(newRegion);
+    }
+    if (!isZoomSame) {
+      setCurrentZoom(newZoom);
     }
   };
 
@@ -434,7 +452,7 @@ export const MapScreen = () => {
             if (e?.message?.includes('permission')) {
               clearInterval(intervalId);
             } else {
-              console.error("Error auto-refreshing location:", e);
+              console.warn("Error auto-refreshing location:", e);
             }
           }
         }, 15000);
@@ -480,6 +498,11 @@ export const MapScreen = () => {
       }, { duration: 1500 });
     } catch (error) {
       console.warn("Error centering map:", error);
+      Toast.show({
+        type: 'error',
+        text1: 'Location Error',
+        text2: 'Could not retrieve your location. Please check your GPS settings and try again.'
+      });
     }
   };
 
@@ -491,7 +514,7 @@ export const MapScreen = () => {
         mapRef.current?.animateCamera(camera, { duration: 300 });
       }
     } catch (error) {
-      console.error("Error zooming:", error);
+      console.warn("Error zooming:", error);
     }
   };
 
@@ -573,11 +596,11 @@ export const MapScreen = () => {
         }
       }
     } catch (error) {
-      console.error('Upload Error:', error);
+      console.warn('Upload Error:', error);
       Toast.show({
         type: 'error',
         text1: 'Upload Failed',
-        text2: 'Could not upload your story.',
+        text2: getFriendlyErrorMessage(error),
       });
     } finally {
       setIsUploading(false);

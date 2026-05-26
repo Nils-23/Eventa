@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Users, Plus, Save, X, UploadCloud } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -25,6 +25,58 @@ export const AdminSimulationScreen = () => {
   const [newVenueDesc, setNewVenueDesc] = useState('');
   const [newVenueType, setNewVenueType] = useState<'Club' | 'Bar' | 'Festival' | 'Event'>('Club');
   const [newVenueExpiration, setNewVenueExpiration] = useState('');
+  const [newVenueAddress, setNewVenueAddress] = useState('');
+  const [newVenueImageUrl, setNewVenueImageUrl] = useState('');
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+
+  const fetchSuggestions = async (input: string) => {
+    if (input.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    try {
+      const apiKey = 'REDACTED_GOOGLE_MAPS_KEY';
+      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&location=-1.286389,36.817223&radius=50000&key=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status === 'OK') {
+        setSuggestions(data.predictions);
+      } else {
+        setSuggestions([]);
+      }
+    } catch (error) {
+      console.warn('Error fetching place suggestions:', error);
+      setSuggestions([]);
+    }
+  };
+
+  const handleSelectSuggestion = async (placeId: string) => {
+    try {
+      const apiKey = 'REDACTED_GOOGLE_MAPS_KEY';
+      const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=geometry,formatted_address,name,photos&key=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status === 'OK' && data.result) {
+        const { geometry, formatted_address, name, photos } = data.result;
+        setNewVenueName(name || '');
+        setNewVenueLat(geometry?.location?.lat ? String(geometry.location.lat) : '');
+        setNewVenueLng(geometry?.location?.lng ? String(geometry.location.lng) : '');
+        setNewVenueAddress(formatted_address || '');
+        
+        if (photos && photos.length > 0) {
+          const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${photos[0].photo_reference}&key=${apiKey}`;
+          setNewVenueImageUrl(photoUrl);
+        } else {
+          setNewVenueImageUrl('');
+        }
+        
+        setSuggestions([]);
+      }
+    } catch (error) {
+      console.warn('Error getting place details:', error);
+      Toast.show({ type: 'error', text1: 'Lookup Failed', text2: 'Could not fetch details from Google Maps.' });
+    }
+  };
 
   const handleUpdateCount = async (venueId: string) => {
     const value = editingCounts[venueId];
@@ -90,6 +142,14 @@ export const AdminSimulationScreen = () => {
         simulatedUsersCount: 0
       };
       
+      if (newVenueAddress) {
+        venueData.address = newVenueAddress;
+      }
+      
+      if (newVenueImageUrl) {
+        venueData.imageUrl = newVenueImageUrl;
+      }
+      
       if (expirationDate) {
         venueData.expirationDate = expirationDate;
       }
@@ -104,6 +164,9 @@ export const AdminSimulationScreen = () => {
       setNewVenueDesc('');
       setNewVenueType('Club');
       setNewVenueExpiration('');
+      setNewVenueAddress('');
+      setNewVenueImageUrl('');
+      setSuggestions([]);
     } catch (error) {
       console.error('Error creating venue:', error);
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to create new venue.' });
@@ -256,8 +319,11 @@ export const AdminSimulationScreen = () => {
       </ScrollView>
 
       {/* Add Venue Modal */}
-      <Modal visible={isModalVisible} animationType="slide" transparent={true}>
-        <View style={styles.modalOverlay}>
+      <Modal visible={isModalVisible} animationType="slide" transparent={true} onRequestClose={() => setIsModalVisible(false)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Add New Venue</Text>
@@ -266,90 +332,125 @@ export const AdminSimulationScreen = () => {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Venue Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. The Alchemist"
-                placeholderTextColor="#666"
-                value={newVenueName}
-                onChangeText={setNewVenueName}
-              />
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Venue Type</Text>
-              <View style={styles.typeSelectorRow}>
-                {(['Club', 'Bar', 'Festival', 'Event'] as const).map((type) => (
-                  <TouchableOpacity
-                    key={type}
-                    style={[styles.typePill, newVenueType === type && styles.typePillSelected]}
-                    onPress={() => setNewVenueType(type)}
-                  >
-                    <Text style={[styles.typePillText, newVenueType === type && styles.typePillTextSelected]}>
-                      {type}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {(newVenueType === 'Festival' || newVenueType === 'Event') && (
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 16 }}
+            >
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Expiration Date (Mandatory for {newVenueType}s)</Text>
+                <Text style={styles.label}>Venue Name</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="YYYY-MM-DD"
+                  placeholder="Search venue on Google Maps..."
                   placeholderTextColor="#666"
-                  value={newVenueExpiration}
-                  onChangeText={setNewVenueExpiration}
+                  value={newVenueName}
+                  onChangeText={(text) => {
+                    setNewVenueName(text);
+                    fetchSuggestions(text);
+                  }}
                 />
+                {suggestions.length > 0 && (
+                  <View style={styles.suggestionsContainer}>
+                    {suggestions.map((item) => (
+                      <TouchableOpacity
+                        key={item.place_id}
+                        style={styles.suggestionItem}
+                        onPress={() => handleSelectSuggestion(item.place_id)}
+                      >
+                        <Text style={styles.suggestionText} numberOfLines={1}>
+                          {item.description}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
               </View>
-            )}
 
-            <View style={styles.rowFormGroup}>
-              <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-                <Text style={styles.label}>Latitude</Text>
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Address</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="-1.2664"
+                  placeholder="e.g. Parklands Rd, Westlands, Nairobi"
                   placeholderTextColor="#666"
-                  keyboardType="numeric"
-                  value={newVenueLat}
-                  onChangeText={setNewVenueLat}
+                  value={newVenueAddress}
+                  onChangeText={setNewVenueAddress}
                 />
               </View>
-              <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
-                <Text style={styles.label}>Longitude</Text>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Venue Type</Text>
+                <View style={styles.typeSelectorRow}>
+                  {(['Club', 'Bar', 'Festival', 'Event'] as const).map((type) => (
+                    <TouchableOpacity
+                      key={type}
+                      style={[styles.typePill, newVenueType === type && styles.typePillSelected]}
+                      onPress={() => setNewVenueType(type)}
+                    >
+                      <Text style={[styles.typePillText, newVenueType === type && styles.typePillTextSelected]}>
+                        {type}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {(newVenueType === 'Festival' || newVenueType === 'Event') && (
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Expiration Date (Mandatory for {newVenueType}s)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#666"
+                    value={newVenueExpiration}
+                    onChangeText={setNewVenueExpiration}
+                  />
+                </View>
+              )}
+
+              <View style={styles.rowFormGroup}>
+                <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+                  <Text style={styles.label}>Latitude</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="-1.2664"
+                    placeholderTextColor="#666"
+                    keyboardType="numeric"
+                    value={newVenueLat}
+                    onChangeText={setNewVenueLat}
+                  />
+                </View>
+                <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
+                  <Text style={styles.label}>Longitude</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="36.7966"
+                    placeholderTextColor="#666"
+                    keyboardType="numeric"
+                    value={newVenueLng}
+                    onChangeText={setNewVenueLng}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Description</Text>
                 <TextInput
-                  style={styles.input}
-                  placeholder="36.7966"
+                  style={[styles.input, styles.textArea]}
+                  placeholder="Brief description of the venue..."
                   placeholderTextColor="#666"
-                  keyboardType="numeric"
-                  value={newVenueLng}
-                  onChangeText={setNewVenueLng}
+                  multiline
+                  numberOfLines={3}
+                  value={newVenueDesc}
+                  onChangeText={setNewVenueDesc}
                 />
               </View>
-            </View>
 
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Description</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                placeholder="Brief description of the venue..."
-                placeholderTextColor="#666"
-                multiline
-                numberOfLines={3}
-                value={newVenueDesc}
-                onChangeText={setNewVenueDesc}
-              />
-            </View>
-
-            <TouchableOpacity style={styles.createButton} onPress={handleCreateVenue}>
-              <Text style={styles.createButtonText}>Create Venue</Text>
-            </TouchableOpacity>
+              <TouchableOpacity style={styles.createButton} onPress={handleCreateVenue}>
+                <Text style={styles.createButtonText}>Create Venue</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -492,6 +593,8 @@ const styles = StyleSheet.create({
     padding: 24,
     borderWidth: 1,
     borderColor: '#333',
+    maxHeight: '85%',
+    width: '100%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -565,5 +668,23 @@ const styles = StyleSheet.create({
   },
   typePillTextSelected: {
     color: '#FF00CC',
+  },
+  suggestionsContainer: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    maxHeight: 150,
+    marginTop: 4,
+    overflow: 'hidden',
+  },
+  suggestionItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  suggestionText: {
+    color: '#FFF',
+    fontSize: 14,
   },
 });
