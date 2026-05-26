@@ -160,22 +160,55 @@ function computeLiveData(
 
     if (userCount > 0) {
       hashStr += `${venue.id}:${userCount};`;
-      const baseWeight = userCount;
-      heatPoints.push({ latitude: venue.latitude, longitude: venue.longitude, weight: baseWeight });
-      const numRings = Math.min(20, Math.floor(userCount / 20));
-      for (let ring = 1; ring <= numRings; ring++) {
-        const ringRadiusMeters = ring * 12;
-        const numPointsInRing = ring * 6;
-        const ringWeight = baseWeight * Math.pow(0.85, ring);
-        for (let i = 0; i < numPointsInRing; i++) {
-          const angle = (i / numPointsInRing) * Math.PI * 2;
-          const latOffset = (ringRadiusMeters * Math.cos(angle)) / 111111;
+      
+      // Fixed layers and pre-allocated weight percentages:
+      // - Core (Center): 1 point, 10% weight
+      // - Inner Ring (25m): 6 points, 20% weight
+      // - Middle Ring (60m): 12 points, 30% weight
+      // - Outer Ring (100m): 18 points, 40% weight
+      
+      // 1. Core (Center)
+      heatPoints.push({ 
+        latitude: venue.latitude, 
+        longitude: venue.longitude, 
+        weight: userCount * 0.10 
+      });
+      
+      // 2. Concentric Rings
+      const rings = [
+        { radius: 25, points: 6, percent: 0.20 },
+        { radius: 60, points: 12, percent: 0.30 },
+        { radius: 100, points: 18, percent: 0.40 }
+      ];
+
+      for (const ring of rings) {
+        const ringWeight = (userCount * ring.percent) / ring.points;
+        for (let i = 0; i < ring.points; i++) {
+          const angle = (i / ring.points) * Math.PI * 2;
+          const latOffset = (ring.radius * Math.cos(angle)) / 111111;
           const lngOffset =
-            (ringRadiusMeters * Math.sin(angle)) / (111111 * Math.cos((venue.latitude * Math.PI) / 180));
-          heatPoints.push({ latitude: venue.latitude + latOffset, longitude: venue.longitude + lngOffset, weight: ringWeight });
+            (ring.radius * Math.sin(angle)) / (111111 * Math.cos((venue.latitude * Math.PI) / 180));
+          
+          heatPoints.push({ 
+            latitude: venue.latitude + latOffset, 
+            longitude: venue.longitude + lngOffset, 
+            weight: ringWeight 
+          });
         }
       }
     }
+  }
+
+  // 3. Global Density Calibration Anchor Point
+  // Add a hidden anchor point with high weight (e.g. 120) at a remote coordinate (0, 0)
+  // to cap the maximum normalization scale. This prevents low-occupancy venues
+  // from reaching the density required for a red core.
+  if (heatPoints.length > 0) {
+    heatPoints.push({
+      latitude: 0,
+      longitude: 0,
+      weight: 120
+    });
   }
 
   liveVenues.sort((a, b) => b.userCount - a.userCount);

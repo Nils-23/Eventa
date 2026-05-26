@@ -4,6 +4,7 @@ import * as TaskManager from 'expo-task-manager';
 import { ref, set } from 'firebase/database';
 import { realtimeDB } from '../services/firebase';
 import { useAppStore } from './useAppStore';
+import Toast from 'react-native-toast-message';
 
 // ─── Background Task Name ─────────────────────────────────────────────────────
 export const LOCATION_TASK_NAME = 'eventa-background-location';
@@ -77,13 +78,21 @@ export const useLocationTracking = () => {
               longitude: loc.coords.longitude,
               timestamp: loc.timestamp,
               user_id: user.uid,
-            }).catch(console.error);
+            }).catch((e) => console.warn('[Location] Failed to write foreground location to RTDB:', e));
           }
         );
 
         // 2. Request background permission
-        const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-        const hasBackground = bgStatus === 'granted';
+        let hasBackground = false;
+        try {
+          const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+          hasBackground = bgStatus === 'granted';
+        } catch (bgErr: any) {
+          console.warn(
+            '[Location] Background permission request skipped/failed (possibly missing ACCESS_BACKGROUND_LOCATION in AndroidManifest):',
+            bgErr.message || bgErr
+          );
+        }
 
         if (hasBackground) {
           // ── Background tracking via OS-managed task ───────────────────────
@@ -110,10 +119,10 @@ export const useLocationTracking = () => {
           }
         } else {
           // ── Foreground-only fallback ──────────────────────────────────────
-          console.log('[Location] Background permission not granted, using foreground watcher only.');
+          console.log('[Location] Background permission not granted or supported, using foreground watcher only.');
         }
       } catch (err) {
-        console.error('[Location] Failed to start tracking:', err);
+        console.warn('[Location] Failed to start tracking:', err);
       }
     };
 

@@ -22,6 +22,7 @@ import { checkAndUnlockAchievements, ACHIEVEMENTS } from '../services/achievemen
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import * as Icons from 'lucide-react-native';
+import { getFriendlyErrorMessage } from '../utils/errorUtils';
 
 interface Message {
   id: string;
@@ -136,11 +137,11 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     } catch (error) {
-      console.error("Error sending message:", error);
+      console.warn("Error sending message:", error);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: 'Could not send message. Try again.'
+        text1: 'Message Failed',
+        text2: getFriendlyErrorMessage(error)
       });
     } finally {
       setIsSending(false);

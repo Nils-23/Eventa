@@ -7,6 +7,7 @@ import { auth, firestore } from '../services/firebase';
 import { doc, deleteDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 import { useAppStore } from '../hooks/useAppStore';
+import { getFriendlyErrorMessage } from '../utils/errorUtils';
 
 export const SettingsScreen = () => {
   const navigation = useNavigation<any>();
@@ -58,11 +59,11 @@ export const SettingsScreen = () => {
       Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been successfully deleted.' });
       // The auth listener in App.tsx will automatically navigate to Login
     } catch (error: any) {
-      console.error("Error deleting account:", error);
+      console.warn("Error deleting account:", error);
       if (error.code === 'auth/requires-recent-login') {
         Toast.show({ type: 'error', text1: 'Action Required', text2: 'Please sign out and sign in again before deleting your account.' });
       } else {
-        Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to delete account. Please try again later.' });
+        Toast.show({ type: 'error', text1: 'Error', text2: getFriendlyErrorMessage(error) });
       }
     } finally {
       setIsDeleting(false);

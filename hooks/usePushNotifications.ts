@@ -60,7 +60,7 @@ export function usePushNotifications() {
       const userRef = doc(firestore, 'users', userId);
       await setDoc(userRef, { expoPushToken: token }, { merge: true });
     } catch (error) {
-      console.error('Error saving push token:', error);
+      console.warn('Error saving push token:', error);
     }
   };
 

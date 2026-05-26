@@ -107,7 +107,7 @@ export const handleGoogleLogin = async () => {
     }
 
     if (error.message !== 'ACCOUNT_SUSPENDED') {
-      console.error('Google Sign-In Error:', error);
+      console.warn('Google Sign-In Error:', error);
     }
     throw error;
   }
