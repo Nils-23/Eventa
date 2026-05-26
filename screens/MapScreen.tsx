@@ -672,7 +672,7 @@ export const MapScreen = () => {
         pitchEnabled={true}
         rotateEnabled={true}
         minZoomLevel={3}
-        maxZoomLevel={15}
+        maxZoomLevel={20}
         onRegionChangeComplete={handleRegionChange}
       >
         {/* ── Native Heatmap (KDE blending) ──────────────────────────────
@@ -687,10 +687,10 @@ export const MapScreen = () => {
             radius={Math.max(
               50,
               Math.min(
-                250,
+                1000,
                 Math.floor(
-                  250 /
-                  ((156543.03392 * Math.cos(((region?.latitude || -1.286389) * Math.PI) / 180)) /
+                  150 /
+                  ((156543.03392 * Math.cos(((Math.round((region?.latitude || -1.286389) * 10) / 10) * Math.PI) / 180)) /
                     Math.pow(2, currentZoom))
                 )
               )
