@@ -281,26 +281,19 @@ export const MapScreen = () => {
   const [region, setRegion] = useState<Region | null>(null);
   const [currentZoom, setCurrentZoom] = useState(14);
 
-  // Dynamically calculate radius and scale heatmap weights to counter native kernel normalization and screenspace dispersion
-  const { scaledHeatPoints, heatmapRadius } = useMemo(() => {
-    const lat = region?.latitude || -1.286389;
-    const mPx = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, currentZoom);
-    const calculatedRadius = Math.floor(250 / mPx);
-    // Lower minimum radius to 35px to keep heat concentrated and sharp at low zoom levels
-    const rPx = Math.max(35, Math.min(250, calculatedRadius));
+  const discreteZoom = Math.round(currentZoom);
 
-    // Boost base intensity by 15x across the board, and scale it up further
-    // when zooming out (lower zoom levels) to keep the heatmap vibrant and hot from a distance.
-    const zoomFactor = Math.pow(1.4, Math.max(0, 14 - currentZoom));
-    const weightScale = Math.pow(Math.max(50, rPx) / 50, 2) * 15.0 * zoomFactor;
-
-    const scaled = heatPoints.map((pt) => ({
+  const scaledPoints = useMemo(() => {
+    // Boost base intensity and scale it up exponentially with zoom level
+    // to maintain the red core visibility as you zoom in.
+    const zoomScale = 4.5 * Math.pow(1.65, Math.max(0, discreteZoom - 12));
+    return heatPoints.map((pt) => ({
       ...pt,
-      weight: pt.weight * weightScale,
+      weight: pt.weight * zoomScale,
     }));
+  }, [heatPoints, discreteZoom]);
 
-    return { scaledHeatPoints: scaled, heatmapRadius: rPx };
-  }, [heatPoints, currentZoom, region]);
+
 
   // ─── Diagnostic: track every MapScreen render ───────────────────────────
   const renderCountRef = useRef(0);
@@ -672,7 +665,7 @@ export const MapScreen = () => {
         pitchEnabled={true}
         rotateEnabled={true}
         minZoomLevel={3}
-        maxZoomLevel={20}
+        maxZoomLevel={18}
         onRegionChangeComplete={handleRegionChange}
       >
         {/* ── Native Heatmap (KDE blending) ──────────────────────────────
@@ -683,18 +676,8 @@ export const MapScreen = () => {
         {/* Dynamically scale radius based on zoom level to keep geographic size constant and keep intensity strong */}
         {showHeatmapOverlay && (
           <StableHeatmap
-            points={heatPoints}
-            radius={Math.max(
-              50,
-              Math.min(
-                1000,
-                Math.floor(
-                  150 /
-                  ((156543.03392 * Math.cos(((Math.round((region?.latitude || -1.286389) * 10) / 10) * Math.PI) / 180)) /
-                    Math.pow(2, currentZoom))
-                )
-              )
-            )}
+            points={scaledPoints}
+            radius={90}
           />
         )}
         {/* LiveVenue markers */}

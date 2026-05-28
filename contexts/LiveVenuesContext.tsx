@@ -184,41 +184,12 @@ function computeLiveData(
     if (userCount > 0) {
       hashStr += `${venue.id}:${userCount};`;
       
-      // Fixed layers and pre-allocated weight percentages:
-      // - Core (Center): 1 point, 10% weight
-      // - Inner Ring (25m): 6 points, 20% weight
-      // - Middle Ring (60m): 12 points, 30% weight
-      // - Outer Ring (100m): 18 points, 40% weight
-      
-      // 1. Core (Center)
+      // Add a single high-precision heatmap point centered on the venue
       heatPoints.push({ 
         latitude: venue.latitude, 
         longitude: venue.longitude, 
-        weight: userCount * 0.10 
+        weight: userCount
       });
-      
-      // 2. Concentric Rings
-      const rings = [
-        { radius: 25, points: 6, percent: 0.20 },
-        { radius: 60, points: 12, percent: 0.30 },
-        { radius: 100, points: 18, percent: 0.40 }
-      ];
-
-      for (const ring of rings) {
-        const ringWeight = (userCount * ring.percent) / ring.points;
-        for (let i = 0; i < ring.points; i++) {
-          const angle = (i / ring.points) * Math.PI * 2;
-          const latOffset = (ring.radius * Math.cos(angle)) / 111111;
-          const lngOffset =
-            (ring.radius * Math.sin(angle)) / (111111 * Math.cos((venue.latitude * Math.PI) / 180));
-          
-          heatPoints.push({ 
-            latitude: venue.latitude + latOffset, 
-            longitude: venue.longitude + lngOffset, 
-            weight: ringWeight 
-          });
-        }
-      }
     }
   }
 
