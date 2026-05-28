@@ -17,10 +17,13 @@ export interface LiveVenue {
   longitude: number;
   description: string;
   imageUrl?: string;
+  googleImageUrl?: string;
+  customImageUrl?: string;
   address?: string;
   simulatedUsersCount?: number;
   type?: 'Club' | 'Bar' | 'Festival' | 'Event';
   expirationDate?: number; // timestamp in ms
+  startDate?: number; // timestamp in ms
   userCount: number;
   activityLevel: ActivityLevel;
   activityColor: string;
@@ -48,10 +51,13 @@ interface RawVenue {
   longitude: number;
   description: string;
   imageUrl?: string;
+  googleImageUrl?: string;
+  customImageUrl?: string;
   address?: string;
   simulatedUsersCount?: number;
   type?: 'Club' | 'Bar' | 'Festival' | 'Event';
   expirationDate?: number;
+  startDate?: number;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -97,7 +103,7 @@ function computeLiveData(
   userLng: number | null,
   includeSimulated: boolean,
   resolvedImages: Record<string, string>
-): { venues: LiveVenue[]; heatPoints: HeatPoint[]; hash: string } {
+): { venues: LiveVenue[]; scheduledVenues: LiveVenue[]; heatPoints: HeatPoint[]; hash: string } {
   const now = Date.now();
 
   const realActiveLocs = Object.values(realLocations).filter(
@@ -114,6 +120,7 @@ function computeLiveData(
   }
 
   const liveVenues: LiveVenue[] = [];
+  const scheduledVenues: LiveVenue[] = [];
   const heatPoints: HeatPoint[] = [];
   let hashStr = '';
 
@@ -122,6 +129,26 @@ function computeLiveData(
 
     // Filter out expired venues (like Festivals)
     if (venue.expirationDate && venue.expirationDate < now) {
+      continue;
+    }
+
+    const distanceKm =
+      userLat !== null && userLng !== null
+        ? Math.round(haversineMeters(userLat, userLng, venue.latitude, venue.longitude)) / 1000
+        : null;
+
+    const resolvedImageUrl = venue.customImageUrl || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id];
+
+    // Filter out future scheduled events/festivals that haven't started yet
+    if ((venue.type === 'Festival' || venue.type === 'Event') && venue.startDate && venue.startDate > now) {
+      scheduledVenues.push({
+        ...venue,
+        imageUrl: resolvedImageUrl,
+        userCount: 0,
+        activityLevel: 'None',
+        activityColor: toActivityColor('None'),
+        distanceKm,
+      });
       continue;
     }
 
@@ -143,15 +170,11 @@ function computeLiveData(
     }
 
     const userCount = realUserCount + simUserCount;
-    const distanceKm =
-      userLat !== null && userLng !== null
-        ? Math.round(haversineMeters(userLat, userLng, venue.latitude, venue.longitude)) / 1000
-        : null;
 
     const activityLevel = toActivityLevel(userCount);
     liveVenues.push({
       ...venue,
-      imageUrl: venue.imageUrl || resolvedImages[venue.id],
+      imageUrl: resolvedImageUrl,
       userCount,
       activityLevel,
       activityColor: toActivityColor(activityLevel),
@@ -211,8 +234,9 @@ function computeLiveData(
     });
   }
 
+  scheduledVenues.sort((a, b) => (a.startDate ?? 0) - (b.startDate ?? 0));
   liveVenues.sort((a, b) => b.userCount - a.userCount);
-  return { venues: liveVenues, heatPoints, hash: hashStr };
+  return { venues: liveVenues, scheduledVenues, heatPoints, hash: hashStr };
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -220,12 +244,14 @@ interface LiveVenuesContextValue {
   venues: LiveVenue[];
   heatPoints: HeatPoint[];
   isLoading: boolean;
+  scheduledVenues: LiveVenue[];
 }
 
 const LiveVenuesContext = createContext<LiveVenuesContextValue>({
   venues: [],
   heatPoints: [],
   isLoading: true,
+  scheduledVenues: [],
 });
 
 export const useLiveVenuesContext = () => useContext(LiveVenuesContext);
@@ -233,6 +259,7 @@ export const useLiveVenuesContext = () => useContext(LiveVenuesContext);
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [venues, setVenues] = useState<LiveVenue[]>([]);
+  const [scheduledVenues, setScheduledVenues] = useState<LiveVenue[]>([]);
   const [heatPoints, setHeatPoints] = useState<HeatPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [resolvedImages, setResolvedImages] = useState<Record<string, string>>({});
@@ -283,6 +310,7 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
 
       setVenues(result.venues);
+      setScheduledVenues(result.scheduledVenues);
       setIsLoading(false);
 
       if (result.hash !== lastHashRef.current) {
@@ -407,7 +435,7 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
 
   return (
-    <LiveVenuesContext.Provider value={{ venues, heatPoints, isLoading }}>
+    <LiveVenuesContext.Provider value={{ venues, heatPoints, isLoading, scheduledVenues }}>
       {children}
     </LiveVenuesContext.Provider>
   );

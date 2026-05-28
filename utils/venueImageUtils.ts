@@ -110,19 +110,38 @@ export async function resolveVenueImages(venues: any[]): Promise<Record<string, 
 
   // We process resolution sequentially to avoid overloading the API
   for (const venue of venues) {
-    // 1. Direct field in Firestore
+    // 1. Admin custom thumbnail override (highest priority)
+    if (venue.customImageUrl) {
+      result[venue.id] = venue.customImageUrl;
+      continue;
+    }
+
+    // 2. Google Maps fetch (middle priority)
+    if (venue.googleImageUrl) {
+      result[venue.id] = venue.googleImageUrl;
+      continue;
+    }
+
+    // 3. Direct/Legacy imageUrl field
     if (venue.imageUrl) {
       result[venue.id] = venue.imageUrl;
       continue;
     }
 
-    // 2. Hardcoded Nairobi mapping
+    // 4. Default category thumbnail
+    const categoryImage = getFallbackImageByType(venue.type);
+    if (categoryImage) {
+      result[venue.id] = categoryImage;
+      continue;
+    }
+
+    // 5. Hardcoded Nairobi mapping
     if (NAIROBI_VENUE_IMAGES[venue.id]) {
       result[venue.id] = NAIROBI_VENUE_IMAGES[venue.id];
       continue;
     }
 
-    // 3. Search the internet (Wikimedia / Wikipedia)
+    // 6. Search the internet (Wikimedia / Wikipedia)
     try {
       const internetUrl = await findImageOnInternet(venue.name);
       if (internetUrl) {
@@ -133,8 +152,8 @@ export async function resolveVenueImages(venues: any[]): Promise<Record<string, 
       console.warn(`Error searching internet image for ${venue.name}:`, e);
     }
 
-    // 4. Type Fallback
-    result[venue.id] = getFallbackImageByType(venue.type);
+    // 7. Type Fallback Default
+    result[venue.id] = getFallbackImageByType('Default');
   }
 
   return result;

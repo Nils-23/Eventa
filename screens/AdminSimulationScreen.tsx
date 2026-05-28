@@ -1,19 +1,20 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, Plus, Save, X, UploadCloud } from 'lucide-react-native';
+import { ArrowLeft, Users, Plus, Save, X, UploadCloud, Trash2, Calendar } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useLiveVenues, LiveVenue as Venue } from '../hooks/useLiveVenues';
-import { firestore } from '../services/firebase';
+import { firestore, storage } from '../services/firebase';
 import { doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import Toast from 'react-native-toast-message';
 import * as ImagePicker from 'expo-image-picker';
 import { uploadStoryMedia, createSimulatedStory } from '../services/storyService';
-import { Trash2 } from 'lucide-react-native';
+import { getFallbackImageByType } from '../utils/venueImageUtils';
 
 export const AdminSimulationScreen = () => {
   const navigation = useNavigation();
-  const { venues, isLoading } = useLiveVenues();
+  const { venues, scheduledVenues = [], isLoading } = useLiveVenues();
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingCounts, setEditingCounts] = useState<Record<string, string>>({});
   const [uploadingVenueId, setUploadingVenueId] = useState<string | null>(null);
@@ -25,8 +26,11 @@ export const AdminSimulationScreen = () => {
   const [newVenueDesc, setNewVenueDesc] = useState('');
   const [newVenueType, setNewVenueType] = useState<'Club' | 'Bar' | 'Festival' | 'Event'>('Club');
   const [newVenueExpiration, setNewVenueExpiration] = useState('');
+  const [newVenueStartDate, setNewVenueStartDate] = useState('');
   const [newVenueAddress, setNewVenueAddress] = useState('');
-  const [newVenueImageUrl, setNewVenueImageUrl] = useState('');
+  const [newVenueGoogleImageUrl, setNewVenueGoogleImageUrl] = useState('');
+  const [customImageUri, setCustomImageUri] = useState<string | null>(null);
+  const [isUploadingCustomImage, setIsUploadingCustomImage] = useState(false);
   const [suggestions, setSuggestions] = useState<any[]>([]);
 
   const fetchSuggestions = async (input: string) => {
@@ -65,9 +69,9 @@ export const AdminSimulationScreen = () => {
         
         if (photos && photos.length > 0) {
           const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${photos[0].photo_reference}&key=${apiKey}`;
-          setNewVenueImageUrl(photoUrl);
+          setNewVenueGoogleImageUrl(photoUrl);
         } else {
-          setNewVenueImageUrl('');
+          setNewVenueGoogleImageUrl('');
         }
         
         setSuggestions([]);
@@ -100,6 +104,48 @@ export const AdminSimulationScreen = () => {
     }
   };
 
+  const handleSelectCustomImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Gallery access is required to upload a thumbnail.' });
+        return;
+      }
+
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.7,
+        aspect: [16, 9],
+      };
+
+      const result = await ImagePicker.launchImageLibraryAsync(options);
+
+      if (!result.canceled && result.assets.length > 0) {
+        setCustomImageUri(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Image Picker Error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Selection Failed',
+        text2: 'Could not open the gallery.',
+      });
+    }
+  };
+
+  const uploadVenueThumbnail = async (uri: string, venueId: string): Promise<string> => {
+    const fileExtension = uri.split('.').pop() || 'jpg';
+    const fileName = `venues/${venueId}_${Date.now()}.${fileExtension}`;
+    const storageRef = ref(storage, fileName);
+
+    const response = await fetch(uri);
+    const blob = await response.blob();
+
+    const uploadTask = await uploadBytesResumable(storageRef, blob);
+    return getDownloadURL(uploadTask.ref);
+  };
+
   const handleCreateVenue = async () => {
     if (!newVenueName || !newVenueLat || !newVenueLng || !newVenueDesc) {
       Toast.show({ type: 'error', text1: 'Missing Fields', text2: 'Please fill in all basic fields.' });
@@ -121,6 +167,21 @@ export const AdminSimulationScreen = () => {
       expirationDate = parsedDate.getTime();
     }
 
+    let startDate = null;
+    if ((newVenueType === 'Festival' || newVenueType === 'Event') && newVenueStartDate) {
+      const parsedDate = new Date(newVenueStartDate);
+      if (isNaN(parsedDate.getTime())) {
+        Toast.show({ type: 'error', text1: 'Invalid Date', text2: 'Please use YYYY-MM-DD format for Start Date.' });
+        return;
+      }
+      startDate = parsedDate.getTime();
+
+      if (expirationDate && startDate >= expirationDate) {
+        Toast.show({ type: 'error', text1: 'Invalid Dates', text2: 'Start Date must be before Expiration Date.' });
+        return;
+      }
+    }
+
     const lat = parseFloat(newVenueLat);
     const lng = parseFloat(newVenueLng);
 
@@ -128,6 +189,8 @@ export const AdminSimulationScreen = () => {
       Toast.show({ type: 'error', text1: 'Invalid Coordinates', text2: 'Latitude and Longitude must be numbers.' });
       return;
     }
+
+    setIsUploadingCustomImage(true);
 
     try {
       const newVenueId = `venue_${Date.now()}`;
@@ -146,12 +209,22 @@ export const AdminSimulationScreen = () => {
         venueData.address = newVenueAddress;
       }
       
-      if (newVenueImageUrl) {
-        venueData.imageUrl = newVenueImageUrl;
+      if (newVenueGoogleImageUrl) {
+        venueData.googleImageUrl = newVenueGoogleImageUrl;
+      }
+
+      // If a custom image was selected by the admin, upload it to storage
+      if (customImageUri) {
+        const downloadUrl = await uploadVenueThumbnail(customImageUri, newVenueId);
+        venueData.customImageUrl = downloadUrl;
       }
       
       if (expirationDate) {
         venueData.expirationDate = expirationDate;
+      }
+
+      if (startDate) {
+        venueData.startDate = startDate;
       }
 
       await setDoc(venueRef, venueData);
@@ -164,12 +237,16 @@ export const AdminSimulationScreen = () => {
       setNewVenueDesc('');
       setNewVenueType('Club');
       setNewVenueExpiration('');
+      setNewVenueStartDate('');
       setNewVenueAddress('');
-      setNewVenueImageUrl('');
+      setNewVenueGoogleImageUrl('');
+      setCustomImageUri(null);
       setSuggestions([]);
     } catch (error) {
       console.error('Error creating venue:', error);
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to create new venue.' });
+    } finally {
+      setIsUploadingCustomImage(false);
     }
   };
 
@@ -316,6 +393,54 @@ export const AdminSimulationScreen = () => {
             </View>
           ))
         )}
+
+        {/* Divider */}
+        {scheduledVenues.length > 0 && (
+          <View style={styles.sectionDivider} />
+        )}
+
+        {/* Scheduled Future Events Section */}
+        {scheduledVenues.length > 0 && (
+          <>
+            <View style={[styles.sectionHeader, { marginTop: 24 }]}>
+              <Calendar color="#00FFCC" size={20} />
+              <Text style={[styles.sectionTitle, { color: '#00FFCC' }]}>Scheduled Upcoming Events</Text>
+            </View>
+            <Text style={styles.sectionSubtitle}>
+              These events are scheduled for a future date and are currently hidden from public maps/lists.
+            </Text>
+
+            {scheduledVenues.map(venue => {
+              const startDateStr = venue.startDate ? new Date(venue.startDate).toLocaleDateString() : 'N/A';
+              const endDateStr = venue.expirationDate ? new Date(venue.expirationDate).toLocaleDateString() : 'N/A';
+              return (
+                <View key={venue.id} style={styles.venueCard}>
+                  <View style={styles.venueInfo}>
+                    <Text style={styles.venueName}>{venue.name}</Text>
+                    <Text style={styles.scheduledDateText}>
+                      Starts: {startDateStr}
+                    </Text>
+                    <Text style={styles.scheduledDateText}>
+                      Expires: {endDateStr}
+                    </Text>
+                    {venue.type && (
+                      <Text style={styles.venueType}>Type: {venue.type}</Text>
+                    )}
+                  </View>
+                  
+                  <View style={styles.venueControls}>
+                    <TouchableOpacity 
+                      style={styles.deleteButton}
+                      onPress={() => handleDeleteVenue(venue)}
+                    >
+                      <Trash2 color="#FFF" size={16} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
+          </>
+        )}
       </ScrollView>
 
       {/* Add Venue Modal */}
@@ -395,16 +520,29 @@ export const AdminSimulationScreen = () => {
               </View>
 
               {(newVenueType === 'Festival' || newVenueType === 'Event') && (
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Expiration Date (Mandatory for {newVenueType}s)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#666"
-                    value={newVenueExpiration}
-                    onChangeText={setNewVenueExpiration}
-                  />
-                </View>
+                <>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>Scheduled Start Date (Optional, YYYY-MM-DD)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#666"
+                      value={newVenueStartDate}
+                      onChangeText={setNewVenueStartDate}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>Expiration Date (Mandatory for {newVenueType}s)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#666"
+                      value={newVenueExpiration}
+                      onChangeText={setNewVenueExpiration}
+                    />
+                  </View>
+                </>
               )}
 
               <View style={styles.rowFormGroup}>
@@ -432,6 +570,52 @@ export const AdminSimulationScreen = () => {
                 </View>
               </View>
 
+              {/* Thumbnail Image Picker & Preview Section */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Thumbnail Image</Text>
+                
+                <View style={styles.previewContainer}>
+                  {customImageUri ? (
+                    <>
+                      <Image source={{ uri: customImageUri }} style={styles.previewImage} />
+                      <View style={[styles.previewBadge, { backgroundColor: '#FF00CC' }]}>
+                        <Text style={styles.previewBadgeText}>Admin Override</Text>
+                      </View>
+                      <TouchableOpacity 
+                        style={styles.removeImageButton} 
+                        onPress={() => setCustomImageUri(null)}
+                      >
+                        <X color="#FFF" size={14} />
+                      </TouchableOpacity>
+                    </>
+                  ) : newVenueGoogleImageUrl ? (
+                    <>
+                      <Image source={{ uri: newVenueGoogleImageUrl }} style={styles.previewImage} />
+                      <View style={[styles.previewBadge, { backgroundColor: '#00FFCC' }]}>
+                        <Text style={[styles.previewBadgeText, { color: '#000' }]}>Google Maps Fetch</Text>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <Image source={{ uri: getFallbackImageByType(newVenueType) }} style={styles.previewImage} />
+                      <View style={[styles.previewBadge, { backgroundColor: '#888' }]}>
+                        <Text style={styles.previewBadgeText}>Category Fallback ({newVenueType})</Text>
+                      </View>
+                    </>
+                  )}
+                </View>
+
+                <TouchableOpacity 
+                  style={styles.imageUploadButton} 
+                  onPress={handleSelectCustomImage}
+                >
+                  <UploadCloud color="#FF00CC" size={20} />
+                  <Text style={styles.imageUploadButtonText}>
+                    {customImageUri ? 'Change Custom Thumbnail' : 'Upload Custom Thumbnail (Optional)'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Description</Text>
                 <TextInput
@@ -445,8 +629,16 @@ export const AdminSimulationScreen = () => {
                 />
               </View>
 
-              <TouchableOpacity style={styles.createButton} onPress={handleCreateVenue}>
-                <Text style={styles.createButtonText}>Create Venue</Text>
+              <TouchableOpacity 
+                style={[styles.createButton, isUploadingCustomImage && styles.createButtonDisabled]} 
+                onPress={handleCreateVenue}
+                disabled={isUploadingCustomImage}
+              >
+                {isUploadingCustomImage ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.createButtonText}>Create Venue</Text>
+                )}
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -686,5 +878,79 @@ const styles = StyleSheet.create({
   suggestionText: {
     color: '#FFF',
     fontSize: 14,
+  },
+  createButtonDisabled: {
+    backgroundColor: '#666',
+    opacity: 0.7,
+  },
+  previewContainer: {
+    width: '100%',
+    height: 150,
+    borderRadius: 8,
+    backgroundColor: '#2A2A2A',
+    overflow: 'hidden',
+    position: 'relative',
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  previewImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+    opacity: 0.85,
+  },
+  previewBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  previewBadgeText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FFF',
+  },
+  imageUploadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2A2A2A',
+    borderWidth: 1,
+    borderColor: '#FF00CC',
+    borderRadius: 8,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  imageUploadButtonText: {
+    color: '#FF00CC',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: '#333',
+    marginVertical: 24,
+  },
+  scheduledDateText: {
+    color: '#00FFCC',
+    fontSize: 12,
+    marginTop: 2,
   },
 });
