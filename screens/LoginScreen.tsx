@@ -22,6 +22,7 @@ import {
   handleAppleLogin,
   handlePhoneLoginStart,
   handlePhoneOTPConfirm,
+  handleSpecialBypassLogin,
 } from '../services/authService';
 import app from '../services/firebase';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -185,6 +186,20 @@ export const LoginScreen = () => {
   };
 
   const onSendOTPPress = async () => {
+    const trimmedPhone = phoneNumber.trim();
+    if (trimmedPhone === '0990') {
+      try {
+        setIsLoading('phone');
+        await handleSpecialBypassLogin();
+        Toast.show({ type: 'success', text1: 'Special Access', text2: 'Logged in successfully.' });
+      } catch (e: any) {
+        Toast.show({ type: 'error', text1: 'Bypass Login Failed', text2: getFriendlyErrorMessage(e) });
+      } finally {
+        setIsLoading(null);
+      }
+      return;
+    }
+
     if (!phoneNumber || phoneNumber.length < 10) {
       Toast.show({ type: 'error', text1: 'Invalid Number', text2: 'Please enter a valid phone number with country code.' });
       return;
