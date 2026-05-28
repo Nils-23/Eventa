@@ -10,7 +10,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Trophy, Award, CircleUserRound, Clock, Flame, Wine } from 'lucide-react-native';
+import { Trophy, Award, CircleUserRound, Flame, Wine } from 'lucide-react-native';
 import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { getMonthlyPointsKey } from '../services/userService';
@@ -30,24 +30,9 @@ export const LeaderboardScreen = () => {
   const [leaders, setLeaders] = useState<LeaderboardUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [countdown, setCountdown] = useState('');
 
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
   const monthlyKey = getMonthlyPointsKey();
-
-  const calculateCountdown = () => {
-    const now = new Date();
-    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const diffMs = nextMonth.getTime() - now.getTime();
-    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    
-    if (days > 0) {
-      setCountdown(`Resets in ${days}d ${hours}h`);
-    } else {
-      setCountdown(`Resets in ${hours}h`);
-    }
-  };
 
   const fetchLeaders = async () => {
     try {
@@ -84,17 +69,11 @@ export const LeaderboardScreen = () => {
 
   useEffect(() => {
     fetchLeaders();
-    calculateCountdown();
-    
-    // Update countdown every hour
-    const interval = setInterval(calculateCountdown, 60 * 60 * 1000);
-    return () => clearInterval(interval);
   }, []);
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchLeaders();
-    calculateCountdown();
   };
 
   const renderActiveBadge = (badgeId: string | null | undefined) => {
@@ -176,10 +155,6 @@ export const LeaderboardScreen = () => {
         <View>
           <Text style={styles.headerTitle}>Monthly Rankings</Text>
           <Text style={styles.headerSub}>{currentMonthName} Leaderboard</Text>
-        </View>
-        <View style={styles.timerPill}>
-          <Clock color="#00FFCC" size={14} />
-          <Text style={styles.timerText}>{countdown}</Text>
         </View>
       </View>
 

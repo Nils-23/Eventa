@@ -1,6 +1,6 @@
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, firestore } from './firebase';
-import { User, GoogleAuthProvider, signInWithCredential, OAuthProvider, PhoneAuthProvider, ApplicationVerifier, AuthError } from 'firebase/auth';
+import { User, GoogleAuthProvider, signInWithCredential, OAuthProvider, PhoneAuthProvider, ApplicationVerifier, AuthError, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
@@ -189,6 +189,42 @@ export const handlePhoneOTPConfirm = async (
     if (error.message !== 'ACCOUNT_SUSPENDED') {
       console.error('Phone OTP Confirm Error:', error);
     }
+    throw error;
+  }
+};
+
+/**
+ * Handles the special bypass login for Apple review / testers.
+ * Signs in using a dedicated email/password tester account.
+ * Creates the user if it doesn't exist yet in Firebase.
+ */
+export const handleSpecialBypassLogin = async () => {
+  const email = 'apple-tester@eventas.live';
+  const password = 'AppleTester0990!';
+  try {
+    let userCredential;
+    try {
+      userCredential = await signInWithEmailAndPassword(auth, email, password);
+    } catch (loginError: any) {
+      // If user doesn't exist, create the account
+      if (loginError.code === 'auth/user-not-found' || loginError.code === 'auth/invalid-credential') {
+        try {
+          userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        } catch (createError: any) {
+          if (createError.code === 'auth/email-already-in-use') {
+            // Already exists, throw the original login error (likely wrong password)
+            throw loginError;
+          }
+          throw createError;
+        }
+      } else {
+        throw loginError;
+      }
+    }
+    await checkAndCreateUser(userCredential.user);
+    return userCredential.user;
+  } catch (error: any) {
+    console.error('Special Bypass Login Error:', error);
     throw error;
   }
 };
