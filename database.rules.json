@@ -1,0 +1,32 @@
+{
+  "rules": {
+    "locations": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "$uid === auth.uid"
+      }
+    },
+    "simulated_locations": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "venue_chats": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "user_chats": {
+      "$userId": {
+        ".read": "$userId === auth.uid",
+        ".write": "$userId === auth.uid"
+      }
+    },
+    "venue_members": {
+      "$venueId": {
+        ".read": "auth != null",
+        "$userId": {
+          ".write": "auth != null && $userId === auth.uid"
+        }
+      }
+    }
+  }
+}

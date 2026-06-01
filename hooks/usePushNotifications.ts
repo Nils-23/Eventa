@@ -79,10 +79,6 @@ async function registerForPushNotificationsAsync() {
     });
   }
 
-  if (!Device.isDevice) {
-    console.log('Running on simulator — push notifications not available. Token will not be saved.');
-    return undefined; // never save a mock token to Firestore
-  }
 
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   let finalStatus = existingStatus;

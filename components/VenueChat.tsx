@@ -10,9 +10,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Keyboard
+  Keyboard,
+  PanResponder,
+  Animated,
+  TouchableWithoutFeedback
 } from 'react-native';
-import { X, Send } from 'lucide-react-native';
+import { X, Send, CornerUpLeft } from 'lucide-react-native';
 import { ref, onValue, push, set } from 'firebase/database';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 import { realtimeDB, firestore } from '../services/firebase';
@@ -31,6 +34,12 @@ interface Message {
   message: string;
   timestamp: number;
   activeBadge?: string;
+  reactions?: Record<string, Record<string, string>>; // emoji -> userId -> username
+  replyTo?: {
+    messageId: string;
+    username: string;
+    message: string;
+  };
 }
 
 interface VenueChatProps {
@@ -50,11 +59,80 @@ const CHAT_SUGGESTIONS = [
   "Drinks flowing? 🍻"
 ];
 
+const REACTION_EMOJIS = ['❤️', '🔥', '😂', '👍', '😮', '🍻'];
+
+interface SwipeableMessageProps {
+  children: React.ReactNode;
+  onSwipe: () => void;
+  isMe: boolean;
+}
+
+const SwipeableMessage: React.FC<SwipeableMessageProps> = ({ children, onSwipe, isMe }) => {
+  const translateX = useRef(new Animated.Value(0)).current;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        // Track horizontal swipe to the right, ignore vertical scrolling
+        return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dy) < 8 && gestureState.dx > 0;
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        const newX = Math.max(0, Math.min(80, gestureState.dx));
+        translateX.setValue(newX);
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (gestureState.dx > 50) {
+          onSwipe();
+        }
+        Animated.spring(translateX, {
+          toValue: 0,
+          useNativeDriver: true,
+          tension: 40,
+          friction: 6,
+        }).start();
+      },
+    })
+  ).current;
+
+  return (
+    <View style={styles.swipeContainer}>
+      <Animated.View style={[styles.replyIconContainer, {
+        opacity: translateX.interpolate({
+          inputRange: [0, 40],
+          outputRange: [0, 1],
+          extrapolate: 'clamp',
+        }),
+        transform: [
+          {
+            scale: translateX.interpolate({
+              inputRange: [0, 40],
+              outputRange: [0.6, 1.0],
+              extrapolate: 'clamp',
+            }),
+          },
+        ],
+      }]}>
+        <CornerUpLeft color="#00FFCC" size={16} />
+      </Animated.View>
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={{ transform: [{ translateX }] }}
+      >
+        {children}
+      </Animated.View>
+    </View>
+  );
+};
+
 export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueId, venueName }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedMessageForReaction, setSelectedMessageForReaction] = useState<Message | null>(null);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  
   const { user } = useAppStore();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
@@ -114,7 +192,14 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
         username,
         message: inputText.trim(),
         timestamp: Date.now(),
-        ...(activeBadge ? { activeBadge } : {})
+        ...(activeBadge ? { activeBadge } : {}),
+        ...(replyingTo ? {
+          replyTo: {
+            messageId: replyingTo.id,
+            username: replyingTo.username,
+            message: replyingTo.message
+          }
+        } : {})
       });
       
       // Update stats and check achievements
@@ -132,7 +217,14 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
         lastInteractionTime: Date.now()
       });
 
+      // Register the user as an active member of this venue's chat
+      const venueMemberRef = ref(realtimeDB, `venue_members/${venueId}/${user.uid}`);
+      await set(venueMemberRef, {
+        lastInteractionTime: Date.now()
+      });
+
       setInputText('');
+      setReplyingTo(null);
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -148,9 +240,71 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     }
   };
 
+  const toggleReaction = async (messageId: string, emoji: string) => {
+    if (!user || !venueId) return;
+    try {
+      const username = await fetchUsername(user.uid);
+      const reactionRef = ref(realtimeDB, `venue_chats/${venueId}/${messageId}/reactions/${emoji}/${user.uid}`);
+      
+      const message = messages.find(m => m.id === messageId);
+      const userReacted = message?.reactions?.[emoji]?.[user.uid];
+
+      if (userReacted) {
+        await set(reactionRef, null);
+      } else {
+        await set(reactionRef, username);
+      }
+    } catch (error) {
+      console.warn("Failed to toggle reaction:", error);
+    }
+  };
+
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const renderReplyHeader = (message: Message, isMe: boolean) => {
+    if (!message.replyTo) return null;
+    return (
+      <View style={[styles.replyBubbleHeader, isMe ? styles.myReplyHeader : styles.otherReplyHeader]}>
+        <CornerUpLeft size={10} color="#AAA" style={{ marginRight: 4 }} />
+        <Text style={styles.replyHeaderUser} numberOfLines={1}>{message.replyTo.username}</Text>
+        <Text style={styles.replyHeaderText} numberOfLines={1}>{message.replyTo.message}</Text>
+      </View>
+    );
+  };
+
+  const renderReactions = (message: Message, isMe: boolean) => {
+    if (!message.reactions) return null;
+    const entries = Object.entries(message.reactions);
+    if (entries.length === 0) return null;
+
+    return (
+      <View style={[styles.reactionsRow, isMe ? { alignSelf: 'flex-end' } : { alignSelf: 'flex-start' }]}>
+        {entries.map(([emoji, userMap]) => {
+          const userIds = Object.keys(userMap);
+          if (userIds.length === 0) return null;
+          const hasReacted = user ? userIds.includes(user.uid) : false;
+          
+          return (
+            <TouchableOpacity 
+              key={emoji}
+              style={[
+                styles.reactionCapsule,
+                hasReacted && styles.reactionCapsuleActive
+              ]}
+              onPress={() => toggleReaction(message.id, emoji)}
+            >
+              <Text style={styles.reactionEmoji}>{emoji}</Text>
+              <Text style={[styles.reactionCount, hasReacted && styles.reactionCountActive]}>
+                {userIds.length}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
   };
 
   const renderMessage = ({ item }: { item: Message }) => {
@@ -160,18 +314,33 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     const BadgeIcon = badgeObj ? Icons[badgeObj.iconName] : null;
 
     return (
-      <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
-        <View style={[styles.usernameContainer, isMe ? { alignSelf: 'flex-end', marginRight: 4 } : { marginLeft: 4 }]}>
-          {BadgeIcon ? <BadgeIcon color={badgeObj!.glowColor} size={12} style={{ marginRight: 4 }} /> : null}
-          <Text style={styles.username}>{isMe ? 'You' : item.username}</Text>
+      <SwipeableMessage
+        key={item.id}
+        onSwipe={() => setReplyingTo(item)}
+        isMe={isMe}
+      >
+        <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
+          <View style={[styles.usernameContainer, isMe ? { alignSelf: 'flex-end', marginRight: 4 } : { marginLeft: 4 }]}>
+            {BadgeIcon ? <BadgeIcon color={badgeObj!.glowColor} size={12} style={{ marginRight: 4 }} /> : null}
+            <Text style={styles.username}>{isMe ? 'You' : item.username}</Text>
+          </View>
+          
+          <TouchableOpacity
+            activeOpacity={0.95}
+            onLongPress={() => setSelectedMessageForReaction(item)}
+          >
+            <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
+              {renderReplyHeader(item, isMe)}
+              <Text style={styles.messageText}>{item.message}</Text>
+              <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
+                {formatTime(item.timestamp)}
+              </Text>
+            </View>
+          </TouchableOpacity>
+          
+          {renderReactions(item, isMe)}
         </View>
-        <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
-          <Text style={styles.messageText}>{item.message}</Text>
-          <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
-            {formatTime(item.timestamp)}
-          </Text>
-        </View>
-      </View>
+      </SwipeableMessage>
     );
   };
 
@@ -181,10 +350,11 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
       animationType="slide"
       transparent={true}
       onRequestClose={onClose}
+      statusBarTranslucent={true}
     >
       <KeyboardAvoidingView 
         style={styles.modalOverlay} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <View style={[styles.chatContainer, { paddingTop: insets.top, paddingBottom: insets.bottom || 20 }]}>
           <View style={styles.header}>
@@ -238,6 +408,20 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             </View>
           )}
 
+          {/* Replying-to Preview Bar */}
+          {replyingTo && (
+            <View style={styles.replyBar}>
+              <View style={styles.replyBarVerticalLine} />
+              <View style={styles.replyBarContent}>
+                <Text style={styles.replyBarUser}>Replying to {replyingTo.username}</Text>
+                <Text style={styles.replyBarText} numberOfLines={1}>{replyingTo.message}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setReplyingTo(null)} style={styles.replyBarClose}>
+                <X color="#888" size={16} />
+              </TouchableOpacity>
+            </View>
+          )}
+
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.textInput}
@@ -261,6 +445,37 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Reaction Emoji Popover Modal */}
+        <Modal
+          visible={!!selectedMessageForReaction}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setSelectedMessageForReaction(null)}
+        >
+          <TouchableWithoutFeedback onPress={() => setSelectedMessageForReaction(null)}>
+            <View style={styles.modalOverlayReaction}>
+              <TouchableWithoutFeedback>
+                <View style={styles.reactionPopup}>
+                  {REACTION_EMOJIS.map(emoji => (
+                    <TouchableOpacity
+                      key={emoji}
+                      onPress={() => {
+                        if (selectedMessageForReaction) {
+                          toggleReaction(selectedMessageForReaction.id, emoji);
+                          setSelectedMessageForReaction(null);
+                        }
+                      }}
+                    >
+                      <Text style={styles.reactionPopupEmoji}>{emoji}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -319,8 +534,8 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   messageContainer: {
-    marginBottom: 16,
-    maxWidth: '80%',
+    marginBottom: 10,
+    maxWidth: '85%',
   },
   myMessage: {
     alignSelf: 'flex-end',
@@ -415,5 +630,141 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: '#444',
+  },
+  
+  // 👥 Emoji Reactions Styles
+  modalOverlayReaction: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reactionPopup: {
+    flexDirection: 'row',
+    backgroundColor: '#1E1E1E',
+    borderRadius: 30,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+  },
+  reactionPopupEmoji: {
+    fontSize: 26,
+    marginHorizontal: 8,
+  },
+  reactionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  reactionCapsule: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#222',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  reactionCapsuleActive: {
+    backgroundColor: 'rgba(0, 255, 204, 0.1)',
+    borderColor: '#00FFCC',
+  },
+  reactionEmoji: {
+    fontSize: 12,
+    marginRight: 4,
+  },
+  reactionCount: {
+    color: '#888',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  reactionCountActive: {
+    color: '#00FFCC',
+  },
+
+  // 📍 Sliding Reply Preview Bar Styles
+  replyBar: {
+    flexDirection: 'row',
+    backgroundColor: '#1A1A1A',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+    alignItems: 'center',
+  },
+  replyBarVerticalLine: {
+    width: 3,
+    height: '100%',
+    backgroundColor: '#00FFCC',
+    marginRight: 10,
+    borderRadius: 2,
+  },
+  replyBarContent: {
+    flex: 1,
+  },
+  replyBarUser: {
+    color: '#00FFCC',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  replyBarText: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  replyBarClose: {
+    padding: 4,
+  },
+
+  // Quoted reply in message bubble
+  replyBubbleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 8,
+    padding: 6,
+    marginBottom: 6,
+    maxWidth: '100%',
+  },
+  myReplyHeader: {
+    borderLeftWidth: 2,
+    borderLeftColor: '#00FFCC',
+  },
+  otherReplyHeader: {
+    borderLeftWidth: 2,
+    borderLeftColor: '#FF00CC',
+  },
+  replyHeaderUser: {
+    color: '#00FFCC',
+    fontSize: 11,
+    fontWeight: 'bold',
+    marginRight: 6,
+  },
+  replyHeaderText: {
+    color: '#AAA',
+    fontSize: 11,
+    flex: 1,
+  },
+
+  // Swipe gesture styles
+  swipeContainer: {
+    position: 'relative',
+    width: '100%',
+  },
+  replyIconContainer: {
+    position: 'absolute',
+    left: 15,
+    top: '30%',
+    justifyContent: 'center',
+    alignItems: 'center',
   }
 });
