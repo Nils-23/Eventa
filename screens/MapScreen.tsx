@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import * as Location from 'expo-location';
-import { StyleSheet, View, Text, TouchableOpacity, Alert } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X } from 'lucide-react-native';
@@ -361,10 +361,10 @@ export const MapScreen = () => {
       latitude: -1.286389,
       longitude: 36.817223,
     },
-    pitch: 45, // Snap map 3D tilt
+    pitch: 30, // Slight tilt for 3D/2D hybrid perspective
     heading: 0,
-    altitude: 2000,
-    zoom: 14,
+    altitude: 12000,
+    zoom: 12.2, // Wide city view
   });
 
   // Effect to stop marker tracking after mount to boost performance
@@ -418,9 +418,9 @@ export const MapScreen = () => {
               latitude: location.coords.latitude,
               longitude: location.coords.longitude,
             },
-            pitch: 45,
+            pitch: 30,
             heading: location.coords.heading || 0,
-            zoom: 16,
+            zoom: 12.2, // Wide city view showing hot zones
           }, { duration: 2000 });
         }
 
@@ -677,7 +677,7 @@ export const MapScreen = () => {
         {showHeatmapOverlay && (
           <StableHeatmap
             points={scaledPoints}
-            radius={90}
+            radius={Platform.OS === 'android' ? 50 : 90}
           />
         )}
         {/* LiveVenue markers */}
