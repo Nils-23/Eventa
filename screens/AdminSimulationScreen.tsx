@@ -451,7 +451,7 @@ export const AdminSimulationScreen = () => {
         statusBarTranslucent={true}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior="padding"
           style={styles.modalOverlay}
         >
           <View style={styles.modalContent}>

@@ -3,7 +3,7 @@ import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X } from 'lucide-react-native';
+import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Radio } from 'lucide-react-native';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
@@ -14,6 +14,7 @@ import { getDistanceInMeters } from '../utils/locationUtils';
 import { useAppStore } from '../hooks/useAppStore';
 import { VenueChat } from '../components/VenueChat';
 import { VenueImage } from '../components/VenueImage';
+import { LiveFeedModal } from '../components/LiveFeedModal';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
 
 const DARK_MAP_STYLE = [
@@ -305,6 +306,7 @@ export const MapScreen = () => {
   const [isViewerVisible, setIsViewerVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
+  const [isLiveFeedVisible, setIsLiveFeedVisible] = useState(false);
 
   // Debug states
   const [isDebugMode, setIsDebugMode] = useState(false);
@@ -809,6 +811,16 @@ export const MapScreen = () => {
           </TouchableOpacity>
         )}
 
+        {/* Pulsing Live Now Button */}
+        <TouchableOpacity 
+          style={[styles.controlButton, styles.liveNowButton]} 
+          onPress={() => setIsLiveFeedVisible(true)} 
+          activeOpacity={0.7}
+        >
+          <View style={styles.liveIndicatorDot} />
+          <Radio color="#FF00CC" size={20} />
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.controlButton} onPress={centerMap} activeOpacity={0.7}>
           <LocateFixed color="#00FFCC" size={20} />
         </TouchableOpacity>
@@ -823,6 +835,36 @@ export const MapScreen = () => {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Live Feed Modal */}
+      <LiveFeedModal
+        isVisible={isLiveFeedVisible}
+        onClose={() => setIsLiveFeedVisible(false)}
+        venues={venues}
+        stories={stories}
+        onOpenChat={(venueId, venueName) => {
+          const targetVenue = venues.find(v => v.id === venueId);
+          if (targetVenue) {
+            setSelectedMapVenue(targetVenue);
+            setIsChatVisible(true);
+          }
+        }}
+        onOpenStories={(venueObj) => {
+          setSelectedMapVenue(venueObj);
+          setIsViewerVisible(true);
+        }}
+        onFocusVenue={(venueObj) => {
+          setSelectedMapVenue(venueObj);
+          mapRef.current?.animateCamera({
+            center: {
+              latitude: venueObj.latitude,
+              longitude: venueObj.longitude,
+            },
+            zoom: 16,
+            pitch: 45,
+          }, { duration: 1000 });
+        }}
+      />
     </View>
   );
 };
@@ -1046,6 +1088,23 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#2A2A2A',
+  },
+  liveNowButton: {
+    borderColor: '#FF00CC',
+    shadowColor: '#FF00CC',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  liveIndicatorDot: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF0055',
   },
   controlDivider: {
     height: 1,

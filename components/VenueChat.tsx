@@ -13,10 +13,11 @@ import {
   Keyboard,
   PanResponder,
   Animated,
-  TouchableWithoutFeedback
+  TouchableWithoutFeedback,
+  Alert
 } from 'react-native';
-import { X, Send, CornerUpLeft } from 'lucide-react-native';
-import { ref, onValue, push, set } from 'firebase/database';
+import { X, Send, CornerUpLeft, Trash2 } from 'lucide-react-native';
+import { ref, onValue, push, set, remove } from 'firebase/database';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 import { realtimeDB, firestore } from '../services/firebase';
 import { useAppStore } from '../hooks/useAppStore';
@@ -136,6 +137,23 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   const { user } = useAppStore();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isVisible || !venueId) return;
@@ -259,6 +277,41 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     }
   };
 
+  const handleDeleteMessage = (messageId: string) => {
+    if (!user || !venueId) return;
+    
+    Alert.alert(
+      "Delete Message",
+      "Are you sure you want to delete this message permanently? This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const messageRef = ref(realtimeDB, `venue_chats/${venueId}/${messageId}`);
+              await remove(messageRef);
+              setSelectedMessageForReaction(null);
+              Toast.show({
+                type: 'success',
+                text1: 'Deleted',
+                text2: 'Message deleted successfully.'
+              });
+            } catch (error) {
+              console.warn("Failed to delete message:", error);
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Failed to delete message.'
+              });
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -354,9 +407,9 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     >
       <KeyboardAvoidingView 
         style={styles.modalOverlay} 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
       >
-        <View style={[styles.chatContainer, { paddingTop: insets.top, paddingBottom: insets.bottom || 20 }]}>
+        <View style={[styles.chatContainer, { paddingTop: insets.top }]}>
           <View style={styles.header}>
             <View>
               <Text style={styles.venueName}>{venueName}</Text>
@@ -422,7 +475,10 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             </View>
           )}
 
-          <View style={styles.inputContainer}>
+          <View style={[
+            styles.inputContainer,
+            { paddingBottom: keyboardVisible ? 12 : Math.max(12, insets.bottom) }
+          ]}>
             <TextInput
               style={styles.textInput}
               placeholder="Ask about the vibe..."
@@ -456,20 +512,41 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           <TouchableWithoutFeedback onPress={() => setSelectedMessageForReaction(null)}>
             <View style={styles.modalOverlayReaction}>
               <TouchableWithoutFeedback>
-                <View style={styles.reactionPopup}>
-                  {REACTION_EMOJIS.map(emoji => (
-                    <TouchableOpacity
-                      key={emoji}
-                      onPress={() => {
-                        if (selectedMessageForReaction) {
-                          toggleReaction(selectedMessageForReaction.id, emoji);
-                          setSelectedMessageForReaction(null);
-                        }
-                      }}
-                    >
-                      <Text style={styles.reactionPopupEmoji}>{emoji}</Text>
-                    </TouchableOpacity>
-                  ))}
+                <View style={[
+                  styles.reactionPopup,
+                  selectedMessageForReaction?.user_id === user?.uid && styles.myReactionPopup
+                ]}>
+                  <View style={styles.emojiRow}>
+                    {REACTION_EMOJIS.map(emoji => (
+                      <TouchableOpacity
+                        key={emoji}
+                        onPress={() => {
+                          if (selectedMessageForReaction) {
+                            toggleReaction(selectedMessageForReaction.id, emoji);
+                            setSelectedMessageForReaction(null);
+                          }
+                        }}
+                      >
+                        <Text style={styles.reactionPopupEmoji}>{emoji}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {selectedMessageForReaction?.user_id === user?.uid && (
+                    <>
+                      <View style={styles.reactionSeparator} />
+                      <TouchableOpacity
+                        style={styles.deleteOption}
+                        onPress={() => {
+                          if (selectedMessageForReaction) {
+                            handleDeleteMessage(selectedMessageForReaction.id);
+                          }
+                        }}
+                      >
+                        <Trash2 color="#FF3333" size={16} style={{ marginRight: 8 }} />
+                        <Text style={styles.deleteOptionText}>Delete Message</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </View>
               </TouchableWithoutFeedback>
             </View>
@@ -652,6 +729,33 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.5,
     shadowRadius: 4,
+  },
+  myReactionPopup: {
+    flexDirection: 'column',
+    borderRadius: 20,
+    alignItems: 'stretch',
+    minWidth: 250,
+  },
+  emojiRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  reactionSeparator: {
+    height: 1,
+    backgroundColor: '#333',
+    marginVertical: 10,
+  },
+  deleteOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+  },
+  deleteOptionText: {
+    color: '#FF3333',
+    fontSize: 14,
+    fontWeight: '600',
   },
   reactionPopupEmoji: {
     fontSize: 26,
