@@ -96,13 +96,14 @@ async function registerForPushNotificationsAsync() {
 
   try {
     const projectId =
-      Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
+      Constants?.expoConfig?.extra?.eas?.projectId ??
+      Constants?.easConfig?.projectId ??
+      '97c28f7f-bc55-49da-a7d8-7bcccc4fa3e2';
       
     token = (
-      await Notifications.getExpoPushTokenAsync(
-        projectId ? { projectId } : undefined
-      )
+      await Notifications.getExpoPushTokenAsync({ projectId })
     ).data;
+
   } catch (error: any) {
     // On free Apple Developer accounts, aps-environment entitlement is not available.
     // Push notifications will be unavailable but the app functions normally.

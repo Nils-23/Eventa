@@ -233,19 +233,7 @@ const HEATMAP_GRADIENT = {
 // This wrapper blocks re-renders unless the points array reference changes.
 const StableHeatmap = React.memo(
   ({ points, radius }: { points: { latitude: number; longitude: number; weight: number }[], radius: number }) => {
-    React.useEffect(() => {
-      console.log(`[HEATMAP-DEBUG] StableHeatmap MOUNTED with ${points.length} points`);
-      return () => console.log('[HEATMAP-DEBUG] StableHeatmap UNMOUNTED');
-    }, []);
-
-    React.useEffect(() => {
-      console.log(`[HEATMAP-DEBUG] StableHeatmap points CHANGED → ${points.length} points`);
-    }, [points]);
-
-    console.log(`[HEATMAP-DEBUG] StableHeatmap render() called. points.length=${points.length}`);
-
     if (points.length === 0) {
-      console.log('[HEATMAP-DEBUG] StableHeatmap returning null (0 points)');
       return null;
     }
     return (
@@ -260,9 +248,6 @@ const StableHeatmap = React.memo(
   (prevProps, nextProps) => {
     const samePoints = prevProps.points === nextProps.points;
     const sameRadius = prevProps.radius === nextProps.radius;
-    if (!samePoints || !sameRadius) {
-      console.log(`[HEATMAP-DEBUG] React.memo: CHANGED (points: ${samePoints}, radius: ${sameRadius}) → WILL re-render`);
-    }
     return samePoints && sameRadius;
   }
 );
@@ -296,10 +281,7 @@ export const MapScreen = () => {
 
 
 
-  // ─── Diagnostic: track every MapScreen render ───────────────────────────
-  const renderCountRef = useRef(0);
-  renderCountRef.current++;
-  console.log(`[HEATMAP-DEBUG] MapScreen render #${renderCountRef.current} | heatPoints.length=${heatPoints.length} | showHeatmapOverlay=${true}`);
+
 
   const [userLocation, setUserLocation] = useState<Location.LocationObjectCoords | null>(null);
 

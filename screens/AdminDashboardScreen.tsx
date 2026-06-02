@@ -109,8 +109,22 @@ export const AdminDashboardScreen = () => {
             <Text style={styles.cardTitle}>Users & Awards</Text>
             <Text style={styles.cardDesc}>Grant the prestige certification badge and monthly Nightlife Legend bottle reward to top-tier users.</Text>
           </TouchableOpacity>
+
+          {/* Affiliate & Referral Tracking */}
+          <TouchableOpacity 
+            style={styles.card} 
+            onPress={() => navigation.navigate('AdminReferrals')}
+          >
+            <View style={[styles.iconContainer, { backgroundColor: 'rgba(0, 255, 204, 0.1)' }]}>
+              <Users color="#00FFCC" size={28} />
+              <BadgeCheck color="#FF00CC" size={20} style={styles.subIcon} />
+            </View>
+            <Text style={styles.cardTitle}>Affiliates & Referrals</Text>
+            <Text style={styles.cardDesc}>Manage creators, track first-open install conversions, and simulate attribution or anti-fraud rules.</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
+
     </SafeAreaView>
   );
 };

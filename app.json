@@ -22,7 +22,16 @@
         "NSCameraUsageDescription": "Allow Eventas to use your camera to record stories at venues.",
         "NSMicrophoneUsageDescription": "Allow Eventas to record audio for your video stories.",
         "NSPhotoLibraryUsageDescription": "Allow Eventas to access your gallery to upload stories.",
+        "LSApplicationQueriesSchemes": [
+          "mailto",
+          "mailto"
+        ],
         "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "com.googleusercontent.apps.653907647305-jfh53up4abu5giju93624umbbpg07ed6"
+            ]
+          },
           {
             "CFBundleURLSchemes": [
               "com.googleusercontent.apps.653907647305-jfh53up4abu5giju93624umbbpg07ed6"
@@ -31,8 +40,11 @@
         ],
         "UIBackgroundModes": [
           "location",
+          "fetch",
+          "location",
           "fetch"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       },
       "config": {
         "googleMaps": {
@@ -57,7 +69,8 @@
       },
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
