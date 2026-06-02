@@ -1,7 +1,9 @@
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
+const fetch = require("node-fetch");
 
 admin.initializeApp();
+
 
 const db = admin.firestore();
 const rtdb = admin.database();
@@ -312,3 +314,248 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
 
   console.log("Finished scheduled notification run.");
 });
+
+// 🔗 3. Invite Link HTTP Redirect Handler
+exports.inviteRedirect = functions.https.onRequest(async (req, res) => {
+  const pathParts = req.path.split('/');
+  const code = req.query.code || pathParts[pathParts.length - 1];
+
+  if (!code) {
+    res.status(400).send("Error: Missing referral code");
+    return;
+  }
+
+  // Retrieve client IP and User-Agent
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip || "unknown";
+  const userAgent = req.headers['user-agent'] || "unknown";
+
+  try {
+    // Log invite link click for first-open iOS attribution
+    await db.collection('pending_clicks').add({
+      referralCode: code,
+      ip: ip,
+      userAgent: userAgent,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // In production, redirects to Store links:
+    let redirectUrl = "https://play.google.com/store/apps/details?id=com.eventas.app";
+    const uaLower = userAgent.toLowerCase();
+    if (uaLower.includes("iphone") || uaLower.includes("ipad") || uaLower.includes("ipod")) {
+      redirectUrl = "https://apps.apple.com/app/eventas/id123456789";
+    } else {
+      redirectUrl = `https://play.google.com/store/apps/details?id=com.eventas.app&referrer=${encodeURIComponent(code)}`;
+    }
+
+    res.send(`
+      <html>
+        <head>
+          <title>Redirecting to Eventa...</title>
+          <meta http-equiv="refresh" content="2;url=${redirectUrl}">
+          <style>
+            body { background-color: #121212; color: #FFFFFF; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            .loader { border: 4px solid #1A1A1A; border-top: 4px solid #00FFCC; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 20px; }
+            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            h1 { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+            p { color: #888; font-size: 14px; }
+          </style>
+        </head>
+        <body>
+          <div class="loader"></div>
+          <h1>Redirecting to the App Store</h1>
+          <p>Please wait while we set up your invite code: <strong>${code}</strong>...</p>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("Error in inviteRedirect:", error);
+    res.status(500).send("Error performing invite redirection.");
+  }
+});
+
+// 📲 4. Device Install Registration & Anti-Fraud Validation
+exports.registerInstall = functions.https.onCall(async (data, context) => {
+  const { deviceId, referralCode, deviceDetails } = data;
+
+  if (!deviceId) {
+    throw new functions.https.HttpsError('invalid-argument', 'deviceId is required');
+  }
+
+  const req = context.rawRequest;
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip || "unknown";
+  const userAgent = req.headers['user-agent'] || "unknown";
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  const installRef = db.collection('installs').doc(deviceId);
+
+  try {
+    // Check if device has ever registered an install before
+    const docSnap = await installRef.get();
+    if (docSnap.exists) {
+      const existingData = docSnap.data();
+      
+      // Log duplicate attempt as separate invalid log to avoid overwriting original confirmed record
+      const dupRef = db.collection('installs').doc();
+      await dupRef.set({
+        deviceId,
+        providedReferralCode: referralCode || null,
+        deviceDetails: deviceDetails || {},
+        ip,
+        userAgent,
+        timestamp: now,
+        status: 'invalid',
+        reason: 'duplicate_device',
+        originalInstallId: deviceId
+      });
+
+      if (existingData.creatorId) {
+        const creatorRef = db.collection('creators').doc(existingData.creatorId);
+        await creatorRef.update({
+          totalInstalls: admin.firestore.FieldValue.increment(1)
+        });
+      }
+
+      return { success: false, status: 'invalid', reason: 'duplicate_device' };
+    }
+
+    // 1. Mark install as "pending validation" initially
+    const initialRecord = {
+      deviceId,
+      providedReferralCode: referralCode || null,
+      deviceDetails: deviceDetails || {},
+      ip,
+      userAgent,
+      timestamp: now,
+      status: 'pending',
+      reason: null
+    };
+    await installRef.set(initialRecord);
+
+    // 2. Perform attribution if referralCode is not provided directly (iOS first-open IP/UA match)
+    let finalCode = referralCode;
+    let attributionSource = referralCode ? 'direct' : 'none';
+
+    if (!finalCode) {
+      // Find matching click recorded within the last 24 hours matching IP & User-Agent
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const clickSnap = await db.collection('pending_clicks')
+        .where('ip', '==', ip)
+        .where('userAgent', '==', userAgent)
+        .where('timestamp', '>=', twentyFourHoursAgo)
+        .orderBy('timestamp', 'desc')
+        .limit(1)
+        .get();
+
+      if (!clickSnap.empty) {
+        const clickDoc = clickSnap.docs[0].data();
+        finalCode = clickDoc.referralCode;
+        attributionSource = 'ip_useragent_match';
+      }
+    }
+
+    if (!finalCode) {
+      await installRef.update({
+        status: 'invalid',
+        reason: 'no_referral_code',
+        attributionSource
+      });
+      return { success: false, status: 'invalid', reason: 'no_referral_code' };
+    }
+
+    // 3. Find creator matching referralCode (case-insensitive)
+    const creatorsSnap = await db.collection('creators')
+      .where('referralCode', '==', finalCode.toUpperCase().trim())
+      .limit(1)
+      .get();
+
+    if (creatorsSnap.empty) {
+      await installRef.update({
+        status: 'invalid',
+        referralCode: finalCode,
+        reason: 'invalid_referral_code',
+        attributionSource
+      });
+      return { success: false, status: 'invalid', reason: 'invalid_referral_code' };
+    }
+
+    const creatorDoc = creatorsSnap.docs[0];
+    const creatorId = creatorDoc.id;
+
+    await installRef.update({
+      creatorId,
+      referralCode: finalCode.toUpperCase().trim(),
+      attributionSource
+    });
+
+    // 4. Run validation & anti-fraud rules
+    const validationResult = await db.runTransaction(async (transaction) => {
+      // Rule 1: IP Velocity rate limit (max 3 confirmed installs per IP per 10 minutes)
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      const ipSnap = await transaction.get(
+        db.collection('installs')
+          .where('ip', '==', ip)
+          .where('status', '==', 'confirmed')
+          .where('timestamp', '>=', tenMinutesAgo)
+      );
+
+      if (ipSnap.size >= 3) {
+        return { status: 'invalid', reason: 'ip_velocity_limit' };
+      }
+
+      // Rule 2: Emulator detection
+      const model = (deviceDetails && deviceDetails.model) ? deviceDetails.model.toLowerCase() : "";
+      const isDevice = deviceDetails && deviceDetails.isDevice !== undefined ? deviceDetails.isDevice : true;
+      const isEmulator = !isDevice || model.includes("emulator") || model.includes("simulator") || model.includes("sdk_gphone") || model.includes("gphone");
+
+      if (isEmulator) {
+        return { status: 'invalid', reason: 'emulator_detected' };
+      }
+
+      return { status: 'confirmed' };
+    });
+
+    // Write final status
+    await installRef.update({
+      status: validationResult.status,
+      reason: validationResult.reason || null
+    });
+
+    // 5. Update creator statistics
+    const creatorRef = db.collection('creators').doc(creatorId);
+    if (validationResult.status === 'confirmed') {
+      await db.runTransaction(async (t) => {
+        const cDoc = await t.get(creatorRef);
+        if (cDoc.exists) {
+          const totalInstalls = cDoc.data().totalInstalls || 0;
+          const validInstalls = cDoc.data().validInstalls || 0;
+          t.update(creatorRef, {
+            totalInstalls: totalInstalls + 1,
+            validInstalls: validInstalls + 1
+          });
+        }
+      });
+      return { success: true, status: 'confirmed' };
+    } else {
+      await db.runTransaction(async (t) => {
+        const cDoc = await t.get(creatorRef);
+        if (cDoc.exists) {
+          const totalInstalls = cDoc.data().totalInstalls || 0;
+          t.update(creatorRef, {
+            totalInstalls: totalInstalls + 1
+          });
+        }
+      });
+      return { success: false, status: 'invalid', reason: validationResult.reason };
+    }
+  } catch (error) {
+    console.error("Error running registerInstall function:", error);
+    try {
+      await installRef.update({
+        status: 'invalid',
+        reason: 'internal_error'
+      });
+    } catch (_) {}
+    throw new functions.https.HttpsError('internal', 'Internal error registering install: ' + error.message);
+  }
+});
+

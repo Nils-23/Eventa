@@ -12,9 +12,12 @@ import { SettingsScreen } from './screens/SettingsScreen';
 import { AdminSimulationScreen } from './screens/AdminSimulationScreen';
 import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
 import { AdminUsersScreen } from './screens/AdminUsersScreen';
+import { AdminReferralsScreen } from './screens/AdminReferralsScreen';
 import { useAuth } from './hooks/useAuth';
+
 import { useAppStore } from './hooks/useAppStore';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
+import { useReferralTracker } from './hooks/useReferralTracker';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LiveVenuesProvider } from './contexts/LiveVenuesContext';
 
@@ -30,7 +33,11 @@ export default function App() {
   // Start serverless background engines
   useSimulationEngine();
 
+  // Track creator referral installs on first open
+  useReferralTracker();
+
   React.useEffect(() => {
+
     const handleUrl = async (url: string | null) => {
       if (!url) return;
       const inviteMatch = url.match(/\/invite\/([a-zA-Z0-9_-]+)/);
@@ -74,9 +81,11 @@ export default function App() {
                 <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
                 <Stack.Screen name="AdminSimulation" component={AdminSimulationScreen} />
                 <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
+                <Stack.Screen name="AdminReferrals" component={AdminReferralsScreen} />
               </>
             )}
           </Stack.Navigator>
+
         </NavigationContainer>
       </LiveVenuesProvider>
       <Toast config={toastConfig} topOffset={60} />
