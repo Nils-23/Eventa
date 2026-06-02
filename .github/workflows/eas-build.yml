@@ -28,9 +28,9 @@ jobs:
         run: npm install
 
       - name: 🚀 Build iOS App
-        # To re-enable auto-submit, add the --auto-submit flag after configuring App Store Connect API Keys on Expo
-        run: eas build --platform ios --profile production --non-interactive
+        # --no-wait triggers the build and exits immediately, saving GitHub runner minutes
+        run: eas build --platform ios --profile production --no-wait --non-interactive
 
       - name: 🚀 Build Android App
-        # To re-enable auto-submit, add the --auto-submit flag after configuring Google Play Store credentials on Expo
-        run: eas build --platform android --profile production --non-interactive
+        # --no-wait triggers the build and exits immediately, saving GitHub runner minutes
+        run: eas build --platform android --profile production --no-wait --non-interactive
