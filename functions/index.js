@@ -375,15 +375,23 @@ exports.inviteRedirect = functions.https.onRequest(async (req, res) => {
 
 // 📲 4. Device Install Registration & Anti-Fraud Validation
 exports.registerInstall = functions.https.onCall(async (data, context) => {
-  const { deviceId, referralCode, deviceDetails } = data;
+  const { deviceId, referralCode, deviceDetails, simulatedIp, simulatedUserAgent } = data;
 
   if (!deviceId) {
     throw new functions.https.HttpsError('invalid-argument', 'deviceId is required');
   }
 
   const req = context.rawRequest;
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip || "unknown";
-  const userAgent = req.headers['user-agent'] || "unknown";
+  let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip || "unknown";
+  let userAgent = req.headers['user-agent'] || "unknown";
+
+  // Allow simulator to override IP and User-Agent for validation testing
+  if (simulatedIp) {
+    ip = simulatedIp;
+  }
+  if (simulatedUserAgent) {
+    userAgent = simulatedUserAgent;
+  }
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   const installRef = db.collection('installs').doc(deviceId);
