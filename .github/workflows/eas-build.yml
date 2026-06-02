@@ -29,3 +29,6 @@ jobs:
 
       - name: 🚀 Build and Submit to iOS
         run: eas build --platform ios --profile production --auto-submit --non-interactive
+
+      - name: 🚀 Build and Submit to Android
+        run: eas build --platform android --profile production --auto-submit --non-interactive
