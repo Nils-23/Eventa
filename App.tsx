@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { toastConfig } from './config/toast';
 import { MainTabs } from './navigation/MainTabs';
 import { LoginScreen } from './screens/LoginScreen';
+import { TermsScreen } from './screens/TermsScreen';
 import { AchievementsScreen } from './screens/AchievementsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { AdminSimulationScreen } from './screens/AdminSimulationScreen';
@@ -51,7 +52,7 @@ export default function App() {
     return () => subscription.remove();
   }, []);
 
-  const { user, isLoading } = useAppStore();
+  const { user, isLoading, hasAgreedToTerms } = useAppStore();
 
   if (isLoading) {
     return (
@@ -73,9 +74,12 @@ export default function App() {
           >
             {!user ? (
               <Stack.Screen name="Login" component={LoginScreen} />
+            ) : !hasAgreedToTerms ? (
+              <Stack.Screen name="OnboardingTerms" component={TermsScreen} />
             ) : (
               <>
                 <Stack.Screen name="Main" component={MainTabs} />
+                <Stack.Screen name="Terms" component={TermsScreen} />
                 <Stack.Screen name="Achievements" component={AchievementsScreen} />
                 <Stack.Screen name="Settings" component={SettingsScreen} />
                 <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />

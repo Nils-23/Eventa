@@ -28,7 +28,8 @@ export const generateRandomUsername = (): string => {
 };
 
 /**
- * Checks if user exists in Firestore, and if not, creates a new profile.
+ * Checks if user exists in Firestore. If they are existing, updates last_active.
+ * Defers creation of new users to createUserProfile (called after Terms agreement).
  */
 export const checkAndCreateUser = async (user: User) => {
   try {
@@ -36,24 +37,10 @@ export const checkAndCreateUser = async (user: User) => {
     const userSnap = await getDoc(userRef);
 
     if (!userSnap.exists()) {
-      // First time login - create account
-      const referredBy = await AsyncStorage.getItem('referredBy');
-      const userData: any = {
-        user_id: user.uid,
-        username: generateRandomUsername(),
-        created_at: serverTimestamp(),
-        last_active: serverTimestamp(),
-        points: 0,
-        hasAttendedFirstVenue: false,
-      };
-      if (referredBy) {
-        userData.referredBy = referredBy;
-      }
-      await setDoc(userRef, userData);
-      if (referredBy) {
-        await AsyncStorage.removeItem('referredBy');
-      }
-      console.log('New user created successfully!');
+      // First time login - do not create account here.
+      // Profile creation is deferred until they accept the Terms of Service.
+      console.log('New user detected. Deferring profile creation until Terms agreement.');
+      return;
     } else {
       const data = userSnap.data();
       if (data?.suspended) {
@@ -69,6 +56,37 @@ export const checkAndCreateUser = async (user: User) => {
     if (error.message !== 'ACCOUNT_SUSPENDED') {
       console.error('Error in checkAndCreateUser:', error);
     }
+    throw error;
+  }
+};
+
+/**
+ * Creates a new user profile in Firestore after they agree to terms.
+ */
+export const createUserProfile = async (user: User) => {
+  try {
+    const userRef = doc(firestore, 'users', user.uid);
+    const referredBy = await AsyncStorage.getItem('referredBy');
+    const userData: any = {
+      user_id: user.uid,
+      username: generateRandomUsername(),
+      created_at: serverTimestamp(),
+      last_active: serverTimestamp(),
+      points: 0,
+      hasAttendedFirstVenue: false,
+      agreedToTerms: true,
+      termsAgreementDate: serverTimestamp(),
+    };
+    if (referredBy) {
+      userData.referredBy = referredBy;
+    }
+    await setDoc(userRef, userData);
+    if (referredBy) {
+      await AsyncStorage.removeItem('referredBy');
+    }
+    console.log('New user profile created successfully after terms agreement!');
+  } catch (error) {
+    console.error('Error in createUserProfile:', error);
     throw error;
   }
 };
