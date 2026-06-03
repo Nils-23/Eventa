@@ -31,7 +31,7 @@ const Stack = createNativeStackNavigator();
 export default function App() {
   // Bind Firebase auth listener to the app store
   useAuth();
-  
+
   // Start serverless background engines
   useSimulationEngine();
 
