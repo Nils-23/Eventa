@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Linking, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Trash2, Flag, Users } from 'lucide-react-native';
+import { ArrowLeft, Trash2, Flag, Users, FileText } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { auth, firestore } from '../services/firebase';
 import { doc, deleteDoc } from 'firebase/firestore';
@@ -85,6 +85,16 @@ export const SettingsScreen = () => {
           <View style={styles.rowItemLeft}>
             <Flag color="#00FFCC" size={20} />
             <Text style={styles.rowText}>Report an Issue</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.row} 
+          onPress={() => navigation.navigate('Terms', { viewOnly: true })}
+        >
+          <View style={styles.rowItemLeft}>
+            <FileText color="#A78BFA" size={20} />
+            <Text style={styles.rowText}>Terms & Guidelines</Text>
           </View>
         </TouchableOpacity>
 

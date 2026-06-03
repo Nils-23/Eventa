@@ -15,6 +15,8 @@ interface AppState {
   setIsAdmin: (isAdmin: boolean) => void;
   isSimulationRunning: boolean;
   setIsSimulationRunning: (isRunning: boolean) => void;
+  hasAgreedToTerms: boolean;
+  setHasAgreedToTerms: (value: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -30,4 +32,6 @@ export const useAppStore = create<AppState>((set) => ({
   setIsAdmin: (isAdmin) => set({ isAdmin }),
   isSimulationRunning: true,
   setIsSimulationRunning: (isSimulationRunning) => set({ isSimulationRunning }),
+  hasAgreedToTerms: false,
+  setHasAgreedToTerms: (hasAgreedToTerms) => set({ hasAgreedToTerms }),
 }));
