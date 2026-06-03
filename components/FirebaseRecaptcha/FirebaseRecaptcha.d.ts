@@ -1,4 +1,13 @@
-import { FirebaseOptions } from 'expo-firebase-core';
+export interface FirebaseOptions {
+    apiKey?: string;
+    appId?: string;
+    databaseURL?: string;
+    messagingSenderId?: string;
+    projectId?: string;
+    storageBucket?: string;
+    authDomain?: string;
+    measurementId?: string;
+}
 import * as React from 'react';
 import { WebView } from './WebView';
 interface Props extends React.ComponentProps<typeof WebView> {
