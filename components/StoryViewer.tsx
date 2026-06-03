@@ -391,7 +391,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
 
             {/* ── Header (progress + metadata) ─────────── */}
             {/* Uses safe-area inset so it's never hidden behind notch/island */}
-            <View style={[styles.headerContainer, { paddingTop: headerTop }]} pointerEvents="none">
+            <View style={[styles.headerContainer, { paddingTop: headerTop }]} pointerEvents="box-none">
               {/* Progress bars */}
               <View style={styles.progressContainer}>
                 {stories.map((_, index) => {

@@ -567,3 +567,113 @@ exports.registerInstall = functions.https.onCall(async (data, context) => {
   }
 });
 
+// 🔄 5. Scheduled Recurring Story Handler
+exports.checkRecurringStories = functions.pubsub.schedule("every 5 minutes").onRun(async (context) => {
+  console.log("Checking for recurring stories to trigger...");
+  const now = new Date();
+  
+  // Resolve current weekday and time in Nairobi timezone
+  const nairobiParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Nairobi',
+    weekday: 'short', // 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false
+  }).formatToParts(now);
+
+  let weekday = '';
+  let hourStr = '';
+  let minuteStr = '';
+
+  nairobiParts.forEach(p => {
+    if (p.type === 'weekday') weekday = p.value;
+    if (p.type === 'hour') hourStr = p.value.padStart(2, '0');
+    if (p.type === 'minute') minuteStr = p.value.padStart(2, '0');
+  });
+
+  const currentTime = `${hourStr}:${minuteStr}`;
+  const currentMinutes = parseInt(hourStr, 10) * 60 + parseInt(minuteStr, 10);
+  console.log(`Current Nairobi Time: ${weekday} ${currentTime} (${currentMinutes} mins from midnight)`);
+
+  try {
+    const activeSchedulesSnap = await db.collection('recurring_stories')
+      .where('active', '==', true)
+      .get();
+
+    if (activeSchedulesSnap.empty) {
+      console.log("No active recurring story schedules found.");
+      return null;
+    }
+
+    const batch = db.batch();
+    let triggerCount = 0;
+
+    for (const docSnap of activeSchedulesSnap.docs) {
+      const schedule = docSnap.data();
+      const targetParts = schedule.time.split(':');
+      if (targetParts.length !== 2) continue;
+
+      const targetMinutes = parseInt(targetParts[0], 10) * 60 + parseInt(targetParts[1], 10);
+      
+      let shouldTrigger = false;
+
+      if (schedule.frequency === 'daily') {
+        // Trigger if current time is within 30 minutes after target time
+        if (currentMinutes >= targetMinutes && currentMinutes - targetMinutes < 30) {
+          shouldTrigger = true;
+        }
+      } else if (schedule.frequency === 'weekly') {
+        // Trigger if day matches AND time is within 30 minutes after target time
+        if (weekday === schedule.dayOfWeek && currentMinutes >= targetMinutes && currentMinutes - targetMinutes < 30) {
+          shouldTrigger = true;
+        }
+      }
+
+      // Check throttle: if lastTriggered was less than 12 hours ago, skip
+      if (shouldTrigger && schedule.lastTriggered) {
+        const lastTime = schedule.lastTriggered.toDate().getTime();
+        if (now.getTime() - lastTime < 12 * 60 * 60 * 1000) {
+          shouldTrigger = false;
+        }
+      }
+
+      if (shouldTrigger) {
+        console.log(`Triggering recurring story schedule: ${docSnap.id} for venue: ${schedule.venueName} (${schedule.venueId})`);
+        
+        // Calculate expiration date (24 hours from now)
+        const expiresAtDate = new Date();
+        expiresAtDate.setHours(expiresAtDate.getHours() + 24);
+
+        // 1. Write the new story doc
+        const newStoryRef = db.collection('stories').doc();
+        batch.set(newStoryRef, {
+          user_id: `sim_admin_${Date.now()}`,
+          venue_id: schedule.venueId,
+          media_url: schedule.mediaUrl,
+          media_type: schedule.mediaType,
+          created_at: admin.firestore.FieldValue.serverTimestamp(),
+          expires_at: expiresAtDate,
+          activeBadge: 'Admin'
+        });
+
+        // 2. Update lastTriggered on the schedule
+        batch.update(docSnap.ref, {
+          lastTriggered: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        triggerCount++;
+      }
+    }
+
+    if (triggerCount > 0) {
+      await batch.commit();
+      console.log(`Successfully triggered ${triggerCount} recurring stories.`);
+    } else {
+      console.log("No schedules matched the current time slot.");
+    }
+  } catch (error) {
+    console.error("Error executing checkRecurringStories scheduled function:", error);
+  }
+  return null;
+});
+
