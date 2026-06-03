@@ -49,7 +49,7 @@ export const AdminSimulationScreen = () => {
   const [newVenueLat, setNewVenueLat] = useState('');
   const [newVenueLng, setNewVenueLng] = useState('');
   const [newVenueDesc, setNewVenueDesc] = useState('');
-  const [newVenueType, setNewVenueType] = useState<'Club' | 'Bar' | 'Festival' | 'Event'>('Club');
+  const [newVenueType, setNewVenueType] = useState<'Club' | 'Bar' | 'Activity' | 'Event'>('Club');
   const [newVenueExpiration, setNewVenueExpiration] = useState('');
   const [newVenueStartDate, setNewVenueStartDate] = useState('');
   const [newVenueAddress, setNewVenueAddress] = useState('');
@@ -177,7 +177,7 @@ export const AdminSimulationScreen = () => {
       return;
     }
 
-    if ((newVenueType === 'Festival' || newVenueType === 'Event') && !newVenueExpiration) {
+    if ((newVenueType === 'Activity' || newVenueType === 'Event') && !newVenueExpiration) {
       Toast.show({ type: 'error', text1: 'Missing Expiration', text2: `${newVenueType}s must have an expiration date.` });
       return;
     }
@@ -193,7 +193,7 @@ export const AdminSimulationScreen = () => {
     }
 
     let startDate = null;
-    if ((newVenueType === 'Festival' || newVenueType === 'Event') && newVenueStartDate) {
+    if ((newVenueType === 'Activity' || newVenueType === 'Event') && newVenueStartDate) {
       const parsedDate = new Date(newVenueStartDate);
       if (isNaN(parsedDate.getTime())) {
         Toast.show({ type: 'error', text1: 'Invalid Date', text2: 'Please use YYYY-MM-DD format for Start Date.' });
@@ -766,7 +766,7 @@ export const AdminSimulationScreen = () => {
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Venue Type</Text>
                 <View style={styles.typeSelectorRow}>
-                  {(['Club', 'Bar', 'Festival', 'Event'] as const).map((type) => (
+                  {(['Club', 'Bar', 'Activity', 'Event'] as const).map((type) => (
                     <TouchableOpacity
                       key={type}
                       style={[styles.typePill, newVenueType === type && styles.typePillSelected]}
@@ -780,7 +780,7 @@ export const AdminSimulationScreen = () => {
                 </View>
               </View>
 
-              {(newVenueType === 'Festival' || newVenueType === 'Event') && (
+              {(newVenueType === 'Activity' || newVenueType === 'Event') && (
                 <>
                   <View style={styles.formGroup}>
                     <Text style={styles.label}>Scheduled Start Date (Optional, YYYY-MM-DD)</Text>
