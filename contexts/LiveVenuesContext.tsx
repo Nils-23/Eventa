@@ -21,7 +21,7 @@ export interface LiveVenue {
   customImageUrl?: string;
   address?: string;
   simulatedUsersCount?: number;
-  type?: 'Club' | 'Bar' | 'Festival' | 'Event';
+  type?: 'Club' | 'Bar' | 'Activity' | 'Event';
   expirationDate?: number; // timestamp in ms
   startDate?: number; // timestamp in ms
   userCount: number;
@@ -56,7 +56,7 @@ interface RawVenue {
   customImageUrl?: string;
   address?: string;
   simulatedUsersCount?: number;
-  type?: 'Club' | 'Bar' | 'Festival' | 'Event';
+  type?: 'Club' | 'Bar' | 'Activity' | 'Event';
   expirationDate?: number;
   startDate?: number;
   hidden?: boolean;
@@ -134,7 +134,7 @@ function computeLiveData(
       continue;
     }
 
-    // Filter out expired venues (like Festivals)
+    // Filter out expired venues (like Activities)
     if (venue.expirationDate && venue.expirationDate < now) {
       continue;
     }
@@ -146,8 +146,8 @@ function computeLiveData(
 
     const resolvedImageUrl = venue.customImageUrl || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id];
 
-    // Filter out future scheduled events/festivals that haven't started yet
-    if ((venue.type === 'Festival' || venue.type === 'Event') && venue.startDate && venue.startDate > now) {
+    // Filter out future scheduled events/activities that haven't started yet
+    if ((venue.type === 'Activity' || venue.type === 'Event') && venue.startDate && venue.startDate > now) {
       scheduledVenues.push({
         ...venue,
         imageUrl: resolvedImageUrl,

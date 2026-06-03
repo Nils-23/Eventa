@@ -106,7 +106,7 @@ const VenueCard = ({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 export const ListScreen = () => {
   const { venues, isLoading } = useLiveVenues();
-  const [selectedFilter, setSelectedFilter] = useState<'All' | 'Club' | 'Bar' | 'Festival' | 'Event'>('All');
+  const [selectedFilter, setSelectedFilter] = useState<'All' | 'Club' | 'Bar' | 'Activity' | 'Event'>('All');
 
   const filteredVenues = venues.filter((v) => 
     selectedFilter === 'All' || v.type === selectedFilter
@@ -131,7 +131,7 @@ export const ListScreen = () => {
       {/* Filter Row */}
       <View style={styles.filterContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {(['All', 'Club', 'Bar', 'Festival', 'Event'] as const).map((filter) => (
+          {(['All', 'Club', 'Bar', 'Activity', 'Event'] as const).map((filter) => (
             <TouchableOpacity
               key={filter}
               style={[styles.filterPill, selectedFilter === filter && styles.filterPillActive]}
