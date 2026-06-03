@@ -9,8 +9,9 @@ export const useAuth = () => {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
       if (user) {
+        setIsLoading(true);
+        setUser(user);
         try {
           const userDocRef = doc(firestore, 'users', user.uid);
           const userDoc = await getDoc(userDocRef);
@@ -28,6 +29,7 @@ export const useAuth = () => {
           setHasAgreedToTerms(false);
         }
       } else {
+        setUser(null);
         setIsAdmin(false);
         setHasAgreedToTerms(false);
       }

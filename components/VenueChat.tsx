@@ -16,13 +16,14 @@ import {
   TouchableWithoutFeedback,
   Alert
 } from 'react-native';
-import { X, Send, CornerUpLeft, Trash2 } from 'lucide-react-native';
+import { X, Send, CornerUpLeft, Trash2, Flag } from 'lucide-react-native';
 import { ref, onValue, push, set, remove } from 'firebase/database';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 import { realtimeDB, firestore } from '../services/firebase';
 import { useAppStore } from '../hooks/useAppStore';
 import { fetchUsername } from '../services/userService';
 import { checkAndUnlockAchievements, ACHIEVEMENTS } from '../services/achievementService';
+import { createReport } from '../services/reportService';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import * as Icons from 'lucide-react-native';
@@ -312,6 +313,62 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     );
   };
 
+  const handleReportMessage = (msg: Message) => {
+    if (!user || !venueId) return;
+
+    Alert.alert(
+      "Report Message",
+      "Why are you reporting this message?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Inappropriate Content", 
+          onPress: () => submitMessageReport(msg, "Inappropriate Content")
+        },
+        { 
+          text: "Harassment / Bullying", 
+          onPress: () => submitMessageReport(msg, "Harassment or Bullying")
+        },
+        { 
+          text: "Spam / Scams", 
+          onPress: () => submitMessageReport(msg, "Spam or scams")
+        },
+        { 
+          text: "Hate Speech", 
+          onPress: () => submitMessageReport(msg, "Hate Speech")
+        }
+      ]
+    );
+  };
+
+  const submitMessageReport = async (msg: Message, reason: string) => {
+    if (!user) return;
+    setSelectedMessageForReaction(null);
+    try {
+      await createReport(
+        user.uid,
+        msg.user_id,
+        'chat',
+        msg.id,
+        msg.message,
+        venueId,
+        reason
+      );
+      Toast.show({
+        type: 'success',
+        text1: 'Report Submitted',
+        text2: 'Thank you. We will review this message.'
+      });
+    } catch (error) {
+      console.warn("Failed to submit message report:", error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to submit report. Please try again.'
+      });
+    }
+  };
+
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -514,7 +571,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
               <TouchableWithoutFeedback>
                 <View style={[
                   styles.reactionPopup,
-                  selectedMessageForReaction?.user_id === user?.uid && styles.myReactionPopup
+                  styles.myReactionPopup // Always use vertical option layout for action items
                 ]}>
                   <View style={styles.emojiRow}>
                     {REACTION_EMOJIS.map(emoji => (
@@ -531,7 +588,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                       </TouchableOpacity>
                     ))}
                   </View>
-                  {selectedMessageForReaction?.user_id === user?.uid && (
+                  {selectedMessageForReaction?.user_id === user?.uid ? (
                     <>
                       <View style={styles.reactionSeparator} />
                       <TouchableOpacity
@@ -544,6 +601,21 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                       >
                         <Trash2 color="#FF3333" size={16} style={{ marginRight: 8 }} />
                         <Text style={styles.deleteOptionText}>Delete Message</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      <View style={styles.reactionSeparator} />
+                      <TouchableOpacity
+                        style={styles.deleteOption}
+                        onPress={() => {
+                          if (selectedMessageForReaction) {
+                            handleReportMessage(selectedMessageForReaction);
+                          }
+                        }}
+                      >
+                        <Flag color="#FFD700" size={16} style={{ marginRight: 8 }} />
+                        <Text style={[styles.deleteOptionText, { color: '#FFD700' }]}>Report Message</Text>
                       </TouchableOpacity>
                     </>
                   )}
