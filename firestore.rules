@@ -55,5 +55,13 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
+
+    // Platform Reports
+    match /reports/{reportId} {
+      allow create: if isAuthenticated() 
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow read, update, delete: if isAdmin();
+    }
   }
 }

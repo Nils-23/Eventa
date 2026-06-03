@@ -28,6 +28,7 @@ export interface LiveVenue {
   activityLevel: ActivityLevel;
   activityColor: string;
   distanceKm: number | null;
+  hidden?: boolean;
 }
 
 export interface HeatPoint {
@@ -58,6 +59,7 @@ interface RawVenue {
   type?: 'Club' | 'Bar' | 'Festival' | 'Event';
   expirationDate?: number;
   startDate?: number;
+  hidden?: boolean;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -126,6 +128,11 @@ function computeLiveData(
 
   for (const venue of venues) {
     if (!venue.latitude || !venue.longitude) continue;
+
+    // Filter out hidden venues
+    if (venue.hidden === true) {
+      continue;
+    }
 
     // Filter out expired venues (like Festivals)
     if (venue.expirationDate && venue.expirationDate < now) {

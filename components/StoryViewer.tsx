@@ -13,11 +13,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Video, ResizeMode, Audio } from 'expo-av';
-import { X, Plus, ArrowLeft, User as UserIcon, Trash2 } from 'lucide-react-native';
+import { X, Plus, ArrowLeft, User as UserIcon, Trash2, Flag } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StoryData } from '../services/storyService';
 import { fetchUsername } from '../services/userService';
 import { ACHIEVEMENTS } from '../services/achievementService';
+import { useAppStore } from '../hooks/useAppStore';
+import { createReport } from '../services/reportService';
+import Toast from 'react-native-toast-message';
 import * as Icons from 'lucide-react-native';
 
 interface StoryViewerProps {
@@ -44,6 +47,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   onRemoveStory,
 }) => {
   const insets = useSafeAreaInsets();
+  const { user } = useAppStore();
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -226,6 +230,64 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     );
   }, [currentStory, onRemoveStory, stories.length, currentIndex, onClose]);
 
+  const handleReportStory = () => {
+    if (!user || !currentStory?.id) return;
+
+    setIsPaused(true);
+    Alert.alert(
+      "Report Story",
+      "Why are you reporting this story?",
+      [
+        { text: "Cancel", style: "cancel", onPress: () => setIsPaused(false) },
+        { 
+          text: "Inappropriate Content", 
+          onPress: () => submitStoryReport("Inappropriate Content")
+        },
+        { 
+          text: "Harassment / Bullying", 
+          onPress: () => submitStoryReport("Harassment or Bullying")
+        },
+        { 
+          text: "Spam / Scams", 
+          onPress: () => submitStoryReport("Spam or scams")
+        },
+        { 
+          text: "Hate Speech", 
+          onPress: () => submitStoryReport("Hate Speech")
+        }
+      ]
+    );
+  };
+
+  const submitStoryReport = async (reason: string) => {
+    if (!user || !currentStory?.id) return;
+    try {
+      await createReport(
+        user.uid,
+        currentStory.user_id,
+        'post',
+        currentStory.id,
+        currentStory.media_url,
+        currentStory.venue_id || undefined,
+        reason
+      );
+      Toast.show({
+        type: 'success',
+        text1: 'Report Submitted',
+        text2: 'Thank you. We will review this story.'
+      });
+    } catch (error) {
+      console.warn("Failed to submit story report:", error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to submit report. Please try again.'
+      });
+    } finally {
+      setIsPaused(false);
+    }
+  };
+
   // ─── Progress bar interpolations (memoised per story count) ──────────────
   const progressInterpolation = useMemo(() =>
     progressAnim.interpolate({
@@ -368,8 +430,18 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                     {venueName ? <Text style={styles.venueName}>{venueName}</Text> : null}
                   </View>
                 </View>
-                <View style={styles.timeBlock}>
-                  <Text style={styles.timeText}>{calculateHoursAgo(currentStory.created_at)}h</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <View style={styles.timeBlock}>
+                    <Text style={styles.timeText}>{calculateHoursAgo(currentStory.created_at)}h</Text>
+                  </View>
+                  {user && currentStory.user_id !== user.uid && (
+                    <Pressable
+                      style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16 }}
+                      onPress={handleReportStory}
+                    >
+                      <Flag color="#FFF" size={16} />
+                    </Pressable>
+                  )}
                 </View>
               </View>
             </View>
