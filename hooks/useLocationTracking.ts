@@ -101,19 +101,19 @@ export const useLocationTracking = () => {
 
           if (!alreadyRunning) {
             await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-              accuracy: Location.Accuracy.Balanced,
-              timeInterval: 15000,       // 15 seconds
-              distanceInterval: 10,      // or 10 m moved
-              deferredUpdatesInterval: 15000,
-              deferredUpdatesDistance: 10,
-              showsBackgroundLocationIndicator: false, // no iOS status-bar pill
+              accuracy: Location.Accuracy.Low,         // Low power / accuracy
+              timeInterval: 300000,                      // 5 minutes
+              distanceInterval: 500,                    // 500 meters
+              deferredUpdatesInterval: 300000,
+              deferredUpdatesDistance: 500,
+              showsBackgroundLocationIndicator: false,   // no iOS status-bar pill
               foregroundService: {
                 // Required on Android to keep the task alive in the background
                 notificationTitle: 'Eventas',
-                notificationBody: 'Tracking your location for the heatmap.',
+                notificationBody: 'Updating your location for venue discovery when you move.',
                 notificationColor: '#00FFCC',
               },
-              pausesUpdatesAutomatically: false,
+              pausesUpdatesAutomatically: true,         // Allow OS to pause updates when user is stationary
             });
             console.log('[Location] Background tracking started.');
           }
