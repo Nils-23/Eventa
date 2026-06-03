@@ -3,7 +3,8 @@ import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Radio } from 'lucide-react-native';
+import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Radio, Flag } from 'lucide-react-native';
+import { createReport } from '../services/reportService';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
@@ -499,6 +500,61 @@ export const MapScreen = () => {
     setSelectedMapVenue(venue);
   };
 
+  const handleReportVenue = () => {
+    if (!user || !selectedMapVenue) return;
+
+    Alert.alert(
+      "Report Venue/Event",
+      "Why are you reporting this venue/event?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Inappropriate Listing", 
+          onPress: () => submitVenueReport("Inappropriate Listing")
+        },
+        { 
+          text: "Fake / Scam Event", 
+          onPress: () => submitVenueReport("Fake or scam event")
+        },
+        { 
+          text: "Violent / Dangerous Area", 
+          onPress: () => submitVenueReport("Violent or dangerous area")
+        },
+        { 
+          text: "Other", 
+          onPress: () => submitVenueReport("Other")
+        }
+      ]
+    );
+  };
+
+  const submitVenueReport = async (reason: string) => {
+    if (!user || !selectedMapVenue) return;
+    try {
+      await createReport(
+        user.uid,
+        null, // No reportedUserId for venues
+        'venue',
+        selectedMapVenue.id,
+        selectedMapVenue.name,
+        undefined,
+        reason
+      );
+      Toast.show({
+        type: 'success',
+        text1: 'Report Submitted',
+        text2: 'Thank you. We will review this venue/event listing.'
+      });
+    } catch (error) {
+      console.warn("Failed to submit venue report:", error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to submit report. Please try again.'
+      });
+    }
+  };
+
   const executeStoryUpload = async (targetVenue: LiveVenue) => {
     if (!user || !targetVenue || !userLocation) return;
 
@@ -747,6 +803,13 @@ export const MapScreen = () => {
               style={styles.cardImage}
               isBanner={true}
             />
+            {/* Report Button overlaying the image */}
+            <TouchableOpacity
+              style={styles.reportCardButtonOverlay}
+              onPress={handleReportVenue}
+            >
+              <Flag color="#FFF" size={16} />
+            </TouchableOpacity>
             {/* Close Button overlaying the image */}
             <TouchableOpacity
               style={styles.closeCardButtonOverlay}
@@ -990,6 +1053,18 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 12,
     right: 12,
+    zIndex: 2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reportCardButtonOverlay: {
+    position: 'absolute',
+    top: 12,
+    right: 52,
     zIndex: 2,
     width: 32,
     height: 32,

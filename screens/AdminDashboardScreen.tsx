@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Modal, ActivityIndicator, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X, Activity } from 'lucide-react-native';
+import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X, Activity, Flag } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 import { firestore, realtimeDB } from '../services/firebase';
 import { ref, onValue } from 'firebase/database';
@@ -14,6 +14,19 @@ export const AdminDashboardScreen = () => {
   const navigation = useNavigation<any>();
   const { isSimulationRunning, setIsSimulationRunning } = useAppStore();
   const [liveUserCount, setLiveUserCount] = useState<number>(0);
+  const [pendingReportsCount, setPendingReportsCount] = useState<number>(0);
+
+  useEffect(() => {
+    const reportsRef = collection(firestore, 'reports');
+    const q = query(reportsRef, where('status', '==', 'pending'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setPendingReportsCount(snapshot.size);
+    }, (error) => {
+      console.warn("Failed to listen to pending reports:", error);
+    });
+
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const STALE_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -121,6 +134,28 @@ export const AdminDashboardScreen = () => {
             </View>
             <Text style={styles.cardTitle}>Affiliates & Referrals</Text>
             <Text style={styles.cardDesc}>Manage creators, track first-open install conversions, and simulate attribution or anti-fraud rules.</Text>
+          </TouchableOpacity>
+
+          {/* Platform Reports */}
+          <TouchableOpacity 
+            style={[
+              styles.card,
+              pendingReportsCount > 0 ? { borderColor: 'rgba(255, 0, 85, 0.4)' } : {}
+            ]} 
+            onPress={() => navigation.navigate('AdminReports')}
+          >
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <View style={[styles.iconContainer, { backgroundColor: 'rgba(255, 0, 85, 0.1)', marginBottom: 0 }]}>
+                <Flag color="#FF0055" size={28} />
+              </View>
+              {pendingReportsCount > 0 && (
+                <View style={[styles.liveIndicator, { backgroundColor: 'rgba(255, 0, 85, 0.2)' }]}>
+                  <Text style={[styles.liveText, { color: '#FF3366' }]}>{pendingReportsCount} Pending</Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.cardTitle}>Platform Reports</Text>
+            <Text style={styles.cardDesc}>Review and act on reports submitted by users for inappropriate venue details, chat messages, or stories.</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
