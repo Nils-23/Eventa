@@ -63,5 +63,10 @@ service cloud.firestore {
         && request.resource.data.status == 'pending';
       allow read, update, delete: if isAdmin();
     }
+
+    // Recurring Stories
+    match /recurring_stories/{scheduleId} {
+      allow read, write: if isAdmin();
+    }
   }
 }

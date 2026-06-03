@@ -3,7 +3,7 @@ import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Radio, Flag } from 'lucide-react-native';
+import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Flag, MessageSquare } from 'lucide-react-native';
 import { createReport } from '../services/reportService';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
 import * as ImagePicker from 'expo-image-picker';
@@ -289,6 +289,7 @@ export const MapScreen = () => {
   const [isViewerVisible, setIsViewerVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
+  const [chatVenue, setChatVenue] = useState<{ id: string; name: string } | null>(null);
   const [isLiveFeedVisible, setIsLiveFeedVisible] = useState(false);
 
   // Debug states
@@ -661,7 +662,17 @@ export const MapScreen = () => {
   const canAddGlobalStory = closestLiveVenue.distance <= 200;
 
   const handleGlobalAddStory = () => {
-    if (closestLiveVenue.venue) executeStoryUpload(closestLiveVenue.venue);
+    if (!canAddGlobalStory) {
+      Alert.alert(
+        "Vibe Check Restricted",
+        "You must be within 200 meters of a venue to post a story. This keeps the Eventas live feed real and local to what is happening right now!",
+        [{ text: "Got it" }]
+      );
+      return;
+    }
+    if (closestLiveVenue.venue) {
+      executeStoryUpload(closestLiveVenue.venue);
+    }
   };
 
   // Safe distance check
@@ -676,11 +687,11 @@ export const MapScreen = () => {
         <TouchableOpacity
           style={[styles.globalAddButton, !canAddGlobalStory && styles.globalAddButtonDisabled]}
           onPress={handleGlobalAddStory}
-          disabled={!canAddGlobalStory}
+          activeOpacity={0.8}
         >
-          <Camera color={canAddGlobalStory ? "#000" : "#888"} size={20} />
+          <Camera color={canAddGlobalStory ? "#000" : "#888"} size={18} style={{ marginRight: 6 }} />
           <Text style={[styles.globalAddText, !canAddGlobalStory && styles.globalAddTextDisabled]}>
-            {canAddGlobalStory ? "Add Story" : "Move closer to add"}
+            Add Story
           </Text>
         </TouchableOpacity>
       </View>
@@ -784,12 +795,15 @@ export const MapScreen = () => {
       )}
 
       {/* LiveVenue Chat Modal */}
-      {selectedMapVenue && (
+      {chatVenue && (
         <VenueChat
           isVisible={isChatVisible}
-          onClose={() => setIsChatVisible(false)}
-          venueId={selectedMapVenue.id}
-          venueName={selectedMapVenue.name}
+          onClose={() => {
+            setIsChatVisible(false);
+            setChatVenue(null);
+          }}
+          venueId={chatVenue.id}
+          venueName={chatVenue.name}
         />
       )}
 
@@ -838,7 +852,10 @@ export const MapScreen = () => {
               <TouchableOpacity
                 style={styles.accessChatBtn}
                 onPress={() => {
-                  setIsChatVisible(true);
+                  if (selectedMapVenue) {
+                    setChatVenue({ id: selectedMapVenue.id, name: selectedMapVenue.name });
+                    setIsChatVisible(true);
+                  }
                 }}
               >
                 <Text style={styles.accessChatText}>Access chat</Text>
@@ -856,14 +873,13 @@ export const MapScreen = () => {
           </TouchableOpacity>
         )}
 
-        {/* Pulsing Live Now Button */}
+        {/* Active Chats List Button */}
         <TouchableOpacity 
-          style={[styles.controlButton, styles.liveNowButton]} 
+          style={[styles.controlButton, styles.chatListButton]} 
           onPress={() => setIsLiveFeedVisible(true)} 
           activeOpacity={0.7}
         >
-          <View style={styles.liveIndicatorDot} />
-          <Radio color="#FF00CC" size={20} />
+          <MessageSquare color="#00FFCC" size={20} />
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.controlButton} onPress={centerMap} activeOpacity={0.7}>
@@ -888,11 +904,8 @@ export const MapScreen = () => {
         venues={venues}
         stories={stories}
         onOpenChat={(venueId, venueName) => {
-          const targetVenue = venues.find(v => v.id === venueId);
-          if (targetVenue) {
-            setSelectedMapVenue(targetVenue);
-            setIsChatVisible(true);
-          }
+          setChatVenue({ id: venueId, name: venueName });
+          setIsChatVisible(true);
         }}
         onOpenStories={(venueObj) => {
           setSelectedMapVenue(venueObj);
@@ -1146,22 +1159,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2A2A2A',
   },
-  liveNowButton: {
-    borderColor: '#FF00CC',
-    shadowColor: '#FF00CC',
+  chatListButton: {
+    borderColor: '#00FFCC',
+    shadowColor: '#00FFCC',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 8,
     elevation: 6,
-  },
-  liveIndicatorDot: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#FF0055',
   },
   controlDivider: {
     height: 1,

@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, Plus, Save, X, UploadCloud, Trash2, Calendar } from 'lucide-react-native';
+import { ArrowLeft, Users, Plus, Save, X, UploadCloud, Trash2, Calendar, Clock, Play, Pause, Film } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useLiveVenues, LiveVenue as Venue } from '../hooks/useLiveVenues';
 import { firestore, storage } from '../services/firebase';
-import { doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import Toast from 'react-native-toast-message';
 import * as ImagePicker from 'expo-image-picker';
@@ -18,6 +18,31 @@ export const AdminSimulationScreen = () => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingCounts, setEditingCounts] = useState<Record<string, string>>({});
   const [uploadingVenueId, setUploadingVenueId] = useState<string | null>(null);
+  
+  // Recurring Stories State
+  const [recurringStories, setRecurringStories] = useState<any[]>([]);
+  const [isScheduleModalVisible, setIsScheduleModalVisible] = useState(false);
+  const [scheduleVenue, setScheduleVenue] = useState<Venue | null>(null);
+  const [scheduleFrequency, setScheduleFrequency] = useState<'daily' | 'weekly'>('daily');
+  const [scheduleDayOfWeek, setScheduleDayOfWeek] = useState<'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun'>('Mon');
+  const [scheduleTime, setScheduleTime] = useState('');
+  const [scheduleMediaUri, setScheduleMediaUri] = useState<string | null>(null);
+  const [scheduleMediaType, setScheduleMediaType] = useState<'image' | 'video'>('image');
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+
+  useEffect(() => {
+    const q = query(collection(firestore, 'recurring_stories'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const storiesList: any[] = [];
+      snapshot.forEach((doc) => {
+        storiesList.push({ id: doc.id, ...doc.data() });
+      });
+      setRecurringStories(storiesList);
+    }, (error) => {
+      console.error('Error fetching recurring stories:', error);
+    });
+    return () => unsubscribe();
+  }, []);
   
   // New Venue State
   const [newVenueName, setNewVenueName] = useState('');
@@ -292,6 +317,142 @@ export const AdminSimulationScreen = () => {
     }
   };
 
+  const handleSelectScheduleMedia = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Gallery access is required.' });
+        return;
+      }
+
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ['images', 'videos'],
+        allowsEditing: true,
+        quality: 0.7,
+      };
+
+      const result = await ImagePicker.launchImageLibraryAsync(options);
+
+      if (!result.canceled && result.assets.length > 0) {
+        setScheduleMediaUri(result.assets[0].uri);
+        setScheduleMediaType(result.assets[0].type === 'video' ? 'video' : 'image');
+      }
+    } catch (error) {
+      console.error('Select Media Error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Selection Failed',
+        text2: 'Could not select media.',
+      });
+    }
+  };
+
+  const handleSaveSchedule = async () => {
+    if (!scheduleVenue) return;
+    if (!scheduleMediaUri) {
+      Toast.show({ type: 'error', text1: 'Missing Media', text2: 'Please select an image or video.' });
+      return;
+    }
+    if (!scheduleTime) {
+      Toast.show({ type: 'error', text1: 'Missing Time', text2: 'Please specify the time.' });
+      return;
+    }
+
+    const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    if (!timeRegex.test(scheduleTime)) {
+      Toast.show({ type: 'error', text1: 'Invalid Time Format', text2: 'Time must be in 24-hour format (HH:MM), e.g. 19:00' });
+      return;
+    }
+
+    setIsSavingSchedule(true);
+    try {
+      const downloadUrl = await uploadStoryMedia(scheduleMediaUri, `sim_admin_schedule`);
+      
+      const scheduleData: any = {
+        venueId: scheduleVenue.id,
+        venueName: scheduleVenue.name,
+        mediaUrl: downloadUrl,
+        mediaType: scheduleMediaType,
+        frequency: scheduleFrequency,
+        time: scheduleTime,
+        active: true,
+        createdAt: serverTimestamp(),
+      };
+
+      if (scheduleFrequency === 'weekly') {
+        scheduleData.dayOfWeek = scheduleDayOfWeek;
+      }
+
+      await addDoc(collection(firestore, 'recurring_stories'), scheduleData);
+
+      Toast.show({
+        type: 'success',
+        text1: 'Schedule Created!',
+        text2: `Story scheduled for ${scheduleVenue.name} successfully.`,
+      });
+
+      setIsScheduleModalVisible(false);
+      setScheduleVenue(null);
+      setScheduleFrequency('daily');
+      setScheduleDayOfWeek('Mon');
+      setScheduleTime('');
+      setScheduleMediaUri(null);
+    } catch (error) {
+      console.error('Save Schedule Error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Failed to Save',
+        text2: 'Could not create recurring story schedule.',
+      });
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  };
+
+  const handleToggleScheduleActive = async (scheduleId: string, currentStatus: boolean) => {
+    try {
+      const scheduleRef = doc(firestore, 'recurring_stories', scheduleId);
+      await updateDoc(scheduleRef, {
+        active: !currentStatus
+      });
+      Toast.show({
+        type: 'success',
+        text1: !currentStatus ? 'Schedule Activated' : 'Schedule Paused',
+        text2: `Recurring story posting has been ${!currentStatus ? 'resumed' : 'paused'}.`,
+      });
+    } catch (error) {
+      console.error('Toggle Schedule Error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Update Failed',
+        text2: 'Could not update active status.',
+      });
+    }
+  };
+
+  const handleDeleteSchedule = (scheduleId: string, venueName: string) => {
+    Alert.alert(
+      'Delete Schedule',
+      `Are you sure you want to delete this recurring story schedule for ${venueName}? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(firestore, 'recurring_stories', scheduleId));
+              Toast.show({ type: 'success', text1: 'Schedule Deleted', text2: 'The schedule has been removed.' });
+            } catch (error) {
+              console.error('Delete Schedule Error:', error);
+              Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to delete schedule.' });
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleDeleteVenue = (venue: Venue) => {
     Alert.alert(
       'Delete Venue',
@@ -341,54 +502,70 @@ export const AdminSimulationScreen = () => {
         ) : (
           venues.map(venue => (
             <View key={venue.id} style={styles.venueCard}>
-              <View style={styles.venueInfo}>
-                <Text style={styles.venueName}>{venue.name}</Text>
-                <Text style={styles.venueCurrentCount}>
-                  Current Target: {venue.simulatedUsersCount ?? 20}
-                </Text>
-                {venue.type && (
-                  <Text style={styles.venueType}>Type: {venue.type}</Text>
-                )}
-              </View>
-              
-              <View style={styles.venueControls}>
-                <TextInput
-                  style={styles.countInput}
-                  keyboardType="numeric"
-                  placeholder={String(venue.simulatedUsersCount ?? 20)}
-                  placeholderTextColor="#666"
-                  value={editingCounts[venue.id] !== undefined ? editingCounts[venue.id] : ''}
-                  onChangeText={(text) => setEditingCounts(prev => ({ ...prev, [venue.id]: text }))}
-                />
-                <TouchableOpacity 
-                  style={styles.saveButton}
-                  onPress={() => handleUpdateCount(venue.id)}
-                >
-                  <Save color="#000" size={16} />
-                  <Text style={styles.saveButtonText}>Set</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity 
-                  style={styles.uploadButton}
-                  onPress={() => handleUploadStory(venue)}
-                  disabled={uploadingVenueId === venue.id}
-                >
-                  {uploadingVenueId === venue.id ? (
-                    <ActivityIndicator size="small" color="#000" />
-                  ) : (
-                    <>
-                      <UploadCloud color="#000" size={16} />
-                      <Text style={styles.saveButtonText}>Upload</Text>
-                    </>
+              <View style={styles.venueHeaderRow}>
+                <View style={styles.venueInfo}>
+                  <Text style={styles.venueName}>{venue.name}</Text>
+                  <Text style={styles.venueCurrentCount}>
+                    Current Target: {venue.simulatedUsersCount ?? 20}
+                  </Text>
+                  {venue.type && (
+                    <Text style={styles.venueType}>Type: {venue.type}</Text>
                   )}
-                </TouchableOpacity>
-
+                </View>
                 <TouchableOpacity 
                   style={styles.deleteButton}
                   onPress={() => handleDeleteVenue(venue)}
                 >
                   <Trash2 color="#FFF" size={16} />
                 </TouchableOpacity>
+              </View>
+              
+              <View style={styles.venueActionRow}>
+                <View style={styles.countModifier}>
+                  <TextInput
+                    style={styles.countInput}
+                    keyboardType="numeric"
+                    placeholder={String(venue.simulatedUsersCount ?? 20)}
+                    placeholderTextColor="#666"
+                    value={editingCounts[venue.id] !== undefined ? editingCounts[venue.id] : ''}
+                    onChangeText={(text) => setEditingCounts(prev => ({ ...prev, [venue.id]: text }))}
+                  />
+                  <TouchableOpacity 
+                    style={styles.saveButton}
+                    onPress={() => handleUpdateCount(venue.id)}
+                  >
+                    <Save color="#000" size={14} />
+                    <Text style={styles.saveButtonText}>Set</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.storyButtons}>
+                  <TouchableOpacity 
+                    style={styles.uploadButton}
+                    onPress={() => handleUploadStory(venue)}
+                    disabled={uploadingVenueId === venue.id}
+                  >
+                    {uploadingVenueId === venue.id ? (
+                      <ActivityIndicator size="small" color="#000" />
+                    ) : (
+                      <>
+                        <UploadCloud color="#000" size={14} />
+                        <Text style={styles.saveButtonText}>Upload</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.scheduleButton}
+                    onPress={() => {
+                      setScheduleVenue(venue);
+                      setIsScheduleModalVisible(true);
+                    }}
+                  >
+                    <Clock color="#000" size={14} />
+                    <Text style={styles.saveButtonText}>Schedule</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           ))
@@ -440,6 +617,85 @@ export const AdminSimulationScreen = () => {
               );
             })}
           </>
+        )}
+
+        {/* Divider */}
+        <View style={styles.sectionDivider} />
+
+        {/* Recurring Stories Schedules Section */}
+        <View style={styles.sectionHeader}>
+          <Clock color="#A855F7" size={20} />
+          <Text style={[styles.sectionTitle, { color: '#A855F7' }]}>Recurring Stories Schedules</Text>
+        </View>
+        <Text style={styles.sectionSubtitle}>
+          View and manage automatically reposting stories. Use the toggle to pause/resume.
+        </Text>
+
+        {recurringStories.length === 0 ? (
+          <Text style={styles.noSchedulesText}>No recurring stories scheduled yet.</Text>
+        ) : (
+          recurringStories.map((schedule) => {
+            const formattedTime = schedule.time;
+            const frequencyLabel = schedule.frequency === 'daily' 
+              ? 'Daily' 
+              : `Weekly (${schedule.dayOfWeek})`;
+            
+            return (
+              <View key={schedule.id} style={styles.scheduleCard}>
+                <View style={styles.scheduleMediaContainer}>
+                  {schedule.mediaType === 'video' ? (
+                    <View style={styles.videoPlaceholder}>
+                      <Film color="#A855F7" size={24} />
+                      <Text style={styles.videoText}>Video</Text>
+                    </View>
+                  ) : (
+                    <Image source={{ uri: schedule.mediaUrl }} style={styles.scheduleThumbnail} />
+                  )}
+                </View>
+                
+                <View style={styles.scheduleInfo}>
+                  <Text style={styles.scheduleVenueName} numberOfLines={1}>{schedule.venueName}</Text>
+                  <Text style={styles.scheduleTimeText}>
+                    {frequencyLabel} at {formattedTime}
+                  </Text>
+                  {schedule.lastTriggered && (
+                    <Text style={styles.lastTriggeredText}>
+                      Last posted: {schedule.lastTriggered.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  )}
+                </View>
+
+                <View style={styles.scheduleActions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.statusToggle,
+                      schedule.active ? styles.statusToggleActive : styles.statusToggleInactive
+                    ]}
+                    onPress={() => handleToggleScheduleActive(schedule.id, schedule.active)}
+                  >
+                    {schedule.active ? (
+                      <Play color="#000" size={14} />
+                    ) : (
+                      <Pause color="#FFF" size={14} />
+                    )}
+                    <Text style={[
+                      styles.statusToggleText,
+                      { color: schedule.active ? '#000' : '#FFF' }
+                    ]}>
+                      {schedule.active ? 'Active' : 'Paused'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.scheduleDeleteButton}
+                    onPress={() => handleDeleteSchedule(schedule.id, schedule.venueName)}
+                  >
+                    <Trash2 color="#FFF" size={14} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })
         )}
       </ScrollView>
 
@@ -649,6 +905,163 @@ export const AdminSimulationScreen = () => {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Schedule Recurring Story Modal */}
+      <Modal
+        visible={isScheduleModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsScheduleModalVisible(false)}
+        statusBarTranslucent={true}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Schedule Recurring Story</Text>
+              <TouchableOpacity onPress={() => setIsScheduleModalVisible(false)}>
+                <X color="#FFFFFF" size={24} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 16 }}
+            >
+              <Text style={styles.modalVenueSubtitle}>
+                Venue: {scheduleVenue?.name}
+              </Text>
+
+              {/* Media Picker */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Select Media (Image/Video)</Text>
+                
+                <View style={styles.previewContainer}>
+                  {scheduleMediaUri ? (
+                    <>
+                      {scheduleMediaType === 'video' ? (
+                        <View style={styles.videoPreviewPlaceholder}>
+                          <Film color="#A855F7" size={48} />
+                          <Text style={styles.videoPreviewText}>Video Selected</Text>
+                          <Text style={styles.videoPreviewSubtext}>{scheduleMediaUri.split('/').pop()}</Text>
+                        </View>
+                      ) : (
+                        <Image source={{ uri: scheduleMediaUri }} style={styles.previewImage} />
+                      )}
+                      <TouchableOpacity 
+                        style={styles.removeImageButton} 
+                        onPress={() => setScheduleMediaUri(null)}
+                      >
+                        <X color="#FFF" size={14} />
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <View style={styles.mediaPlaceholder}>
+                      <UploadCloud color="#666" size={32} />
+                      <Text style={styles.mediaPlaceholderText}>No media selected</Text>
+                    </View>
+                  )}
+                </View>
+
+                <TouchableOpacity 
+                  style={styles.imageUploadButton} 
+                  onPress={handleSelectScheduleMedia}
+                >
+                  <UploadCloud color="#A855F7" size={20} />
+                  <Text style={[styles.imageUploadButtonText, { color: '#A855F7' }]}>
+                    {scheduleMediaUri ? 'Change Media' : 'Choose Image or Video'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Frequency */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Frequency</Text>
+                <View style={styles.typeSelectorRow}>
+                  {(['daily', 'weekly'] as const).map((freq) => (
+                    <TouchableOpacity
+                      key={freq}
+                      style={[
+                        styles.typePill,
+                        scheduleFrequency === freq && styles.scheduleTypePillSelected
+                      ]}
+                      onPress={() => setScheduleFrequency(freq)}
+                    >
+                      <Text style={[
+                        styles.typePillText,
+                        scheduleFrequency === freq && styles.scheduleTypePillTextSelected
+                      ]}>
+                        {freq.charAt(0).toUpperCase() + freq.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Day of the Week (if weekly) */}
+              {scheduleFrequency === 'weekly' && (
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Day of the Week</Text>
+                  <View style={styles.daySelectorRow}>
+                    {(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const).map((day) => (
+                      <TouchableOpacity
+                        key={day}
+                        style={[
+                          styles.dayPill,
+                          scheduleDayOfWeek === day && styles.dayPillSelected
+                        ]}
+                        onPress={() => setScheduleDayOfWeek(day)}
+                      >
+                        <Text style={[
+                          styles.dayPillText,
+                          scheduleDayOfWeek === day && styles.dayPillTextSelected
+                        ]}>
+                          {day}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Time */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Execution Time (24h format, HH:MM)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 19:00"
+                  placeholderTextColor="#666"
+                  value={scheduleTime}
+                  onChangeText={setScheduleTime}
+                  maxLength={5}
+                />
+                <Text style={styles.helperText}>
+                  Enter local Nairobi time. Note: The story will be posted automatically and stay active for 24 hours.
+                </Text>
+              </View>
+
+              <TouchableOpacity 
+                style={[
+                  styles.createButton,
+                  { backgroundColor: '#A855F7' },
+                  isSavingSchedule && styles.createButtonDisabled
+                ]} 
+                onPress={handleSaveSchedule}
+                disabled={isSavingSchedule}
+              >
+                {isSavingSchedule ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.createButtonText}>Save Schedule</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -710,9 +1123,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#2A2A2A',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: 'column',
+    alignItems: 'stretch',
   },
   venueInfo: {
     flex: 1,
@@ -957,5 +1369,198 @@ const styles = StyleSheet.create({
     color: '#00FFCC',
     fontSize: 12,
     marginTop: 2,
+  },
+  // New Styles for Recurring Stories
+  venueHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  venueActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#2A2A2A',
+    paddingTop: 12,
+  },
+  countModifier: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  storyButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  scheduleButton: {
+    backgroundColor: '#A855F7',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 4,
+  },
+  noSchedulesText: {
+    color: '#888',
+    textAlign: 'center',
+    marginVertical: 20,
+    fontStyle: 'italic',
+  },
+  scheduleCard: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  scheduleMediaContainer: {
+    width: 50,
+    height: 50,
+    borderRadius: 6,
+    overflow: 'hidden',
+    backgroundColor: '#2A2A2A',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scheduleThumbnail: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  videoPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoText: {
+    color: '#A855F7',
+    fontSize: 8,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  scheduleInfo: {
+    flex: 1,
+  },
+  scheduleVenueName: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  scheduleTimeText: {
+    color: '#A855F7',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  lastTriggeredText: {
+    color: '#888',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  scheduleActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    gap: 4,
+  },
+  statusToggleActive: {
+    backgroundColor: '#00FFCC',
+  },
+  statusToggleInactive: {
+    backgroundColor: '#444',
+  },
+  statusToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  scheduleDeleteButton: {
+    backgroundColor: '#FF3333',
+    padding: 8,
+    borderRadius: 6,
+  },
+  modalVenueSubtitle: {
+    color: '#00FFCC',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 16,
+  },
+  mediaPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mediaPlaceholderText: {
+    color: '#666',
+    fontSize: 14,
+    marginTop: 8,
+  },
+  videoPreviewPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  videoPreviewText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  videoPreviewSubtext: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  scheduleTypePillSelected: {
+    backgroundColor: 'rgba(168, 85, 247, 0.2)',
+    borderColor: '#A855F7',
+  },
+  scheduleTypePillTextSelected: {
+    color: '#A855F7',
+  },
+  daySelectorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  dayPill: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  dayPillSelected: {
+    backgroundColor: 'rgba(168, 85, 247, 0.2)',
+    borderColor: '#A855F7',
+  },
+  dayPillText: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  dayPillTextSelected: {
+    color: '#A855F7',
+  },
+  helperText: {
+    color: '#666',
+    fontSize: 11,
+    marginTop: 4,
   },
 });
