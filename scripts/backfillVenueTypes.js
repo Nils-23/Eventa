@@ -31,8 +31,8 @@ async function backfillVenues() {
       type = 'Club';
     } else if (name.includes('bar') || name.includes('lounge') || name.includes('bistro') || name.includes('grill')) {
       type = 'Bar';
-    } else if (name.includes('festival')) {
-      type = 'Festival';
+    } else if (name.includes('festival') || name.includes('activity')) {
+      type = 'Activity';
     } else if (name.includes('event')) {
       type = 'Event';
     }
