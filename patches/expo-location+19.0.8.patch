@@ -1,0 +1,60 @@
+diff --git a/node_modules/expo-location/ios/LocationModule.swift b/node_modules/expo-location/ios/LocationModule.swift
+index fe49dd8..df3e7e3 100644
+--- a/node_modules/expo-location/ios/LocationModule.swift
++++ b/node_modules/expo-location/ios/LocationModule.swift
+@@ -174,9 +174,9 @@ public final class LocationModule: Module {
+       guard CLLocationManager.significantLocationChangeMonitoringAvailable() else {
+         throw Exceptions.LocationUpdatesUnavailable()
+       }
+-      guard try taskManager.hasBackgroundModeEnabled("location") else {
+-        throw Exceptions.LocationUpdatesUnavailable()
+-      }
++      // guard try taskManager.hasBackgroundModeEnabled("location") else {
++      //   throw Exceptions.LocationUpdatesUnavailable()
++      // }
+ 
+       try taskManager.registerTask(withName: taskName, consumer: EXLocationTaskConsumer.self, options: options)
+     }
+@@ -201,9 +201,9 @@ public final class LocationModule: Module {
+       guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else {
+         throw Exceptions.GeofencingUnavailable()
+       }
+-      guard try taskManager.hasBackgroundModeEnabled("location") else {
+-        throw Exceptions.LocationUpdatesUnavailable()
+-      }
++      // guard try taskManager.hasBackgroundModeEnabled("location") else {
++      //   throw Exceptions.LocationUpdatesUnavailable()
++      // }
+ 
+       try taskManager.registerTask(withName: taskName, consumer: EXGeofencingTaskConsumer.self, options: options)
+     }
+diff --git a/node_modules/expo-location/ios/TaskConsumers/EXGeofencingTaskConsumer.m b/node_modules/expo-location/ios/TaskConsumers/EXGeofencingTaskConsumer.m
+index 7e6482e..0e7d572 100644
+--- a/node_modules/expo-location/ios/TaskConsumers/EXGeofencingTaskConsumer.m
++++ b/node_modules/expo-location/ios/TaskConsumers/EXGeofencingTaskConsumer.m
+@@ -71,7 +71,9 @@ - (void)startMonitoringRegionsForTask:(id<EXTaskInterface>)task
+     self->_regionStates = regionStates;
+ 
+     locationManager.delegate = self;
+-    locationManager.allowsBackgroundLocationUpdates = YES;
++    NSArray *backgroundModes = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UIBackgroundModes"];
++    BOOL hasLocationBackgroundMode = [backgroundModes containsObject:@"location"];
++    locationManager.allowsBackgroundLocationUpdates = hasLocationBackgroundMode;
+     locationManager.pausesLocationUpdatesAutomatically = NO;
+ 
+     for (NSDictionary *regionDict in regions) {
+diff --git a/node_modules/expo-location/ios/TaskConsumers/EXLocationTaskConsumer.m b/node_modules/expo-location/ios/TaskConsumers/EXLocationTaskConsumer.m
+index fe1d9dd..2b76480 100644
+--- a/node_modules/expo-location/ios/TaskConsumers/EXLocationTaskConsumer.m
++++ b/node_modules/expo-location/ios/TaskConsumers/EXLocationTaskConsumer.m
+@@ -49,7 +49,9 @@ - (void)didRegisterTask:(id<EXTaskInterface>)task
+     self->_locationManager = locationManager;
+ 
+     locationManager.delegate = self;
+-    locationManager.allowsBackgroundLocationUpdates = YES;
++    NSArray *backgroundModes = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UIBackgroundModes"];
++    BOOL hasLocationBackgroundMode = [backgroundModes containsObject:@"location"];
++    locationManager.allowsBackgroundLocationUpdates = hasLocationBackgroundMode;
+ 
+     // Set options-specific things in location manager.
+     [self setOptions:task.options];

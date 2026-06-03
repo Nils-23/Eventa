@@ -17,8 +17,8 @@
       "bundleIdentifier": "com.nils23.Eventa",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Allow Eventas to use your location to find events near you.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow Eventas to use your location to find events near you.",
+        "NSLocationWhenInUseUsageDescription": "Eventas uses your location to show you nearby events and venues while the app is active.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Eventas uses your location in the background to update venue discovery when you move significantly, keeping battery consumption minimal.",
         "NSCameraUsageDescription": "Allow Eventas to use your camera to record stories at venues.",
         "NSMicrophoneUsageDescription": "Allow Eventas to record audio for your video stories.",
         "NSPhotoLibraryUsageDescription": "Allow Eventas to access your gallery to upload stories.",
@@ -39,10 +39,8 @@
           }
         ],
         "UIBackgroundModes": [
-          "location",
           "fetch",
-          "location",
-          "fetch"
+          "remote-notification"
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
