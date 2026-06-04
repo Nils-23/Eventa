@@ -20,7 +20,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: TaskManager.T
   if (!data) return;
 
   const { locations } = data;
-  const location = locations[0];
+  const location = locations[locations.length - 1];
   if (!location) return;
 
   // We can't use the Zustand store here (different context), so we read
@@ -101,11 +101,9 @@ export const useLocationTracking = () => {
 
           if (!alreadyRunning) {
             await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-              accuracy: Location.Accuracy.Low,         // Low power / accuracy
-              timeInterval: 300000,                      // 5 minutes
-              distanceInterval: 500,                    // 500 meters
-              deferredUpdatesInterval: 300000,
-              deferredUpdatesDistance: 500,
+              accuracy: Location.Accuracy.Balanced,
+              timeInterval: 60000,                       // 1 minute
+              distanceInterval: 50,                      // 50 meters
               showsBackgroundLocationIndicator: false,   // no iOS status-bar pill
               foregroundService: {
                 // Required on Android to keep the task alive in the background

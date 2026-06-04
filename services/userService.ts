@@ -1,4 +1,4 @@
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { firestore } from './firebase';
 
 const usernameCache: Record<string, string> = {};
@@ -72,5 +72,48 @@ export const getMonthlyPointsKey = (): string => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   return `points_${year}_${month}`;
+};
+
+/**
+ * Hides/blocks a user. Adds their userId to the current user's hiddenUsers array,
+ * and creates a "user_hidden" event record in the reports collection.
+ */
+export const hideUser = async (currentUserId: string, targetUserId: string): Promise<void> => {
+  try {
+    const userDocRef = doc(firestore, 'users', currentUserId);
+    await updateDoc(userDocRef, {
+      hiddenUsers: arrayUnion(targetUserId)
+    });
+
+    // Create record on action
+    await addDoc(collection(firestore, 'reports'), {
+      reporterId: currentUserId,
+      reportedUserId: targetUserId,
+      contentType: 'user_hidden',
+      contentId: targetUserId,
+      contentSnippet: `User blocked/hidden by reporter`,
+      reason: 'User hidden/blocked',
+      timestamp: serverTimestamp(),
+      status: 'pending',
+    });
+  } catch (error) {
+    console.error('Error hiding user:', error);
+    throw error;
+  }
+};
+
+/**
+ * Unhides/unblocks a user by removing their userId from hiddenUsers.
+ */
+export const unhideUser = async (currentUserId: string, targetUserId: string): Promise<void> => {
+  try {
+    const userDocRef = doc(firestore, 'users', currentUserId);
+    await updateDoc(userDocRef, {
+      hiddenUsers: arrayRemove(targetUserId)
+    });
+  } catch (error) {
+    console.error('Error unhiding user:', error);
+    throw error;
+  }
 };
 
