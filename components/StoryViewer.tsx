@@ -13,10 +13,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Video, ResizeMode, Audio } from 'expo-av';
-import { X, Plus, ArrowLeft, User as UserIcon, Trash2, Flag } from 'lucide-react-native';
+import { X, Plus, ArrowLeft, User as UserIcon, Trash2, Flag, UserX } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StoryData } from '../services/storyService';
-import { fetchUsername } from '../services/userService';
+import { fetchUsername, hideUser } from '../services/userService';
 import { ACHIEVEMENTS } from '../services/achievementService';
 import { useAppStore } from '../hooks/useAppStore';
 import { createReport } from '../services/reportService';
@@ -47,7 +47,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   onRemoveStory,
 }) => {
   const insets = useSafeAreaInsets();
-  const { user } = useAppStore();
+  const { user, hiddenUsers, setHiddenUsers } = useAppStore();
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -229,6 +229,41 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
       ]
     );
   }, [currentStory, onRemoveStory, stories.length, currentIndex, onClose]);
+
+  const handleHideUserPrompt = (targetUserId: string, username: string) => {
+    setIsPaused(true);
+    Alert.alert(
+      "Hide User",
+      `Are you sure you want to hide ${username}? Content from this user will no longer be shown to you.`,
+      [
+        { text: "Cancel", style: "cancel", onPress: () => setIsPaused(false) },
+        {
+          text: "Hide User",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              onClose();
+              await hideUser(user!.uid, targetUserId);
+              setHiddenUsers([...hiddenUsers, targetUserId]);
+              Toast.show({
+                type: 'success',
+                text1: 'User Hidden',
+                text2: `You will no longer see content from ${username}.`
+              });
+            } catch (error) {
+              console.warn("Failed to hide user:", error);
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Failed to hide user.'
+              });
+              setIsPaused(false);
+            }
+          }
+        }
+      ]
+    );
+  };
 
   const handleReportStory = () => {
     if (!user || !currentStory?.id) return;
@@ -435,12 +470,20 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                     <Text style={styles.timeText}>{calculateHoursAgo(currentStory.created_at)}h</Text>
                   </View>
                   {user && currentStory.user_id !== user.uid && (
-                    <Pressable
-                      style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16 }}
-                      onPress={handleReportStory}
-                    >
-                      <Flag color="#FFF" size={16} />
-                    </Pressable>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <Pressable
+                        style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16 }}
+                        onPress={() => handleHideUserPrompt(currentStory.user_id, currentUsername)}
+                      >
+                        <UserX color="#FFF" size={16} />
+                      </Pressable>
+                      <Pressable
+                        style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16 }}
+                        onPress={handleReportStory}
+                      >
+                        <Flag color="#FFF" size={16} />
+                      </Pressable>
+                    </View>
                   )}
                 </View>
               </View>

@@ -17,6 +17,8 @@ interface AppState {
   setIsSimulationRunning: (isRunning: boolean) => void;
   hasAgreedToTerms: boolean;
   setHasAgreedToTerms: (value: boolean) => void;
+  hiddenUsers: string[];
+  setHiddenUsers: (hiddenUsers: string[]) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -34,4 +36,6 @@ export const useAppStore = create<AppState>((set) => ({
   setIsSimulationRunning: (isSimulationRunning) => set({ isSimulationRunning }),
   hasAgreedToTerms: false,
   setHasAgreedToTerms: (hasAgreedToTerms) => set({ hasAgreedToTerms }),
+  hiddenUsers: [],
+  setHiddenUsers: (hiddenUsers) => set({ hiddenUsers }),
 }));
