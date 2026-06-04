@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { StoryData } from '../services/storyService';
+import { useAppStore } from './useAppStore';
 
 export const useStories = () => {
   const [stories, setStories] = useState<StoryData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { hiddenUsers } = useAppStore();
 
   useEffect(() => {
     // Only fetch stories where expires_at is greater than current time
@@ -21,10 +23,13 @@ export const useStories = () => {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const activeStories: StoryData[] = [];
       snapshot.forEach((doc) => {
-        activeStories.push({
-          id: doc.id,
-          ...doc.data()
-        } as StoryData);
+        const data = doc.data() as StoryData;
+        if (!hiddenUsers.includes(data.user_id)) {
+          activeStories.push({
+            id: doc.id,
+            ...data
+          });
+        }
       });
       
       setStories(activeStories);
@@ -35,7 +40,7 @@ export const useStories = () => {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [hiddenUsers]);
 
   return { stories, isLoading };
 };

@@ -180,6 +180,7 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
 // Scheduled Notification Service
 exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(async (context) => {
   console.log('Running scheduled notification service...');
+  const notifiedUserIds = new Set();
   
   // 1. Load Venues
   const venuesSnap = await db.collection('venues').get();
@@ -280,7 +281,11 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
           continue;
         }
 
-        await sendRateLimitedPushNotification(
+        if (notifiedUserIds.has(user.id)) {
+          continue;
+        }
+
+        const sent = await sendRateLimitedPushNotification(
           user.id,
           `🔥 Live Activity`,
           liveNotificationMessage,
@@ -288,6 +293,9 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
           `live_${venue.id}`,
           4 * 60 * 60 * 1000 // 4 hours throttle
         );
+        if (sent) {
+          notifiedUserIds.add(user.id);
+        }
       }
     }
 
@@ -301,7 +309,11 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
         const dist = getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude);
         // User is nearby but NOT at the venue
         if (dist > VENUE_RADIUS_METERS && dist <= 2500) {
-          await sendRateLimitedPushNotification(
+          if (notifiedUserIds.has(userId)) {
+            continue;
+          }
+
+          const sent = await sendRateLimitedPushNotification(
             userId,
             `📍 Popular nearby`,
             `Something popular happening near you`,
@@ -309,6 +321,9 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
             `nearby_${venue.id}`,
             6 * 60 * 60 * 1000 // 6 hours throttle
           );
+          if (sent) {
+            notifiedUserIds.add(userId);
+          }
         }
       }
     }

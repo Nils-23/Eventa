@@ -1,4 +1,4 @@
-import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, updateDoc, increment, deleteDoc } from 'firebase/firestore';
 import { ref, remove } from 'firebase/database';
 import { firestore, realtimeDB } from './firebase';
 import { deleteStory } from './storyService';
@@ -7,7 +7,7 @@ export interface ReportData {
   id?: string;
   reporterId: string;
   reportedUserId: string | null;
-  contentType: 'chat' | 'post' | 'venue';
+  contentType: 'chat' | 'post' | 'venue' | 'user_hidden';
   contentId: string;
   contentSnippet: string;
   venueId?: string;
@@ -22,7 +22,7 @@ export interface ReportData {
 export const createReport = async (
   reporterId: string,
   reportedUserId: string | null,
-  contentType: 'chat' | 'post' | 'venue',
+  contentType: 'chat' | 'post' | 'venue' | 'user_hidden',
   contentId: string,
   contentSnippet: string,
   venueId?: string,
@@ -106,6 +106,46 @@ export const resolveReportWithUserSuspension = async (
     await updateDoc(reportRef, { status: 'resolved' });
   } catch (error) {
     console.error('Error suspending reported user:', error);
+    throw error;
+  }
+};
+
+/**
+ * Resolves a report by warning the user (incrementing their warnings count).
+ */
+export const resolveReportWithUserWarning = async (
+  reportId: string,
+  reportedUserId: string
+): Promise<void> => {
+  try {
+    const userRef = doc(firestore, 'users', reportedUserId);
+    await updateDoc(userRef, { warnings: increment(1) });
+
+    // Update report status
+    const reportRef = doc(firestore, 'reports', reportId);
+    await updateDoc(reportRef, { status: 'resolved' });
+  } catch (error) {
+    console.error('Error warning reported user:', error);
+    throw error;
+  }
+};
+
+/**
+ * Resolves a report by deleting the user document from Firestore.
+ */
+export const resolveReportWithUserRemoval = async (
+  reportId: string,
+  reportedUserId: string
+): Promise<void> => {
+  try {
+    const userRef = doc(firestore, 'users', reportedUserId);
+    await deleteDoc(userRef);
+
+    // Update report status
+    const reportRef = doc(firestore, 'reports', reportId);
+    await updateDoc(reportRef, { status: 'resolved' });
+  } catch (error) {
+    console.error('Error removing reported user:', error);
     throw error;
   }
 };

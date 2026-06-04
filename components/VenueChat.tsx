@@ -21,7 +21,7 @@ import { ref, onValue, push, set, remove } from 'firebase/database';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 import { realtimeDB, firestore } from '../services/firebase';
 import { useAppStore } from '../hooks/useAppStore';
-import { fetchUsername } from '../services/userService';
+import { fetchUsername, hideUser } from '../services/userService';
 import { checkAndUnlockAchievements, ACHIEVEMENTS } from '../services/achievementService';
 import { createReport } from '../services/reportService';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -135,7 +135,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   const [selectedMessageForReaction, setSelectedMessageForReaction] = useState<Message | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   
-  const { user } = useAppStore();
+  const { user, hiddenUsers, setHiddenUsers } = useAppStore();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -305,6 +305,41 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                 type: 'error',
                 text1: 'Error',
                 text2: 'Failed to delete message.'
+              });
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleHideUserPrompt = (targetUserId: string, username: string) => {
+    setSelectedMessageForReaction(null);
+    if (!user) return;
+
+    Alert.alert(
+      "Hide User",
+      `Are you sure you want to hide ${username}? Content from this user will no longer be shown to you.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Hide User",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await hideUser(user.uid, targetUserId);
+              setHiddenUsers([...hiddenUsers, targetUserId]);
+              Toast.show({
+                type: 'success',
+                text1: 'User Hidden',
+                text2: `You will no longer see content from ${username}.`
+              });
+            } catch (error) {
+              console.warn("Failed to hide user:", error);
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Failed to hide user.'
               });
             }
           }
@@ -489,7 +524,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           ) : (
             <FlatList
               ref={flatListRef}
-              data={messages}
+              data={messages.filter(msg => !hiddenUsers.includes(msg.user_id))}
               keyExtractor={item => item.id}
               renderItem={renderMessage}
               contentContainerStyle={styles.messagesList}
@@ -616,6 +651,21 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                       >
                         <Flag color="#FFD700" size={16} style={{ marginRight: 8 }} />
                         <Text style={[styles.deleteOptionText, { color: '#FFD700' }]}>Report Message</Text>
+                      </TouchableOpacity>
+                      <View style={styles.reactionSeparator} />
+                      <TouchableOpacity
+                        style={styles.deleteOption}
+                        onPress={() => {
+                          if (selectedMessageForReaction) {
+                            handleHideUserPrompt(
+                              selectedMessageForReaction.user_id,
+                              selectedMessageForReaction.username
+                            );
+                          }
+                        }}
+                      >
+                        <Icons.UserX color="#FF3366" size={16} style={{ marginRight: 8 }} />
+                        <Text style={[styles.deleteOptionText, { color: '#FF3366' }]}>Hide User</Text>
                       </TouchableOpacity>
                     </>
                   )}

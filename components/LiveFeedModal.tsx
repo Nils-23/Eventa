@@ -14,6 +14,7 @@ import { realtimeDB } from '../services/firebase';
 import { LiveVenue } from '../contexts/LiveVenuesContext';
 import { StoryData } from '../services/storyService';
 import { MessageSquare, X, ChevronRight } from 'lucide-react-native';
+import { useAppStore } from '../hooks/useAppStore';
 
 interface LiveFeedModalProps {
   isVisible: boolean;
@@ -44,6 +45,7 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   const insets = useSafeAreaInsets();
   const [latestMessages, setLatestMessages] = useState<Record<string, { username: string; message: string; timestamp: number }>>({});
   const [loadingChats, setLoadingChats] = useState(true);
+  const { hiddenUsers } = useAppStore();
 
   // Fetch the single latest chat message for each live venue in real-time
   useEffect(() => {
@@ -54,7 +56,7 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
     const unsubscribes: (() => void)[] = [];
 
     venues.forEach((venue) => {
-      const chatRef = query(ref(realtimeDB, `venue_chats/${venue.id}`), limitToLast(1));
+      const chatRef = query(ref(realtimeDB, `venue_chats/${venue.id}`), limitToLast(10));
       activeListeners++;
 
       const unsub = onValue(chatRef, (snapshot) => {
@@ -62,17 +64,34 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
           const val = snapshot.val();
           const keys = Object.keys(val);
           if (keys.length > 0) {
-            const lastMsgKey = keys[0];
-            const msg = val[lastMsgKey];
-            setLatestMessages((prev) => ({
-              ...prev,
-              [venue.id]: {
-                username: msg.username || 'Someone',
-                message: msg.message || '',
-                timestamp: msg.timestamp || Date.now(),
-              },
-            }));
+            const sortedMsgs = keys
+              .map(key => ({ id: key, ...val[key] }))
+              .sort((a, b) => b.timestamp - a.timestamp); // newest first
+
+            const nonHiddenMsg = sortedMsgs.find(msg => !hiddenUsers.includes(msg.user_id));
+            if (nonHiddenMsg) {
+              setLatestMessages((prev) => ({
+                ...prev,
+                [venue.id]: {
+                  username: nonHiddenMsg.username || 'Someone',
+                  message: nonHiddenMsg.message || '',
+                  timestamp: nonHiddenMsg.timestamp || Date.now(),
+                },
+              }));
+            } else {
+              setLatestMessages((prev) => {
+                const next = { ...prev };
+                delete next[venue.id];
+                return next;
+              });
+            }
           }
+        } else {
+          setLatestMessages((prev) => {
+            const next = { ...prev };
+            delete next[venue.id];
+            return next;
+          });
         }
         activeListeners--;
         if (activeListeners <= 0) {
@@ -97,7 +116,7 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
       clearTimeout(timer);
       unsubscribes.forEach((unsub) => unsub());
     };
-  }, [isVisible, venues]);
+  }, [isVisible, venues, hiddenUsers]);
 
   // Filter and sort chat items in the last 24 hours
   const activeChats = React.useMemo(() => {

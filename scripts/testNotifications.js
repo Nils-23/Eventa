@@ -232,6 +232,7 @@ async function runTests() {
   const simulateScheduledNotification = async () => {
     sentPushes = [];
     const now = Date.now();
+    const notifiedUserIds = new Set();
     
     const venuesSnap = await db.collection('venues').get();
     const venues = venuesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -309,7 +310,9 @@ async function runTests() {
         console.log(`[TEST LIVE ACTIVITY] Triggered: "${liveNotificationMessage}"`);
         for (const user of allUsersWithToken) {
           if (currentUsersAtVenue.includes(user.id)) continue;
-          await sendRateLimitedPushNotification(
+          if (notifiedUserIds.has(user.id)) continue;
+
+          const sent = await sendRateLimitedPushNotification(
             user.id,
             `🔥 Live Activity`,
             liveNotificationMessage,
@@ -317,6 +320,9 @@ async function runTests() {
             `live_${venue.id}`,
             4 * 60 * 60 * 1000
           );
+          if (sent) {
+            notifiedUserIds.add(user.id);
+          }
         }
       }
 
@@ -328,7 +334,9 @@ async function runTests() {
 
           const dist = getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude);
           if (dist > VENUE_RADIUS_METERS && dist <= 2500) {
-            await sendRateLimitedPushNotification(
+            if (notifiedUserIds.has(userId)) continue;
+
+            const sent = await sendRateLimitedPushNotification(
               userId,
               `📍 Popular nearby`,
               `Something popular happening near you`,
@@ -336,6 +344,9 @@ async function runTests() {
               `nearby_${venue.id}`,
               6 * 60 * 60 * 1000
             );
+            if (sent) {
+              notifiedUserIds.add(userId);
+            }
           }
         }
       }

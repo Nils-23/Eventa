@@ -5,6 +5,7 @@ import { ref, onValue } from 'firebase/database';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, firestore, realtimeDB } from '../services/firebase';
 import { resolveVenueImages } from '../utils/venueImageUtils';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 
 // ─── Types (re-exported so consumers don't need to change) ────────────────────
@@ -242,6 +243,27 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [isLoading, setIsLoading] = useState(true);
   const [resolvedImages, setResolvedImages] = useState<Record<string, string>>({});
 
+  useEffect(() => {
+    const loadCachedVenues = async () => {
+      try {
+        const cachedLive = await AsyncStorage.getItem('cached_live_venues');
+        const cachedScheduled = await AsyncStorage.getItem('cached_scheduled_venues');
+        if (cachedLive) {
+          setVenues(JSON.parse(cachedLive));
+        }
+        if (cachedScheduled) {
+          setScheduledVenues(JSON.parse(cachedScheduled));
+        }
+        if (cachedLive || cachedScheduled) {
+          setIsLoading(false);
+        }
+      } catch (err) {
+        console.warn('[LiveVenuesContext] Error loading cache:', err);
+      }
+    };
+    loadCachedVenues();
+  }, []);
+
   const venuesRef = useRef<RawVenue[]>([]);
   const locationsRef = useRef<Record<string, RawLocation>>({});
   const simLocationsRef = useRef<Record<string, RawLocation>>({});
@@ -290,6 +312,9 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setVenues(result.venues);
       setScheduledVenues(result.scheduledVenues);
       setIsLoading(false);
+
+      AsyncStorage.setItem('cached_live_venues', JSON.stringify(result.venues)).catch(() => {});
+      AsyncStorage.setItem('cached_scheduled_venues', JSON.stringify(result.scheduledVenues)).catch(() => {});
 
       if (result.hash !== lastHashRef.current) {
         lastHashRef.current = result.hash;

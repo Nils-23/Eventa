@@ -28,6 +28,8 @@ import {
   dismissReport,
   resolveReportWithContentRemoval,
   resolveReportWithUserSuspension,
+  resolveReportWithUserWarning,
+  resolveReportWithUserRemoval,
   ReportData,
 } from '../services/reportService';
 
@@ -114,6 +116,7 @@ export const AdminReportsScreen = () => {
   };
 
   const handleRemoveContent = async (report: ReportData) => {
+    if (report.contentType === 'user_hidden') return;
     const contentText =
       report.contentType === 'chat'
         ? 'chat message'
@@ -135,7 +138,7 @@ export const AdminReportsScreen = () => {
             try {
               await resolveReportWithContentRemoval(
                 report.id,
-                report.contentType,
+                report.contentType as 'chat' | 'post' | 'venue',
                 report.contentId,
                 report.venueId
               );
@@ -204,7 +207,80 @@ export const AdminReportsScreen = () => {
     );
   };
 
-  const renderIcon = (type: 'chat' | 'post' | 'venue') => {
+  const handleWarnUser = async (report: ReportData) => {
+    if (!report.reportedUserId) return;
+    const username = userMap[report.reportedUserId] || report.reportedUserId;
+
+    Alert.alert(
+      'Warn Creator',
+      `Are you sure you want to warn ${username}? This will increment their warnings count.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Warn User',
+          onPress: async () => {
+            if (!report.id || !report.reportedUserId) return;
+            setActionLoading(report.id);
+            try {
+              await resolveReportWithUserWarning(report.id, report.reportedUserId);
+              Toast.show({
+                type: 'success',
+                text1: 'User Warned',
+                text2: `${username} has been warned.`,
+              });
+            } catch (error) {
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Failed to warn user.',
+              });
+            } finally {
+              setActionLoading(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleRemoveUser = async (report: ReportData) => {
+    if (!report.reportedUserId) return;
+    const username = userMap[report.reportedUserId] || report.reportedUserId;
+
+    Alert.alert(
+      'Remove Creator',
+      `Are you sure you want to delete the account for ${username}? This is permanent.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove User',
+          style: 'destructive',
+          onPress: async () => {
+            if (!report.id || !report.reportedUserId) return;
+            setActionLoading(report.id);
+            try {
+              await resolveReportWithUserRemoval(report.id, report.reportedUserId);
+              Toast.show({
+                type: 'success',
+                text1: 'User Removed',
+                text2: `${username} has been deleted.`,
+              });
+            } catch (error) {
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Failed to remove user.',
+              });
+            } finally {
+              setActionLoading(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const renderIcon = (type: 'chat' | 'post' | 'venue' | 'user_hidden') => {
     switch (type) {
       case 'chat':
         return <MessageSquare color="#00FFCC" size={16} />;
@@ -212,6 +288,8 @@ export const AdminReportsScreen = () => {
         return <Image color="#FF00CC" size={16} />;
       case 'venue':
         return <MapPin color="#FFCC00" size={16} />;
+      case 'user_hidden':
+        return <UserX color="#FF3366" size={16} />;
     }
   };
 
@@ -229,12 +307,23 @@ export const AdminReportsScreen = () => {
 
     const isActioning = actionLoading === item.id;
 
+    const getBadgeColor = (type: string) => {
+      switch (type) {
+        case 'chat': return '#00FFCC';
+        case 'post': return '#FF00CC';
+        case 'venue': return '#FFCC00';
+        case 'user_hidden': return '#FF3366';
+        default: return '#FFF';
+      }
+    };
+    const badgeColor = getBadgeColor(item.contentType);
+
     return (
       <View style={styles.reportCard}>
         <View style={styles.cardHeader}>
           <View style={styles.badgeContainer}>
             {renderIcon(item.contentType)}
-            <Text style={[styles.badgeText, { color: item.contentType === 'chat' ? '#00FFCC' : item.contentType === 'post' ? '#FF00CC' : '#FFCC00' }]}>
+            <Text style={[styles.badgeText, { color: badgeColor }]}>
               {item.contentType.toUpperCase()}
             </Text>
           </View>
@@ -274,22 +363,56 @@ export const AdminReportsScreen = () => {
               <Text style={styles.dismissText}>Dismiss</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.actionButton, styles.removeButton]}
-              onPress={() => handleRemoveContent(item)}
-            >
-              <Trash2 color="#FF3366" size={16} />
-              <Text style={styles.removeText}>Remove Content</Text>
-            </TouchableOpacity>
+            {item.contentType === 'user_hidden' ? (
+              <>
+                {item.reportedUserId && (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.warnButton]}
+                      onPress={() => handleWarnUser(item)}
+                    >
+                      <UserX color="#FFCC00" size={16} />
+                      <Text style={styles.warnText}>Warn Creator</Text>
+                    </TouchableOpacity>
 
-            {item.reportedUserId && (
-              <TouchableOpacity
-                style={[styles.actionButton, styles.suspendButton]}
-                onPress={() => handleSuspendUser(item)}
-              >
-                <UserX color="#FF9900" size={16} />
-                <Text style={styles.suspendText}>Suspend Creator</Text>
-              </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.suspendButton]}
+                      onPress={() => handleSuspendUser(item)}
+                    >
+                      <UserX color="#FF9900" size={16} />
+                      <Text style={styles.suspendText}>Suspend Creator</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.removeButton]}
+                      onPress={() => handleRemoveUser(item)}
+                    >
+                      <Trash2 color="#FF3366" size={16} />
+                      <Text style={styles.removeText}>Remove Creator</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.removeButton]}
+                  onPress={() => handleRemoveContent(item)}
+                >
+                  <Trash2 color="#FF3366" size={16} />
+                  <Text style={styles.removeText}>Remove Content</Text>
+                </TouchableOpacity>
+
+                {item.reportedUserId && (
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.suspendButton]}
+                    onPress={() => handleSuspendUser(item)}
+                  >
+                    <UserX color="#FF9900" size={16} />
+                    <Text style={styles.suspendText}>Suspend Creator</Text>
+                  </TouchableOpacity>
+                )}
+              </>
             )}
           </View>
         )}
@@ -477,6 +600,14 @@ const styles = StyleSheet.create({
   },
   suspendText: {
     color: '#FF9900',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  warnButton: {
+    backgroundColor: 'rgba(255, 204, 0, 0.1)',
+  },
+  warnText: {
+    color: '#FFCC00',
     fontSize: 12,
     fontWeight: '600',
   },
