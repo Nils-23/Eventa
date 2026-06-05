@@ -134,11 +134,34 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   const [isLoading, setIsLoading] = useState(true);
   const [selectedMessageForReaction, setSelectedMessageForReaction] = useState<Message | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [activeBadge, setActiveBadge] = useState<string | null>(null);
+  const [sendAsSimulated, setSendAsSimulated] = useState(false);
   
-  const { user, hiddenUsers, setHiddenUsers } = useAppStore();
+  const { user, hiddenUsers, setHiddenUsers, isAdmin, updateLastViewedChat } = useAppStore();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    if (isVisible && venueId) {
+      updateLastViewedChat(venueId);
+    }
+  }, [isVisible, venueId, messages.length, updateLastViewedChat]);
+
+  useEffect(() => {
+    if (isVisible && user?.uid) {
+      const userDocRef = doc(firestore, 'users', user.uid);
+      getDoc(userDocRef)
+        .then((docSnap) => {
+          if (docSnap.exists()) {
+            setActiveBadge(docSnap.data().activeBadge || null);
+          }
+        })
+        .catch((err) => {
+          console.warn('[VenueChat] Failed to fetch active badge:', err);
+        });
+    }
+  }, [isVisible, user?.uid]);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
@@ -191,64 +214,76 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   }, [isVisible, venueId]);
 
   const handleSend = async () => {
-    if (!inputText.trim() || !user || !venueId) return;
+    const textToSend = inputText.trim();
+    if (!textToSend || !user || !venueId) return;
 
+    // Clear input immediately to make chat feel extremely snappy and responsive
+    setInputText('');
+    const previousReplyTo = replyingTo;
+    setReplyingTo(null);
     setIsSending(true);
-    Keyboard.dismiss();
 
     try {
-      const username = await fetchUsername(user.uid);
-      
-      const userDocRef = doc(firestore, 'users', user.uid);
-      const userDocSnap = await getDoc(userDocRef);
-      const activeBadge = userDocSnap.exists() ? userDocSnap.data().activeBadge : null;
+      let senderId = user.uid;
+      let senderName = '';
+      let senderBadge: string | null = activeBadge;
+
+      if (isAdmin && sendAsSimulated) {
+        const randomNum = Math.floor(1000 + Math.random() * 9000);
+        senderId = `sim_admin_${Date.now()}_${randomNum}`;
+        senderName = await fetchUsername(senderId);
+        senderBadge = null; // Simulated users don't get the admin's active badge
+      } else {
+        senderName = await fetchUsername(user.uid);
+      }
 
       const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
       const newMessageRef = push(chatRef);
       
       await set(newMessageRef, {
-        user_id: user.uid,
-        username,
-        message: inputText.trim(),
+        user_id: senderId,
+        username: senderName,
+        message: textToSend,
         timestamp: Date.now(),
-        ...(activeBadge ? { activeBadge } : {}),
-        ...(replyingTo ? {
+        ...(senderBadge ? { activeBadge: senderBadge } : {}),
+        ...(previousReplyTo ? {
           replyTo: {
-            messageId: replyingTo.id,
-            username: replyingTo.username,
-            message: replyingTo.message
+            messageId: previousReplyTo.id,
+            username: previousReplyTo.username,
+            message: previousReplyTo.message
           }
         } : {})
       });
       
-      // Update stats and check achievements
-      try {
-        await updateDoc(userDocRef, { chatMessageCount: increment(1) });
-        await checkAndUnlockAchievements(user.uid);
-      } catch (err) {
-        console.error('Failed to update stats', err);
+      // Update stats and check achievements in the background only for the actual admin account
+      if (!sendAsSimulated) {
+        const userDocRef = doc(firestore, 'users', user.uid);
+        updateDoc(userDocRef, { chatMessageCount: increment(1) })
+          .then(() => checkAndUnlockAchievements(user.uid))
+          .catch((err) => console.warn('[VenueChat] Failed to update user message count/achievements:', err));
       }
 
-      // Register the interaction in the user's active chats list
+      // Register the interaction in the user's active chats list (non-blocking)
       const userChatRef = ref(realtimeDB, `user_chats/${user.uid}/${venueId}`);
-      await set(userChatRef, {
+      set(userChatRef, {
         venueName: venueName,
         lastInteractionTime: Date.now()
-      });
+      }).catch((err) => console.warn('[VenueChat] Failed to update user_chats:', err));
 
-      // Register the user as an active member of this venue's chat
+      // Register the user as an active member of this venue's chat (non-blocking)
       const venueMemberRef = ref(realtimeDB, `venue_members/${venueId}/${user.uid}`);
-      await set(venueMemberRef, {
+      set(venueMemberRef, {
         lastInteractionTime: Date.now()
-      });
+      }).catch((err) => console.warn('[VenueChat] Failed to update venue_members:', err));
 
-      setInputText('');
-      setReplyingTo(null);
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     } catch (error) {
       console.warn("Error sending message:", error);
+      // Restore input text and replyingState if sending fails
+      setInputText(textToSend);
+      setReplyingTo(previousReplyTo);
       Toast.show({
         type: 'error',
         text1: 'Message Failed',
@@ -564,6 +599,31 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
               <TouchableOpacity onPress={() => setReplyingTo(null)} style={styles.replyBarClose}>
                 <X color="#888" size={16} />
               </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Admin Posting Toggle Selector */}
+          {isAdmin && (
+            <View style={styles.adminToggleContainer}>
+              <Text style={styles.adminToggleLabel}>Post as:</Text>
+              <View style={styles.adminToggleButtons}>
+                <TouchableOpacity 
+                  style={[styles.adminToggleButton, !sendAsSimulated && styles.adminToggleButtonActive]}
+                  onPress={() => setSendAsSimulated(false)}
+                >
+                  <Text style={[styles.adminToggleText, !sendAsSimulated && styles.adminToggleTextActive]}>
+                    My Admin Profile
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.adminToggleButton, sendAsSimulated && styles.adminToggleButtonActive]}
+                  onPress={() => setSendAsSimulated(true)}
+                >
+                  <Text style={[styles.adminToggleText, sendAsSimulated && styles.adminToggleTextActive]}>
+                    Simulated User
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
 
@@ -992,5 +1052,54 @@ const styles = StyleSheet.create({
     top: '30%',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  
+  // Admin posting toggle styles
+  adminToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1E1A2A', // glassmorphic deep dark violet-grey
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#2F1A4A',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2F1A4A',
+  },
+  adminToggleLabel: {
+    color: '#8A7A9A',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  adminToggleButtons: {
+    flexDirection: 'row',
+    backgroundColor: '#120D1A',
+    borderRadius: 8,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: '#2F1A4A',
+  },
+  adminToggleButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  adminToggleButtonActive: {
+    backgroundColor: '#FF00CC', // High-end theme neon magenta
+    shadowColor: '#FF00CC',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+  },
+  adminToggleText: {
+    color: '#6A5A7A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  adminToggleTextActive: {
+    color: '#FFF',
   }
 });

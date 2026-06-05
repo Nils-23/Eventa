@@ -57,8 +57,8 @@ export function usePushNotifications() {
       if (response) {
         const data = response.notification.request.content.data;
         if (data?.venueId) {
-          setPendingVenueId(data.venueId);
-          setPendingVenueAction(data.type === 'chat' ? 'chat' : 'details');
+          setPendingVenueId(data.venueId as string);
+          setPendingVenueAction((data.type as string) === 'chat' ? 'chat' : 'details');
           navigation.navigate('Main', { screen: 'Map' });
         }
       }
@@ -68,8 +68,8 @@ export function usePushNotifications() {
       console.log('Notification tapped:', response);
       const data = response.notification.request.content.data;
       if (data?.venueId) {
-        setPendingVenueId(data.venueId);
-        setPendingVenueAction(data.type === 'chat' ? 'chat' : 'details');
+        setPendingVenueId(data.venueId as string);
+        setPendingVenueAction((data.type as string) === 'chat' ? 'chat' : 'details');
         navigation.navigate('Main', { screen: 'Map' });
       }
     });

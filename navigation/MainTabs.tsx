@@ -8,6 +8,7 @@ import { Map, List, Trophy, User } from 'lucide-react-native';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useVisitTracker } from '../hooks/useVisitTracker';
+import { useUnreadChatListener } from '../hooks/useUnreadChatListener';
 
 
 const Tab = createBottomTabNavigator();
@@ -19,6 +20,8 @@ export const MainTabs = () => {
   usePushNotifications();
   // Track visits to venues for profile stats
   useVisitTracker();
+  // Listen to unread chats in the background
+  useUnreadChatListener();
 
   return (
     <Tab.Navigator

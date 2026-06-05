@@ -365,31 +365,34 @@ exports.inviteRedirect = functions.https.onRequest(async (req, res) => {
   const pathParts = req.path.split('/');
   const code = req.query.code || pathParts[pathParts.length - 1];
 
-  if (!code) {
-    res.status(400).send("Error: Missing referral code");
-    return;
-  }
-
   // Retrieve client IP and User-Agent
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip || "unknown";
   const userAgent = req.headers['user-agent'] || "unknown";
 
+  const cleanCode = (code && code !== "inviteRedirect" && code !== "invite" && code.trim() !== "") ? code.trim() : null;
+
   try {
-    // Log invite link click for first-open iOS attribution
-    await db.collection('pending_clicks').add({
-      referralCode: code,
-      ip: ip,
-      userAgent: userAgent,
-      timestamp: admin.firestore.FieldValue.serverTimestamp()
-    });
+    if (cleanCode) {
+      // Log invite link click for first-open iOS attribution
+      await db.collection('pending_clicks').add({
+        referralCode: cleanCode,
+        ip: ip,
+        userAgent: userAgent,
+        timestamp: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
 
     // In production, redirects to Store links:
-    let redirectUrl = "https://play.google.com/store/apps/details?id=com.eventas.app";
+    let redirectUrl = "https://play.google.com/store/apps/details?id=com.nils23.Eventa";
     const uaLower = userAgent.toLowerCase();
     if (uaLower.includes("iphone") || uaLower.includes("ipad") || uaLower.includes("ipod")) {
-      redirectUrl = "https://apps.apple.com/app/eventas/id123456789";
+      redirectUrl = "https://apps.apple.com/app/eventas/id6769403503";
     } else {
-      redirectUrl = `https://play.google.com/store/apps/details?id=com.eventas.app&referrer=${encodeURIComponent(code)}`;
+      if (cleanCode) {
+        redirectUrl = `https://play.google.com/store/apps/details?id=com.nils23.Eventa&referrer=${encodeURIComponent(cleanCode)}`;
+      } else {
+        redirectUrl = `https://play.google.com/store/apps/details?id=com.nils23.Eventa`;
+      }
     }
 
     res.send(`
@@ -408,7 +411,7 @@ exports.inviteRedirect = functions.https.onRequest(async (req, res) => {
         <body>
           <div class="loader"></div>
           <h1>Redirecting to the App Store</h1>
-          <p>Please wait while we set up your invite code: <strong>${code}</strong>...</p>
+          <p>${cleanCode ? `Please wait while we set up your invite code: <strong>${cleanCode}</strong>...` : 'Please wait while we redirect you to the App Store...'}</p>
         </body>
       </html>
     `);

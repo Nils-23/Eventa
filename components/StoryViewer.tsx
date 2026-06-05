@@ -10,6 +10,8 @@ import {
   Animated,
   ActivityIndicator,
   Alert,
+  PanResponder,
+  TouchableOpacity,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Video, ResizeMode, Audio } from 'expo-av';
@@ -22,6 +24,10 @@ import { useAppStore } from '../hooks/useAppStore';
 import { createReport } from '../services/reportService';
 import Toast from 'react-native-toast-message';
 import * as Icons from 'lucide-react-native';
+import { useCachedMedia } from '../hooks/useCachedMedia';
+import { prefetchStoriesMedia } from '../utils/mediaCache';
+import { ref, push, set } from 'firebase/database';
+import { realtimeDB } from '../services/firebase';
 
 interface StoryViewerProps {
   isVisible: boolean;
@@ -33,6 +39,69 @@ interface StoryViewerProps {
   /** When provided, a "Remove Story" button is shown and this callback is invoked with the story id */
   onRemoveStory?: (storyId: string) => void;
 }
+
+interface StoryMediaItemProps {
+  story: StoryData;
+  isActive: boolean;
+  isPaused: boolean;
+  isVisible: boolean;
+  onImageLoad: () => void;
+  onVideoUpdate: (status: any) => void;
+  onVideoError: () => void;
+}
+
+const StoryMediaItem: React.FC<StoryMediaItemProps> = ({
+  story,
+  isActive,
+  isPaused,
+  isVisible,
+  onImageLoad,
+  onVideoUpdate,
+  onVideoError,
+}) => {
+  const { cachedUri } = useCachedMedia(story.media_url);
+
+  if (!cachedUri) {
+    return (
+      <View style={styles.loadingOverlay}>
+        <ActivityIndicator color="#FFFFFF" size="large" />
+      </View>
+    );
+  }
+
+  if (story.media_type === 'video') {
+    return (
+      <Video
+        key={`video_${story.id}`}
+        source={{ uri: cachedUri }}
+        style={StyleSheet.absoluteFillObject}
+        resizeMode={ResizeMode.COVER}
+        shouldPlay={isActive && !isPaused && isVisible}
+        isLooping={false}
+        volume={1.0}
+        isMuted={false}
+        progressUpdateIntervalMillis={100}
+        onPlaybackStatusUpdate={(status) => {
+          if (isActive) {
+            onVideoUpdate(status);
+          }
+        }}
+        onError={onVideoError}
+      />
+    );
+  } else {
+    return (
+      <Image
+        key={`img_${story.id}`}
+        source={{ uri: cachedUri }}
+        style={StyleSheet.absoluteFillObject}
+        resizeMode="cover"
+        onLoad={onImageLoad}
+        onError={onVideoError}
+      />
+    );
+  }
+};
 
 const { width, height } = Dimensions.get('window');
 const IMAGE_DURATION_MS = 5000;
@@ -59,9 +128,60 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const progressAnim = useRef(new Animated.Value(0)).current;
   const progressValue = useRef(0);
   const imageTimerRef = useRef<ReturnType<typeof Animated.timing> | null>(null);
+  const videoTimerRef = useRef<ReturnType<typeof Animated.timing> | null>(null);
   const videoRef = useRef<Video>(null);
 
   const currentStory = stories.length > 0 ? stories[currentIndex] : null;
+  const { cachedUri: currentStoryUri } = useCachedMedia(currentStory?.media_url);
+
+  // Gesture and transition animations
+  const translateY = useRef(new Animated.Value(0)).current;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const [transitioningIndex, setTransitioningIndex] = useState<number | null>(null);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        // Trigger drag down only when vertical drag is significant and dragging downward
+        return gestureState.dy > 5 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+      },
+      onPanResponderGrant: () => {
+        setIsPaused(true);
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) {
+          translateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 120 || gestureState.vy > 0.5) {
+          Animated.timing(translateY, {
+            toValue: height,
+            duration: 250,
+            useNativeDriver: true,
+          }).start(() => {
+            onClose();
+          });
+        } else {
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: true,
+          }).start(() => {
+            setIsPaused(false);
+          });
+        }
+      },
+    })
+  ).current;
+
+  // Prefetch stories media when viewer opens
+  useEffect(() => {
+    if (isVisible && stories.length > 0) {
+      const mediaUrls = stories.map(s => s.media_url).filter(Boolean);
+      prefetchStoriesMedia(mediaUrls);
+    }
+  }, [isVisible, stories]);
 
   // ─── Prefetch usernames for all stories at once ──────────────────────────
   useEffect(() => {
@@ -101,11 +221,26 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   // ─── Reset on open ───────────────────────────────────────────────────────
   useEffect(() => {
     if (isVisible) {
+      translateY.setValue(height);
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
       setCurrentIndex(0);
       setIsPaused(false);
       setIsMediaLoading(true);
       progressAnim.setValue(0);
       progressValue.current = 0;
+    } else {
+      if (imageTimerRef.current) {
+        imageTimerRef.current.stop();
+        imageTimerRef.current = null;
+      }
+      if (videoTimerRef.current) {
+        videoTimerRef.current.stop();
+        videoTimerRef.current = null;
+      }
     }
   }, [isVisible]);
 
@@ -122,6 +257,10 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     if (imageTimerRef.current) {
       imageTimerRef.current.stop();
       imageTimerRef.current = null;
+    }
+    if (videoTimerRef.current) {
+      videoTimerRef.current.stop();
+      videoTimerRef.current = null;
     }
     progressAnim.setValue(0);
     progressValue.current = 0;
@@ -152,20 +291,56 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     }
   }, [isPaused]);
 
+  // ─── Video pause/resume ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isVisible || !currentStory || currentStory.media_type !== 'video') return;
+
+    if (isPaused) {
+      if (videoTimerRef.current) {
+        videoTimerRef.current.stop();
+        videoTimerRef.current = null;
+      }
+    }
+  }, [isPaused]);
+
   // ─── Navigation ─────────────────────────────────────────────────────────
   const handleNext = useCallback(() => {
     if (currentIndex < stories.length - 1) {
-      setCurrentIndex(prev => prev + 1);
+      setIsPaused(true);
+      setTransitioningIndex(currentIndex + 1);
+      Animated.timing(translateX, {
+        toValue: -width,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished) {
+          setCurrentIndex(prev => prev + 1);
+          translateX.setValue(0);
+          setTransitioningIndex(null);
+        }
+      });
     } else {
       onClose();
     }
-  }, [currentIndex, stories.length, onClose]);
+  }, [currentIndex, stories.length, onClose, translateX]);
 
   const handlePrev = useCallback(() => {
     if (currentIndex > 0) {
-      setCurrentIndex(prev => prev - 1);
+      setIsPaused(true);
+      setTransitioningIndex(currentIndex - 1);
+      Animated.timing(translateX, {
+        toValue: width,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished) {
+          setCurrentIndex(prev => prev - 1);
+          translateX.setValue(0);
+          setTransitioningIndex(null);
+        }
+      });
     }
-  }, [currentIndex]);
+  }, [currentIndex, translateX]);
 
   // ─── Image loaded → start timer ──────────────────────────────────────────
   const handleImageLoad = useCallback(() => {
@@ -186,15 +361,45 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const handleVideoUpdate = useCallback((status: any) => {
     if (!status.isLoaded) return;
 
-    if (status.isPlaying && isMediaLoading) {
+    // Handle buffering state
+    if (status.isBuffering) {
+      setIsMediaLoading(true);
+      if (videoTimerRef.current) {
+        videoTimerRef.current.stop();
+        videoTimerRef.current = null;
+      }
+      return;
+    } else if (status.isPlaying && isMediaLoading) {
       setIsMediaLoading(false);
     }
 
     if (status.didJustFinish) {
+      if (videoTimerRef.current) {
+        videoTimerRef.current.stop();
+        videoTimerRef.current = null;
+      }
       handleNext();
     } else if (!isPaused && status.durationMillis) {
       const progress = status.positionMillis / status.durationMillis;
-      progressAnim.setValue(Math.min(progress, 1));
+      
+      // Stop previous progress animation before starting the next transition slice
+      if (videoTimerRef.current) {
+        videoTimerRef.current.stop();
+      }
+      
+      // Animate smoothly to the current playback position over 100ms
+      const anim = Animated.timing(progressAnim, {
+        toValue: Math.min(progress, 1),
+        duration: 100,
+        useNativeDriver: false,
+      });
+      videoTimerRef.current = anim;
+      anim.start();
+    } else if (isPaused) {
+      if (videoTimerRef.current) {
+        videoTimerRef.current.stop();
+        videoTimerRef.current = null;
+      }
     }
   }, [isPaused, handleNext, isMediaLoading]);
 
@@ -229,6 +434,56 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
       ]
     );
   }, [currentStory, onRemoveStory, stories.length, currentIndex, onClose]);
+
+  const handleReactToStory = async (emoji: string) => {
+    if (!user || !currentStory?.venue_id) return;
+
+    // Temporarily pause the story while sending reaction
+    setIsPaused(true);
+
+    try {
+      const senderName = await fetchUsername(user.uid);
+      const chatRef = ref(realtimeDB, `venue_chats/${currentStory.venue_id}`);
+      const newMessageRef = push(chatRef);
+
+      const displayAuthor = currentUsername || 'someone';
+
+      await set(newMessageRef, {
+        user_id: user.uid,
+        username: senderName,
+        message: `Reacted ${emoji} to ${displayAuthor}'s story`,
+        timestamp: Date.now(),
+        reactions: {
+          [emoji]: {
+            [user.uid]: senderName
+          }
+        }
+      });
+
+      // Briefly show success notification
+      Toast.show({
+        type: 'success',
+        text1: `Reacted ${emoji}`,
+        text2: 'Reaction sent to chat room!',
+        position: 'top',
+        visibilityTime: 1500,
+      });
+
+      // Resume story playback after a short delay
+      setTimeout(() => {
+        setIsPaused(false);
+      }, 1000);
+
+    } catch (err) {
+      console.warn('[StoryViewer] Failed to send story reaction:', err);
+      Toast.show({
+        type: 'error',
+        text1: 'Reaction Failed',
+        text2: 'Could not deliver reaction to chat.',
+      });
+      setIsPaused(false);
+    }
+  };
 
   const handleHideUserPrompt = (targetUserId: string, username: string) => {
     setIsPaused(true);
@@ -337,196 +592,226 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const headerTop = Math.max(insets.top, 12);
 
   // ─── Render ──────────────────────────────────────────────────────────────
+  const backdropOpacity = translateY.interpolate({
+    inputRange: [0, height],
+    outputRange: ['rgba(0,0,0,0.9)', 'rgba(0,0,0,0)'],
+    extrapolate: 'clamp',
+  });
+
   return (
-    <Modal visible={isVisible} animationType="fade" transparent={false} statusBarTranslucent>
-      <View style={styles.container}>
-
-        {stories.length === 0 ? (
-          /* ── Empty state ─────────────────────────────── */
-          <View style={styles.emptyContainer}>
-            <Pressable
-              style={[styles.backButtonAbsolute, { top: headerTop }]}
-              onPress={onClose}
-            >
-              <ArrowLeft color="#FFF" size={28} />
-            </Pressable>
-            <Text style={styles.emptyText}>No stories here yet.</Text>
-            {canAddStory && (
-              <Pressable style={styles.addButtonLarge} onPress={onAddStory}>
-                <Plus color="#000" size={24} />
-                <Text style={styles.addButtonText}>Be the first to add a story!</Text>
-              </Pressable>
-            )}
-          </View>
-
-        ) : currentStory ? (
-          <>
-            {/* ── Media layer ───────────────────────────── */}
-            {currentStory.media_type === 'video' ? (
-              <Video
-                ref={videoRef}
-                key={`video_${currentStory.id ?? currentIndex}`}
-                source={{ uri: currentStory.media_url }}
-                style={StyleSheet.absoluteFillObject}
-                resizeMode={ResizeMode.COVER}
-                shouldPlay={!isPaused && isVisible}
-                isLooping={false}
-                volume={1.0}
-                isMuted={false}
-                progressUpdateIntervalMillis={100}
-                onPlaybackStatusUpdate={handleVideoUpdate}
-                onError={() => {
-                  setIsMediaLoading(false);
-                  handleNext();
-                }}
-              />
-            ) : (
-              <Image
-                key={`img_${currentStory.id ?? currentIndex}`}
-                source={{ uri: currentStory.media_url }}
-                style={StyleSheet.absoluteFillObject}
-                resizeMode="cover"
-                onLoad={handleImageLoad}
-                onError={() => {
-                  setIsMediaLoading(false);
-                  handleNext();
-                }}
-              />
-            )}
-
-            {/* ── Loading spinner (shown while media buffers) ── */}
-            {isMediaLoading && (
-              <View style={styles.loadingOverlay}>
-                <ActivityIndicator color="#FFFFFF" size="large" />
-              </View>
-            )}
-
-            {/* ── Touch zones (prev / next) ─────────────── */}
-            <View style={styles.interactionLayer}>
+    <Modal visible={isVisible} animationType="none" transparent statusBarTranslucent>
+      <Animated.View style={[styles.modalOverlay, { backgroundColor: backdropOpacity }]}>
+        <Animated.View
+          style={[styles.container, { transform: [{ translateY }] }]}
+          {...panResponder.panHandlers}
+        >
+          {stories.length === 0 ? (
+            /* ── Empty state ─────────────────────────────── */
+            <View style={styles.emptyContainer}>
               <Pressable
-                style={styles.leftTapZone}
-                onPressIn={() => setIsPaused(true)}
-                onPressOut={() => setIsPaused(false)}
-                onPress={handlePrev}
-              />
-              <Pressable
-                style={styles.rightTapZone}
-                onPressIn={() => setIsPaused(true)}
-                onPressOut={() => setIsPaused(false)}
-                onPress={handleNext}
-              />
-            </View>
-
-            {/* ── Top gradient ──────────────────────────── */}
-            <LinearGradient
-              colors={['rgba(0,0,0,0.75)', 'transparent']}
-              style={styles.topGradient}
-              pointerEvents="none"
-            />
-
-            {/* ── Header (progress + metadata) ─────────── */}
-            {/* Uses safe-area inset so it's never hidden behind notch/island */}
-            <View style={[styles.headerContainer, { paddingTop: headerTop }]} pointerEvents="box-none">
-              {/* Progress bars */}
-              <View style={styles.progressContainer}>
-                {stories.map((_, index) => {
-                  let widthValue: any;
-                  if (index < currentIndex) widthValue = '100%';
-                  else if (index === currentIndex) widthValue = progressInterpolation;
-                  else widthValue = '0%';
-
-                  return (
-                    <View key={index} style={styles.progressBarBackground}>
-                      <Animated.View style={[styles.progressBarFill, { width: widthValue }]} />
-                    </View>
-                  );
-                })}
-              </View>
-
-              {/* Author + venue info */}
-              <View style={styles.metadataLayout}>
-                <View style={styles.userInfoBlock}>
-                  <View style={styles.avatar}>
-                    <UserIcon color="#FFF" size={16} />
-                  </View>
-                  <View>
-                    <View style={styles.usernameRow}>
-                      {currentStory.activeBadge ? (() => {
-                        const badgeObj = ACHIEVEMENTS.find(a => a.id === currentStory.activeBadge);
-                        // @ts-ignore
-                        const BadgeIcon = badgeObj ? Icons[badgeObj.iconName] : null;
-                        if (!BadgeIcon || !badgeObj) return null;
-                        return <BadgeIcon color={badgeObj.glowColor} size={14} style={{ marginRight: 6 }} />;
-                      })() : null}
-                      <Text style={styles.usernameText}>
-                        {currentUsername || ' '}
-                      </Text>
-                    </View>
-                    {venueName ? <Text style={styles.venueName}>{venueName}</Text> : null}
-                  </View>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <View style={styles.timeBlock}>
-                    <Text style={styles.timeText}>{calculateHoursAgo(currentStory.created_at)}h</Text>
-                  </View>
-                  {user && currentStory.user_id !== user.uid && (
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <Pressable
-                        style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16 }}
-                        onPress={() => handleHideUserPrompt(currentStory.user_id, currentUsername)}
-                      >
-                        <UserX color="#FFF" size={16} />
-                      </Pressable>
-                      <Pressable
-                        style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16 }}
-                        onPress={handleReportStory}
-                      >
-                        <Flag color="#FFF" size={16} />
-                      </Pressable>
-                    </View>
-                  )}
-                </View>
-              </View>
-            </View>
-
-            {/* ── Close button (safe-area aware) ────────── */}
-            <Pressable
-              style={[styles.closeButtonAbsolute, { top: headerTop + 44 }]}
-              onPress={onClose}
-            >
-              <X color="#FFF" size={28} />
-            </Pressable>
-
-            {/* ── Add Story button ──────────────────────── */}
-            {canAddStory && (
-              <View style={[styles.controlsRow, { bottom: Math.max(insets.bottom, 40) }]}>
-                <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
-                  <Plus color="#000" size={24} />
-                </Pressable>
-              </View>
-            )}
-
-            {/* ── Remove Story button (shown only when onRemoveStory is provided) ── */}
-            {onRemoveStory && (
-              <Pressable
-                style={[styles.removeButton, { bottom: Math.max(insets.bottom + 16, 40) }]}
-                onPress={handleRemoveStory}
+                style={[styles.backButtonAbsolute, { top: headerTop }]}
+                onPress={onClose}
               >
-                <Trash2 color="#FF3B30" size={18} />
-                <Text style={styles.removeButtonText}>Remove Story</Text>
+                <ArrowLeft color="#FFF" size={28} />
               </Pressable>
-            )}
-          </>
-        ) : null}
-      </View>
+              <Text style={styles.emptyText}>No stories here yet.</Text>
+              {canAddStory && (
+                <Pressable style={styles.addButtonLarge} onPress={onAddStory}>
+                  <Plus color="#000" size={24} />
+                  <Text style={styles.addButtonText}>Be the first to add a story!</Text>
+                </Pressable>
+              )}
+            </View>
+
+          ) : currentStory ? (
+            <>
+              {/* ── Media layer ───────────────────────────── */}
+              <Animated.View style={[StyleSheet.absoluteFillObject, { transform: [{ translateX }] }]}>
+                {/* Current Story Media */}
+                <View style={StyleSheet.absoluteFillObject}>
+                  <StoryMediaItem
+                    story={currentStory}
+                    isActive={transitioningIndex === null}
+                    isPaused={isPaused}
+                    isVisible={isVisible}
+                    onImageLoad={handleImageLoad}
+                    onVideoUpdate={handleVideoUpdate}
+                    onVideoError={() => {
+                      setIsMediaLoading(false);
+                      handleNext();
+                    }}
+                  />
+                </View>
+
+                {/* Transitioning Story Media */}
+                {transitioningIndex !== null && stories[transitioningIndex] && (
+                  <View style={[StyleSheet.absoluteFillObject, { left: transitioningIndex > currentIndex ? width : -width }]}>
+                    <StoryMediaItem
+                      story={stories[transitioningIndex]}
+                      isActive={true}
+                      isPaused={true}
+                      isVisible={isVisible}
+                      onImageLoad={() => {}}
+                      onVideoUpdate={() => {}}
+                      onVideoError={() => {}}
+                    />
+                  </View>
+                )}
+              </Animated.View>
+
+              {/* ── Loading spinner (shown while media buffers or cache resolves) ── */}
+              {(isMediaLoading || !currentStoryUri) && transitioningIndex === null && (
+                <View style={styles.loadingOverlay}>
+                  <ActivityIndicator color="#FFFFFF" size="large" />
+                </View>
+              )}
+
+              {/* ── Touch zones (prev / next) ─────────────── */}
+              <View style={styles.interactionLayer}>
+                <Pressable
+                  style={styles.leftTapZone}
+                  onPressIn={() => setIsPaused(true)}
+                  onPressOut={() => setIsPaused(false)}
+                  onPress={handlePrev}
+                />
+                <Pressable
+                  style={styles.rightTapZone}
+                  onPressIn={() => setIsPaused(true)}
+                  onPressOut={() => setIsPaused(false)}
+                  onPress={handleNext}
+                />
+              </View>
+
+              {/* ── Top gradient ──────────────────────────── */}
+              <LinearGradient
+                colors={['rgba(0,0,0,0.75)', 'transparent']}
+                style={styles.topGradient}
+                pointerEvents="none"
+              />
+
+              {/* ── Header (progress + metadata) ─────────── */}
+              {/* Uses safe-area inset so it's never hidden behind notch/island */}
+              <View style={[styles.headerContainer, { paddingTop: headerTop }]} pointerEvents="box-none">
+                {/* Progress bars */}
+                <View style={styles.progressContainer}>
+                  {stories.map((_, index) => {
+                    let widthValue: any;
+                    if (index < currentIndex) widthValue = '100%';
+                    else if (index === currentIndex) widthValue = progressInterpolation;
+                    else widthValue = '0%';
+
+                    return (
+                      <View key={index} style={styles.progressBarBackground}>
+                        <Animated.View style={[styles.progressBarFill, { width: widthValue }]} />
+                      </View>
+                    );
+                  })}
+                </View>
+
+                {/* Author + venue info */}
+                <View style={styles.metadataLayout}>
+                  <View style={styles.userInfoBlock}>
+                    <View style={styles.avatar}>
+                      <UserIcon color="#FFF" size={16} />
+                    </View>
+                    <View>
+                      <View style={styles.usernameRow}>
+                        {currentStory.activeBadge ? (() => {
+                          const badgeObj = ACHIEVEMENTS.find(a => a.id === currentStory.activeBadge);
+                          // @ts-ignore
+                          const BadgeIcon = badgeObj ? Icons[badgeObj.iconName] : null;
+                          if (!BadgeIcon || !badgeObj) return null;
+                          return <BadgeIcon color={badgeObj.glowColor} size={14} style={{ marginRight: 6 }} />;
+                        })() : null}
+                        <Text style={styles.usernameText}>
+                          {currentUsername || ' '}
+                        </Text>
+                      </View>
+                      {venueName ? <Text style={styles.venueName}>{venueName}</Text> : null}
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <View style={styles.timeBlock}>
+                      <Text style={styles.timeText}>{calculateHoursAgo(currentStory.created_at)}h</Text>
+                    </View>
+                    {user && currentStory.user_id !== user.uid && (
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <Pressable
+                          style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16 }}
+                          onPress={() => handleHideUserPrompt(currentStory.user_id, currentUsername)}
+                        >
+                          <UserX color="#FFF" size={16} />
+                        </Pressable>
+                        <Pressable
+                          style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 16 }}
+                          onPress={handleReportStory}
+                        >
+                          <Flag color="#FFF" size={16} />
+                        </Pressable>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </View>
+
+
+
+              {/* ── Bottom controls row (unified layout for Add/Remove/React actions) ── */}
+              <View style={[
+                styles.bottomControlsContainer, 
+                { 
+                  bottom: Math.max(insets.bottom, 20),
+                  justifyContent: (canAddStory || currentStory.user_id !== user?.uid) ? 'space-between' : 'center'
+                }
+              ]}>
+                {canAddStory && (
+                  <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
+                    <Plus color="#000" size={22} />
+                  </Pressable>
+                )}
+
+                {currentStory.user_id === user?.uid ? (
+                  onRemoveStory && (
+                    <Pressable
+                      style={styles.removeButtonInline}
+                      onPress={handleRemoveStory}
+                    >
+                      <Trash2 color="#FF3B30" size={16} style={{ marginRight: 6 }} />
+                      <Text style={styles.removeButtonText}>Remove Story</Text>
+                    </Pressable>
+                  )
+                ) : (
+                  <View style={[styles.reactionContainer, { marginLeft: canAddStory ? 12 : 0 }]}>
+                    {['❤️', '🔥', '😂', '👍', '😮', '🍻'].map(emoji => (
+                      <TouchableOpacity
+                        key={emoji}
+                        style={styles.reactionButton}
+                        onPress={() => handleReactToStory(emoji)}
+                        activeOpacity={0.6}
+                      >
+                        <Text style={styles.reactionEmojiText}>{emoji}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </>
+          ) : null}
+        </Animated.View>
+      </Animated.View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+  },
   container: {
     flex: 1,
     backgroundColor: '#000',
+    overflow: 'hidden',
   },
 
   // ── Empty state ────────────────────────────────────────────────────────────
@@ -663,13 +948,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
   },
 
-  // ── Close button ──────────────────────────────────────────────────────────
-  closeButtonAbsolute: {
-    position: 'absolute',
-    right: 16,
-    zIndex: 4,
-    padding: 8,
-  },
+
 
   // ── Back button (empty state) ──────────────────────────────────────────────
   backButtonAbsolute: {
@@ -679,18 +958,20 @@ const styles = StyleSheet.create({
     padding: 8,
   },
 
-  // ── Add Story button ──────────────────────────────────────────────────────
-  controlsRow: {
+  // ── Bottom controls row (unified layout) ──────────────────────────────────
+  bottomControlsContainer: {
     position: 'absolute',
-    width: '100%',
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 4,
+    zIndex: 5,
   },
   addButtonFloating: {
     backgroundColor: '#00FFCC',
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#00FFCC',
@@ -699,29 +980,37 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 8,
   },
-
-  // ── Remove Story button ───────────────────────────────────────────────────
-  removeButton: {
-    position: 'absolute',
-    alignSelf: 'center',
-    left: '50%',
-    transform: [{ translateX: -80 }],
+  removeButtonInline: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(255,59,48,0.15)',
+    backgroundColor: 'rgba(255, 59, 48, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(255,59,48,0.5)',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 30,
-    zIndex: 5,
-    width: 160,
-    justifyContent: 'center',
+    borderColor: 'rgba(255, 59, 48, 0.3)',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 22,
   },
   removeButtonText: {
     color: '#FF3B30',
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  reactionContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  reactionButton: {
+    padding: 6,
+  },
+  reactionEmojiText: {
+    fontSize: 20,
   },
 });

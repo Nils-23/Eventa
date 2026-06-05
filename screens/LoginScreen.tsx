@@ -13,6 +13,7 @@ import {
   ScrollView,
   Animated,
   Dimensions,
+  Keyboard,
 } from 'react-native';
 import { Apple, Smartphone, ArrowLeft } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
@@ -131,6 +132,25 @@ export const LoginScreen = () => {
   const [verificationId, setVerificationId] = useState<string | null>(null);
   const [verificationCode, setVerificationCode] = useState('');
   const recaptchaVerifier = useRef(null);
+
+  // Keyboard visibility tracking
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const onApplePress = async () => {
     try {
@@ -266,25 +286,30 @@ export const LoginScreen = () => {
 
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ flex: 1 }}
         >
           <ScrollView
-            contentContainerStyle={styles.scroll}
+            contentContainerStyle={[
+              styles.scroll,
+              keyboardVisible && { justifyContent: 'flex-start' }
+            ]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             bounces={false}
           >
-            {/* Logo + Brand */}
-            <View style={styles.heroSection}>
-              <View style={styles.logoWrapper}>
+            {/* Logo + Brand (collapses when keyboard is visible to save vertical space on Android) */}
+            <View style={[styles.heroSection, keyboardVisible && { marginBottom: 12, marginTop: 8 }]}>
+              <View style={[styles.logoWrapper, keyboardVisible ? { width: 120, height: 98, marginBottom: 4 } : null]}>
                 <Image
                   source={require('../assets/EventasNewLogo.png')}
-                  style={styles.logo}
+                  style={[styles.logo, keyboardVisible ? { width: 120, height: 98 } : null]}
                   resizeMode="contain"
                 />
               </View>
-              <Text style={styles.tagline}>Sign in to discover your next vibe.</Text>
+              {!keyboardVisible && (
+                <Text style={styles.tagline}>Sign in to discover your next vibe.</Text>
+              )}
             </View>
 
             {/* Auth Buttons */}
