@@ -3,6 +3,7 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { StoryData } from '../services/storyService';
 import { useAppStore } from './useAppStore';
+import { prefetchStoriesMedia } from '../utils/mediaCache';
 
 export const useStories = () => {
   const [stories, setStories] = useState<StoryData[]>([]);
@@ -34,6 +35,10 @@ export const useStories = () => {
       
       setStories(activeStories);
       setIsLoading(false);
+      
+      // Start background prefetching of all active stories' media files
+      const mediaUrls = activeStories.map(s => s.media_url).filter(Boolean);
+      prefetchStoriesMedia(mediaUrls);
     }, (error) => {
       console.error('Error fetching stories:', error);
       setIsLoading(false);
