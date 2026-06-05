@@ -257,7 +257,7 @@ export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
   const { venues, heatPoints } = useLiveVenues();
-  const { user, selectedMapVenue, setSelectedMapVenue, isAdmin, pendingVenueAction, setPendingVenueAction } = useAppStore();
+  const { user, selectedMapVenue, setSelectedMapVenue, isAdmin, pendingVenueAction, setPendingVenueAction, unreadChatCount } = useAppStore();
   const { stories } = useStories();
 
   // ─── Region + zoom tracking ───────────────────────────────────────────────
@@ -897,6 +897,11 @@ export const MapScreen = () => {
           activeOpacity={0.7}
         >
           <MessageSquare color="#00FFCC" size={20} />
+          {unreadChatCount > 0 && (
+            <View style={styles.badgeContainer}>
+              <Text style={styles.badgeText}>{unreadChatCount}</Text>
+            </View>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.controlButton} onPress={centerMap} activeOpacity={0.7}>
@@ -1188,5 +1193,26 @@ const styles = StyleSheet.create({
     height: 1,
     width: '100%',
     backgroundColor: '#2A2A2A',
+  },
+  badgeContainer: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#FF0055',
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#121212',
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: 'bold',
+    lineHeight: 11,
+    textAlign: 'center',
   },
 });

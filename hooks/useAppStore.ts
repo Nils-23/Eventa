@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { User } from 'firebase/auth';
 import { LiveVenue } from './useLiveVenues';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface AppState {
   hasInitialized: boolean;
@@ -23,6 +24,11 @@ interface AppState {
   setPendingVenueId: (id: string | null) => void;
   pendingVenueAction: 'details' | 'chat' | null;
   setPendingVenueAction: (action: 'details' | 'chat' | null) => void;
+  unreadChatCount: number;
+  setUnreadChatCount: (count: number) => void;
+  lastViewedChats: Record<string, number>;
+  setLastViewedChats: (lastViewed: Record<string, number>) => void;
+  updateLastViewedChat: (venueId: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -46,4 +52,15 @@ export const useAppStore = create<AppState>((set) => ({
   setPendingVenueId: (pendingVenueId) => set({ pendingVenueId }),
   pendingVenueAction: null,
   setPendingVenueAction: (pendingVenueAction) => set({ pendingVenueAction }),
+  unreadChatCount: 0,
+  setUnreadChatCount: (unreadChatCount) => set({ unreadChatCount }),
+  lastViewedChats: {},
+  setLastViewedChats: (lastViewedChats) => set({ lastViewedChats }),
+  updateLastViewedChat: (venueId) => set((state) => {
+    const updated = { ...state.lastViewedChats, [venueId]: Date.now() };
+    AsyncStorage.setItem('eventas_chat_last_viewed', JSON.stringify(updated)).catch(err => {
+      console.error('Failed to save last viewed chats:', err);
+    });
+    return { lastViewedChats: updated };
+  }),
 }));
