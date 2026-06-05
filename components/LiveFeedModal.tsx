@@ -34,6 +34,7 @@ interface ChatFeedItem {
   latestUsername: string;
   timestamp: number;
   venueObj: LiveVenue;
+  latestUserId?: string;
 }
 
 export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
@@ -43,9 +44,9 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   onOpenChat,
 }) => {
   const insets = useSafeAreaInsets();
-  const [latestMessages, setLatestMessages] = useState<Record<string, { username: string; message: string; timestamp: number }>>({});
+  const [latestMessages, setLatestMessages] = useState<Record<string, { username: string; message: string; timestamp: number; userId?: string }>>({});
   const [loadingChats, setLoadingChats] = useState(true);
-  const { hiddenUsers } = useAppStore();
+  const { hiddenUsers, lastViewedChats, user } = useAppStore();
 
   // Fetch the single latest chat message for each live venue in real-time
   useEffect(() => {
@@ -76,6 +77,7 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
                   username: nonHiddenMsg.username || 'Someone',
                   message: nonHiddenMsg.message || '',
                   timestamp: nonHiddenMsg.timestamp || Date.now(),
+                  userId: nonHiddenMsg.user_id || '',
                 },
               }));
             } else {
@@ -138,6 +140,7 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
           latestUsername: msg.username,
           timestamp: msg.timestamp,
           venueObj: venue,
+          latestUserId: msg.userId,
         });
       }
     });
@@ -204,33 +207,41 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.listContent}
               showsVerticalScrollIndicator={false}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.feedCard}
-                  onPress={() => handleItemPress(item)}
-                  activeOpacity={0.8}
-                >
-                  <View style={styles.cardHeader}>
-                    <View style={styles.iconCircle}>
-                      <MessageSquare color="#00FFCC" size={18} />
+              renderItem={({ item }) => {
+                const lastViewed = lastViewedChats[item.venueId] || 0;
+                const isUnread = item.timestamp > lastViewed && item.latestUserId !== user?.uid;
+                
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.feedCard,
+                      isUnread && styles.feedCardUnread
+                    ]}
+                    onPress={() => handleItemPress(item)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.cardHeader}>
+                      <View style={styles.iconCircle}>
+                        <MessageSquare color="#00FFCC" size={18} />
+                      </View>
+                      <View style={styles.cardTitles}>
+                        <Text style={styles.cardTitle} numberOfLines={1}>
+                          {item.venueName}
+                        </Text>
+                        <Text style={styles.cardSubtitle} numberOfLines={2}>
+                          {item.latestUsername}: "{item.latestMessage}"
+                        </Text>
+                      </View>
+                      <View style={styles.metaColumn}>
+                        <Text style={styles.timeText}>
+                          {formatTimeAgo(item.timestamp)}
+                        </Text>
+                        <ChevronRight color="#444" size={16} />
+                      </View>
                     </View>
-                    <View style={styles.cardTitles}>
-                      <Text style={styles.cardTitle} numberOfLines={1}>
-                        {item.venueName}
-                      </Text>
-                      <Text style={styles.cardSubtitle} numberOfLines={2}>
-                        {item.latestUsername}: "{item.latestMessage}"
-                      </Text>
-                    </View>
-                    <View style={styles.metaColumn}>
-                      <Text style={styles.timeText}>
-                        {formatTimeAgo(item.timestamp)}
-                      </Text>
-                      <ChevronRight color="#444" size={16} />
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              )}
+                  </TouchableOpacity>
+                );
+              }}
             />
           )}
         </View>
@@ -320,6 +331,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 4,
     elevation: 3,
+  },
+  feedCardUnread: {
+    borderLeftColor: '#FF3B30',
   },
   cardHeader: {
     flexDirection: 'row',
