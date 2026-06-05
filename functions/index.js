@@ -107,44 +107,10 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
       }
       
       if (throttleKey) {
-        const parts = throttleKey.split('_');
-        if (parts.length === 2 && ['chat', 'live', 'nearby'].includes(parts[0])) {
-          const type = parts[0];
-          const venueId = parts[1];
-
-          // 1. Global Cooldown (max 1 live/nearby alert per hour across all venues)
-          if (['live', 'nearby'].includes(type)) {
-            const lastGlobalSent = cleanedThrottles['global_venue_alert'] || 0;
-            if (nowMs - lastGlobalSent < 1 * 60 * 60 * 1000) {
-              console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is throttled by global_venue_alert.`);
-              return null;
-            }
-            cleanedThrottles['global_venue_alert'] = nowMs;
-          }
-
-          // 2. Mutual Throttling (chat, live, nearby for the same venue)
-          const relatedKeys = [`chat_${venueId}`, `live_${venueId}`, `nearby_${venueId}`];
-          for (const key of relatedKeys) {
-            const lastSent = cleanedThrottles[key] || 0;
-            if (key === throttleKey) {
-              if (nowMs - lastSent < throttleDurationMs) {
-                console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is throttled.`);
-                return null;
-              }
-            } else {
-              // 1 hour mutual throttle between different types for the same venue
-              if (nowMs - lastSent < 1 * 60 * 60 * 1000) {
-                console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is mutually throttled by ${key}.`);
-                return null;
-              }
-            }
-          }
-        } else {
-          const lastSent = cleanedThrottles[throttleKey] || 0;
-          if (nowMs - lastSent < throttleDurationMs) {
-            console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is throttled.`);
-            return null;
-          }
+        const lastSent = cleanedThrottles[throttleKey] || 0;
+        if (nowMs - lastSent < throttleDurationMs) {
+          console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is throttled.`);
+          return null;
         }
         cleanedThrottles[throttleKey] = nowMs;
       }
@@ -204,7 +170,7 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
         memberId,
         `💬 Activity in ${venueName}`,
         `Activity is picking up in your event chat`,
-        { venueId },
+        { venueId, type: 'chat' },
         `chat_${venueId}`,
         1 * 60 * 60 * 1000 // 1 hour throttle
       );
@@ -325,22 +291,12 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
     // Update presence (also removes users who left)
     await presenceRef.set(newPresence);
 
-    // Signal 2: Chat Spike (10+ messages in last 10 minutes)
-    const tenMinAgo = now - 10 * 60 * 1000;
-    const recentMessagesSnap = await rtdb.ref(`venue_chats/${venue.id}`)
-      .orderByChild('timestamp')
-      .startAt(tenMinAgo)
-      .once('value');
-    const recentMessagesCount = recentMessagesSnap.exists() ? Object.keys(recentMessagesSnap.val()).length : 0;
-
-    // Signal 3: Venue marked "crazy"
+    // Signal 2: Venue marked "crazy"
     const isVenueMarkedCrazy = venue.isCrazy === true || venue.activityLevel === 'Crazy' || userCount > CRAZY_THRESHOLD;
 
     // Determine if Live Activity triggers
     if (joinsCount >= 5) {
       liveNotificationMessage = `👀 ${userCount} people are at ${venue.name}`;
-    } else if (recentMessagesCount >= 10) {
-      liveNotificationMessage = `🔥 ${venue.name} is heating up right now`;
     } else if (isVenueMarkedCrazy) {
       liveNotificationMessage = `🎉 Something’s happening at ${venue.name}`;
     }
@@ -361,7 +317,7 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
           user.id,
           `🔥 Live Activity`,
           liveNotificationMessage,
-          { venueId: venue.id },
+          { venueId: venue.id, type: 'live' },
           `live_${venue.id}`,
           4 * 60 * 60 * 1000 // 4 hours throttle
         );
@@ -389,7 +345,7 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
             userId,
             `📍 Popular nearby`,
             `Something popular happening near you`,
-            { venueId: venue.id },
+            { venueId: venue.id, type: 'nearby' },
             `nearby_${venue.id}`,
             6 * 60 * 60 * 1000 // 6 hours throttle
           );

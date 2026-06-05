@@ -140,7 +140,9 @@ async function runTests() {
   console.log("Daily rate limit check passed!");
 
   // Reset rate limits for further testing
-  await db.collection('users').doc(testUserId).update({
+  await db.collection('users').doc(testUserId).set({
+    username: "Test Notification User",
+    expoPushToken: "ExponentPushToken[test-user-token-12345]",
     notificationCountToday: 0,
     lastNotificationDate: "",
     notificationThrottles: {}
@@ -164,7 +166,9 @@ async function runTests() {
   console.log("Event/Venue throttling passed!");
 
   // Reset rate limits & throttles
-  await db.collection('users').doc(testUserId).update({
+  await db.collection('users').doc(testUserId).set({
+    username: "Test Notification User",
+    expoPushToken: "ExponentPushToken[test-user-token-12345]",
     notificationCountToday: 0,
     lastNotificationDate: "",
     notificationThrottles: {}
@@ -197,7 +201,7 @@ async function runTests() {
         memberId,
         `💬 Activity in Test VIP Lounge`,
         `Activity is picking up in your event chat`,
-        { venueId: testVenueId },
+        { venueId: testVenueId, type: 'chat' },
         `chat_${testVenueId}`,
         1 * 60 * 60 * 1000
       );
@@ -212,7 +216,9 @@ async function runTests() {
   console.log("Social chat activity notification passed!");
 
   // Reset rate limits & throttles
-  await db.collection('users').doc(testUserId).update({
+  await db.collection('users').doc(testUserId).set({
+    username: "Test Notification User",
+    expoPushToken: "ExponentPushToken[test-user-token-12345]",
     notificationCountToday: 0,
     lastNotificationDate: "",
     notificationThrottles: {}
@@ -332,20 +338,10 @@ async function runTests() {
       }
       await presenceRef.set(newPresence);
 
-      // Chat Spike
-      const tenMinAgo = now - 10 * 60 * 1000;
-      const recentMessagesSnap = await rtdb.ref(`venue_chats/${venue.id}`)
-        .orderByChild('timestamp')
-        .startAt(tenMinAgo)
-        .once('value');
-      const recentMessagesCount = recentMessagesSnap.exists() ? Object.keys(recentMessagesSnap.val()).length : 0;
-
       const isVenueMarkedCrazy = venue.isCrazy === true || venue.activityLevel === 'Crazy' || userCount > CRAZY_THRESHOLD;
 
       if (joinsCount >= 5) {
         liveNotificationMessage = `👀 ${userCount} people are at ${venue.name}`;
-      } else if (recentMessagesCount >= 10) {
-        liveNotificationMessage = `🔥 ${venue.name} is heating up right now`;
       } else if (isVenueMarkedCrazy) {
         liveNotificationMessage = `🎉 Something’s happening at ${venue.name}`;
       }
@@ -360,7 +356,7 @@ async function runTests() {
             user.id,
             `🔥 Live Activity`,
             liveNotificationMessage,
-            { venueId: venue.id },
+            { venueId: venue.id, type: 'live' },
             `live_${venue.id}`,
             4 * 60 * 60 * 1000
           );
@@ -384,7 +380,7 @@ async function runTests() {
               userId,
               `📍 Popular nearby`,
               `Something popular happening near you`,
-              { venueId: venue.id },
+              { venueId: venue.id, type: 'nearby' },
               `nearby_${venue.id}`,
               6 * 60 * 60 * 1000
             );
@@ -423,7 +419,9 @@ async function runTests() {
   console.log("Proximity alert test passed!");
 
   // Reset rate limits/throttles
-  await db.collection('users').doc(testUserId).update({
+  await db.collection('users').doc(testUserId).set({
+    username: "Test Notification User",
+    expoPushToken: "ExponentPushToken[test-user-token-12345]",
     notificationCountToday: 0,
     lastNotificationDate: "",
     notificationThrottles: {}
@@ -456,7 +454,9 @@ async function runTests() {
   console.log("Live activity: Join spike test passed!");
 
   // Reset rate limits/throttles
-  await db.collection('users').doc(testUserId).update({
+  await db.collection('users').doc(testUserId).set({
+    username: "Test Notification User",
+    expoPushToken: "ExponentPushToken[test-user-token-12345]",
     notificationCountToday: 0,
     lastNotificationDate: "",
     notificationThrottles: {}
@@ -465,38 +465,12 @@ async function runTests() {
   // Clean simulated locations
   await rtdb.ref('simulated_locations').set(null);
 
-  // 6c. Test Live Activity: Chat Spike (10+ messages in last 10 minutes)
-  console.log("\n6c. Testing Live Activity: Chat Spike...");
-  // Push 11 chat messages
-  const chatsRef = rtdb.ref(`venue_chats/${testVenueId}`);
-  await chatsRef.set(null);
-  for (let i = 0; i < 11; i++) {
-    await chatsRef.push().set({
-      user_id: `sender_${i}`,
-      username: `User ${i}`,
-      message: `Message ${i}`,
-      timestamp: Date.now()
-    });
-  }
-
-  await simulateScheduledNotification();
-  console.log(`Sent pushes count: ${sentPushes.length} (Expected: 1 - chat spike)`);
-  if (sentPushes.length !== 1 || !sentPushes[0].body.includes("heating up right now")) {
-    throw new Error("Live activity: Chat spike test failed!");
-  }
-  console.log("Live activity: Chat spike test passed!");
-
-  // Reset rate limits/throttles
-  await db.collection('users').doc(testUserId).update({
-    notificationCountToday: 0,
-    lastNotificationDate: "",
-    notificationThrottles: {}
-  });
+  // 6c. Test Live Activity: Chat Spike removed (now decoupled from hot venues notification).
 
   // 6d. Test Live Activity: Crazy Status
   console.log("\n6d. Testing Live Activity: Crazy Status...");
   // Clear chats
-  await chatsRef.set(null);
+  await rtdb.ref(`venue_chats/${testVenueId}`).set(null);
   // Mark venue crazy
   await db.collection('venues').doc(testVenueId).update({
     isCrazy: true
