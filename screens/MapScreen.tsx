@@ -257,7 +257,7 @@ export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
   const { venues, heatPoints } = useLiveVenues();
-  const { user, selectedMapVenue, setSelectedMapVenue, isAdmin } = useAppStore();
+  const { user, selectedMapVenue, setSelectedMapVenue, isAdmin, pendingVenueAction, setPendingVenueAction } = useAppStore();
   const { stories } = useStories();
 
   // ─── Region + zoom tracking ───────────────────────────────────────────────
@@ -373,6 +373,14 @@ export const MapScreen = () => {
       }, { duration: 1000 });
     }
   }, [selectedMapVenue]);
+
+  useEffect(() => {
+    if (selectedMapVenue && pendingVenueAction === 'chat') {
+      setChatVenue({ id: selectedMapVenue.id, name: selectedMapVenue.name });
+      setIsChatVisible(true);
+      setPendingVenueAction(null);
+    }
+  }, [selectedMapVenue, pendingVenueAction, setPendingVenueAction]);
 
   useEffect(() => {
     let isMounted = true;
