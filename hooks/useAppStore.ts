@@ -19,6 +19,10 @@ interface AppState {
   setHasAgreedToTerms: (value: boolean) => void;
   hiddenUsers: string[];
   setHiddenUsers: (hiddenUsers: string[]) => void;
+  pendingVenueId: string | null;
+  setPendingVenueId: (id: string | null) => void;
+  pendingVenueAction: 'details' | 'chat' | null;
+  setPendingVenueAction: (action: 'details' | 'chat' | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -38,4 +42,8 @@ export const useAppStore = create<AppState>((set) => ({
   setHasAgreedToTerms: (hasAgreedToTerms) => set({ hasAgreedToTerms }),
   hiddenUsers: [],
   setHiddenUsers: (hiddenUsers) => set({ hiddenUsers }),
+  pendingVenueId: null,
+  setPendingVenueId: (pendingVenueId) => set({ pendingVenueId }),
+  pendingVenueAction: null,
+  setPendingVenueAction: (pendingVenueAction) => set({ pendingVenueAction }),
 }));

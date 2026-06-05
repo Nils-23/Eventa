@@ -243,17 +243,40 @@ async function runTests() {
     const simLocsSnap = await rtdb.ref('simulated_locations').once('value');
     const simLocs = simLocsSnap.exists() ? simLocsSnap.val() : {};
 
-    const allLocs = {};
-    for (const [uid, loc] of Object.entries(realLocs)) {
-      allLocs[uid] = { ...loc, user_id: uid };
-    }
-    for (const [uid, loc] of Object.entries(simLocs)) {
-      allLocs[uid] = { ...loc, user_id: uid };
+    // Load simulation settings from Firestore
+    let simEnabled = true;
+    let simThreshold = 100;
+    try {
+      const simSettingsDoc = await db.collection('settings').doc('simulation').get();
+      if (simSettingsDoc.exists) {
+        const data = simSettingsDoc.data();
+        if (data.enabled !== undefined) simEnabled = data.enabled;
+        if (data.threshold !== undefined) simThreshold = data.threshold;
+      }
+    } catch (err) {
+      console.warn('Failed to load simulation settings:', err);
     }
 
-    const activeLocations = Object.values(allLocs).filter(loc => 
-      loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS)
-    );
+    // Get active real locations
+    const activeRealLocs = Object.entries(realLocs)
+      .map(([uid, loc]) => ({ ...loc, user_id: uid }))
+      .filter(loc => loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS));
+    const activeRealCount = activeRealLocs.length;
+
+    const includeSimulated = simEnabled && (activeRealCount < simThreshold);
+
+    // Get active simulated locations
+    const activeSimLocs = Object.entries(simLocs)
+      .map(([uid, loc]) => ({ ...loc, user_id: uid }))
+      .filter(loc => loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS));
+    const isEngineActive = activeSimLocs.length > 0;
+
+    // Build active locations list mirroring app behavior
+    const activeLocations = [];
+    activeLocations.push(...activeRealLocs);
+    if (includeSimulated) {
+      activeLocations.push(...activeSimLocs);
+    }
 
     const usersSnap = await db.collection('users').where('expoPushToken', '!=', null).get();
     const allUsersWithToken = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -262,10 +285,31 @@ async function runTests() {
       if (venue.id !== testVenueId) continue; // Only test our test venue
 
       const currentUsersAtVenue = activeLocations
-        .filter(loc => getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS)
+        .filter(loc => {
+          if (loc.venueId) return loc.venueId === venue.id;
+          return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
+        })
         .map(loc => loc.user_id || 'unknown')
         .filter(uid => uid !== 'unknown');
-      const userCount = currentUsersAtVenue.length;
+
+      // Calculate user count exactly like the app (including simulated defaults)
+      const realUserCount = activeRealLocs.filter(loc => {
+        if (loc.venueId) return loc.venueId === venue.id;
+        return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
+      }).length;
+
+      const rtdbSimCount = activeSimLocs.filter(loc => {
+        if (loc.venueId) return loc.venueId === venue.id;
+        return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
+      }).length;
+
+      let simUserCount = 0;
+      if (includeSimulated) {
+        const customAdminCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
+        simUserCount = isEngineActive ? Math.max(rtdbSimCount, customAdminCount) : customAdminCount;
+      }
+
+      const userCount = realUserCount + simUserCount;
 
       let liveNotificationMessage = null;
       let joinsCount = 0;
@@ -299,7 +343,7 @@ async function runTests() {
       const isVenueMarkedCrazy = venue.isCrazy === true || venue.activityLevel === 'Crazy' || userCount > CRAZY_THRESHOLD;
 
       if (joinsCount >= 5) {
-        liveNotificationMessage = `👀 ${joinsCount} people just joined ${venue.name}`;
+        liveNotificationMessage = `👀 ${userCount} people are at ${venue.name}`;
       } else if (recentMessagesCount >= 10) {
         liveNotificationMessage = `🔥 ${venue.name} is heating up right now`;
       } else if (isVenueMarkedCrazy) {
@@ -406,7 +450,7 @@ async function runTests() {
 
   await simulateScheduledNotification();
   console.log(`Sent pushes count: ${sentPushes.length} (Expected: 1 - join spike)`);
-  if (sentPushes.length !== 1 || !sentPushes[0].body.includes("people just joined")) {
+  if (sentPushes.length !== 1 || !sentPushes[0].body.includes("people are at")) {
     throw new Error("Live activity: Join spike test failed!");
   }
   console.log("Live activity: Join spike test passed!");

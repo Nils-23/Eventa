@@ -21,14 +21,26 @@ Notifications.setNotificationHandler({
 
 export function usePushNotifications() {
   const [expoPushToken, setExpoPushToken] = useState<string>('');
-  const { user, setSelectedMapVenue } = useAppStore();
+  const { user, setSelectedMapVenue, pendingVenueId, setPendingVenueId, setPendingVenueAction } = useAppStore();
   const navigation = useNavigation<any>();
-  const { venues } = useLiveVenues();
+  const { venues, isLoading } = useLiveVenues();
   const venuesRef = useRef(venues);
 
   useEffect(() => {
     venuesRef.current = venues;
   }, [venues]);
+
+  useEffect(() => {
+    if (pendingVenueId && !isLoading) {
+      const venue = venues.find(v => v.id === pendingVenueId);
+      if (venue) {
+        setSelectedMapVenue(venue);
+      } else {
+        console.warn(`Venue ${pendingVenueId} not found in loaded venues`);
+      }
+      setPendingVenueId(null);
+    }
+  }, [venues, isLoading, pendingVenueId, setSelectedMapVenue, setPendingVenueId]);
 
   useEffect(() => {
     registerForPushNotificationsAsync().then(token => {
@@ -40,22 +52,32 @@ export function usePushNotifications() {
       }
     });
 
+    // Handle notification response if app was cold-started from one
+    Notifications.getLastNotificationResponseAsync().then(response => {
+      if (response) {
+        const data = response.notification.request.content.data;
+        if (data?.venueId) {
+          setPendingVenueId(data.venueId);
+          setPendingVenueAction(data.type === 'chat' ? 'chat' : 'details');
+          navigation.navigate('Main', { screen: 'Map' });
+        }
+      }
+    });
+
     const subscription = Notifications.addNotificationResponseReceivedListener(response => {
       console.log('Notification tapped:', response);
       const data = response.notification.request.content.data;
       if (data?.venueId) {
-        const venue = venuesRef.current.find(v => v.id === data.venueId);
-        if (venue) {
-          setSelectedMapVenue(venue);
-          navigation.navigate('Main', { screen: 'Map' });
-        }
+        setPendingVenueId(data.venueId);
+        setPendingVenueAction(data.type === 'chat' ? 'chat' : 'details');
+        navigation.navigate('Main', { screen: 'Map' });
       }
     });
 
     return () => {
       subscription.remove();
     };
-  }, [user?.uid, navigation, setSelectedMapVenue]);
+  }, [user?.uid, navigation, setPendingVenueId, setPendingVenueAction]);
 
   const saveTokenToFirestore = async (userId: string, token: string) => {
     try {

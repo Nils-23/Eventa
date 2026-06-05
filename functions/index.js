@@ -107,10 +107,44 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
       }
       
       if (throttleKey) {
-        const lastSent = cleanedThrottles[throttleKey] || 0;
-        if (nowMs - lastSent < throttleDurationMs) {
-          console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is throttled.`);
-          return null;
+        const parts = throttleKey.split('_');
+        if (parts.length === 2 && ['chat', 'live', 'nearby'].includes(parts[0])) {
+          const type = parts[0];
+          const venueId = parts[1];
+
+          // 1. Global Cooldown (max 1 live/nearby alert per hour across all venues)
+          if (['live', 'nearby'].includes(type)) {
+            const lastGlobalSent = cleanedThrottles['global_venue_alert'] || 0;
+            if (nowMs - lastGlobalSent < 1 * 60 * 60 * 1000) {
+              console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is throttled by global_venue_alert.`);
+              return null;
+            }
+            cleanedThrottles['global_venue_alert'] = nowMs;
+          }
+
+          // 2. Mutual Throttling (chat, live, nearby for the same venue)
+          const relatedKeys = [`chat_${venueId}`, `live_${venueId}`, `nearby_${venueId}`];
+          for (const key of relatedKeys) {
+            const lastSent = cleanedThrottles[key] || 0;
+            if (key === throttleKey) {
+              if (nowMs - lastSent < throttleDurationMs) {
+                console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is throttled.`);
+                return null;
+              }
+            } else {
+              // 1 hour mutual throttle between different types for the same venue
+              if (nowMs - lastSent < 1 * 60 * 60 * 1000) {
+                console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is mutually throttled by ${key}.`);
+                return null;
+              }
+            }
+          }
+        } else {
+          const lastSent = cleanedThrottles[throttleKey] || 0;
+          if (nowMs - lastSent < throttleDurationMs) {
+            console.log(`Notification for user ${userId} with throttleKey ${throttleKey} is throttled.`);
+            return null;
+          }
         }
         cleanedThrottles[throttleKey] = nowMs;
       }
@@ -200,23 +234,40 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
   const simLocsSnap = await rtdb.ref('simulated_locations').once('value');
   const simLocs = simLocsSnap.exists() ? simLocsSnap.val() : {};
 
-  // Merge locations and tag them with user_id
-  const allLocs = {};
-  if (realLocs) {
-    for (const [uid, loc] of Object.entries(realLocs)) {
-      allLocs[uid] = { ...loc, user_id: uid };
+  // Load simulation settings from Firestore
+  let simEnabled = true;
+  let simThreshold = 100;
+  try {
+    const simSettingsDoc = await db.collection('settings').doc('simulation').get();
+    if (simSettingsDoc.exists) {
+      const data = simSettingsDoc.data();
+      if (data.enabled !== undefined) simEnabled = data.enabled;
+      if (data.threshold !== undefined) simThreshold = data.threshold;
     }
-  }
-  if (simLocs) {
-    for (const [uid, loc] of Object.entries(simLocs)) {
-      allLocs[uid] = { ...loc, user_id: uid };
-    }
+  } catch (err) {
+    console.warn('Failed to load simulation settings:', err);
   }
 
-  // Filter active locations (under 2 hours stale)
-  const activeLocations = Object.values(allLocs).filter(loc => 
-    loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS)
-  );
+  // Get active real locations
+  const activeRealLocs = Object.entries(realLocs)
+    .map(([uid, loc]) => ({ ...loc, user_id: uid }))
+    .filter(loc => loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS));
+  const activeRealCount = activeRealLocs.length;
+
+  const includeSimulated = simEnabled && (activeRealCount < simThreshold);
+
+  // Get active simulated locations
+  const activeSimLocs = Object.entries(simLocs)
+    .map(([uid, loc]) => ({ ...loc, user_id: uid }))
+    .filter(loc => loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS));
+  const isEngineActive = activeSimLocs.length > 0;
+
+  // Build active locations list mirroring app behavior
+  const activeLocations = [];
+  activeLocations.push(...activeRealLocs);
+  if (includeSimulated) {
+    activeLocations.push(...activeSimLocs);
+  }
 
   // Load all users with push tokens once
   const usersSnap = await db.collection('users').where('expoPushToken', '!=', null).get();
@@ -225,10 +276,31 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
   for (const venue of venues) {
     // Determine active users (real + sim) currently at this venue
     const currentUsersAtVenue = activeLocations
-      .filter(loc => getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS)
+      .filter(loc => {
+        if (loc.venueId) return loc.venueId === venue.id;
+        return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
+      })
       .map(loc => loc.user_id || 'unknown')
       .filter(uid => uid !== 'unknown');
-    const userCount = currentUsersAtVenue.length;
+
+    // Calculate user count exactly like the app (including simulated defaults)
+    const realUserCount = activeRealLocs.filter(loc => {
+      if (loc.venueId) return loc.venueId === venue.id;
+      return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
+    }).length;
+
+    const rtdbSimCount = activeSimLocs.filter(loc => {
+      if (loc.venueId) return loc.venueId === venue.id;
+      return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
+    }).length;
+
+    let simUserCount = 0;
+    if (includeSimulated) {
+      const customAdminCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
+      simUserCount = isEngineActive ? Math.max(rtdbSimCount, customAdminCount) : customAdminCount;
+    }
+
+    const userCount = realUserCount + simUserCount;
 
     // Evaluate Live Activity signals
     let liveNotificationMessage = null;
@@ -266,7 +338,7 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
 
     // Determine if Live Activity triggers
     if (joinsCount >= 5) {
-      liveNotificationMessage = `👀 ${joinsCount} people just joined ${venue.name}`;
+      liveNotificationMessage = `👀 ${userCount} people are at ${venue.name}`;
     } else if (recentMessagesCount >= 10) {
       liveNotificationMessage = `🔥 ${venue.name} is heating up right now`;
     } else if (isVenueMarkedCrazy) {
