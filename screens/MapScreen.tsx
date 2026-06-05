@@ -740,33 +740,42 @@ export const MapScreen = () => {
           />
         )}
         {/* LiveVenue markers */}
-        {venues.map((venue) => {
-          const venueStories = stories.filter(s => s.venue_id === venue.id);
-          const hasStories = venueStories.length > 0;
-          const pinColor = hasStories ? "#FF00CC" : "#00FFCC"; // Magenta if stories exist
+        {venues
+          .slice()
+          .sort((a, b) => {
+            const aHasStories = stories.some(s => s.venue_id === a.id);
+            const bHasStories = stories.some(s => s.venue_id === b.id);
+            if (aHasStories && !bHasStories) return 1;
+            if (!aHasStories && bHasStories) return -1;
+            return 0;
+          })
+          .map((venue) => {
+            const venueStories = stories.filter(s => s.venue_id === venue.id);
+            const hasStories = venueStories.length > 0;
+            const pinColor = hasStories ? "#FF00CC" : "#00FFCC"; // Magenta if stories exist
 
-          return (
-            <Marker
-              key={venue.id}
-              coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleMarkerPress(venue);
-              }}
-              tracksViewChanges={trackMarkerChanges}
-              zIndex={100} // Force elevation above the heatmap
-              anchor={{ x: 0.5, y: 1 }} // Pin tip at exact coordinate
-            >
-              <View style={styles.markerContainer}>
-                {/* Sharp high-contrast pin without fuzzy glow */}
-                <View style={[styles.pinBubble, { backgroundColor: pinColor }]}>
-                  <MapPin color="#000" size={14} fill="#000" />
+            return (
+              <Marker
+                key={venue.id}
+                coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleMarkerPress(venue);
+                }}
+                tracksViewChanges={trackMarkerChanges}
+                zIndex={hasStories ? 200 : 100} // Prioritize venues with stories, and force elevation above heatmap
+                anchor={{ x: 0.5, y: 1 }} // Pin tip at exact coordinate
+              >
+                <View style={styles.markerContainer}>
+                  {/* Sharp high-contrast pin without fuzzy glow */}
+                  <View style={[styles.pinBubble, { backgroundColor: pinColor }]}>
+                    <MapPin color="#000" size={14} fill="#000" />
+                  </View>
+                  <View style={[styles.pinArrow, { borderTopColor: pinColor }]} />
                 </View>
-                <View style={[styles.pinArrow, { borderTopColor: pinColor }]} />
-              </View>
-            </Marker>
-          );
-        })}
+              </Marker>
+            );
+          })}
       </MapView>
 
       {/* Story Upload Overlay */}
