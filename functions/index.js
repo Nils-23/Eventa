@@ -544,17 +544,18 @@ exports.registerInstall = functions.https.onCall(async (data, context) => {
     });
 
     // 4. Run validation & anti-fraud rules
-    const validationResult = await db.runTransaction(async (transaction) => {
-      // Rule 1: IP Velocity rate limit (max 3 confirmed installs per IP per 10 minutes)
-      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-      const ipSnap = await transaction.get(
-        db.collection('installs')
-          .where('ip', '==', ip)
-          .where('status', '==', 'confirmed')
-          .where('timestamp', '>=', tenMinutesAgo)
-      );
+    // Rule 1: IP Velocity rate limit (max 3 confirmed installs per IP per 10 minutes)
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const ipSnap = await db.collection('installs')
+      .where('ip', '==', ip)
+      .where('status', '==', 'confirmed')
+      .where('timestamp', '>=', tenMinutesAgo)
+      .get();
 
-      if (ipSnap.size >= 3) {
+    const isIpVelocityLimitReached = ipSnap.size >= 3;
+
+    const validationResult = await db.runTransaction(async (transaction) => {
+      if (isIpVelocityLimitReached) {
         return { status: 'invalid', reason: 'ip_velocity_limit' };
       }
 
@@ -613,6 +614,97 @@ exports.registerInstall = functions.https.onCall(async (data, context) => {
     } catch (_) {}
     throw new functions.https.HttpsError('internal', 'Internal error registering install: ' + error.message);
   }
+});
+
+// 👥 User Account Creation Trigger - Attributes new signups to affiliate creators
+exports.onUserCreated = functions.firestore
+  .document('users/{userId}')
+  .onCreate(async (snap, context) => {
+    const userData = snap.data();
+    if (!userData) return;
+
+    const deviceId = userData.deviceId;
+    if (!deviceId) {
+      console.log(`No deviceId for new user ${context.params.userId}, skipping creator attribution.`);
+      return;
+    }
+
+    try {
+      // Look up install record for this device
+      const installDoc = await db.collection('installs').doc(deviceId).get();
+      if (!installDoc.exists) {
+        console.log(`No install record found for device ${deviceId}.`);
+        return;
+      }
+
+      const installData = installDoc.data();
+      if (installData.status === 'confirmed' && installData.creatorId) {
+        const creatorId = installData.creatorId;
+        const creatorRef = db.collection('creators').doc(creatorId);
+
+        console.log(`Attributing user ${context.params.userId} to creator ${creatorId}`);
+
+        // Increment totalSignups for this creator
+        await db.runTransaction(async (transaction) => {
+          const creatorSnap = await transaction.get(creatorRef);
+          if (creatorSnap.exists) {
+            const totalSignups = creatorSnap.data().totalSignups || 0;
+            transaction.update(creatorRef, {
+              totalSignups: totalSignups + 1
+            });
+          }
+        });
+
+        // Update user document with the creatorId and referralCode
+        await snap.ref.update({
+          referredByCreator: creatorId,
+          creatorReferralCode: installData.referralCode || null
+        });
+
+        console.log(`Successfully updated creator stats and user record for user ${context.params.userId}`);
+      } else {
+        console.log(`Install status is ${installData.status} or creatorId is missing for device ${deviceId}. Skipping signup attribution.`);
+      }
+    } catch (error) {
+      console.error(`Error in onUserCreated trigger for user ${context.params.userId}:`, error);
+    }
+  });
+
+// 💻 Simulation helper to simulate user signup from Admin referrers dashboard
+exports.simulateUserSignup = functions.https.onCall(async (data, context) => {
+  // Only allow admin users to call this
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
+  }
+
+  // Verify admin status
+  const callerRef = db.collection('users').doc(context.auth.uid);
+  const callerSnap = await callerRef.get();
+  if (!callerSnap.exists || callerSnap.data().isAdmin !== true) {
+    throw new functions.https.HttpsError('permission-denied', 'Only admins can simulate signups');
+  }
+
+  const { deviceId } = data;
+  if (!deviceId) {
+    throw new functions.https.HttpsError('invalid-argument', 'deviceId is required');
+  }
+
+  const mockUid = `mock_user_${Date.now()}`;
+  const userRef = db.collection('users').doc(mockUid);
+
+  await userRef.set({
+    user_id: mockUid,
+    username: `SimUser_${Math.floor(1000 + Math.random() * 9000)}`,
+    created_at: admin.firestore.FieldValue.serverTimestamp(),
+    last_active: admin.firestore.FieldValue.serverTimestamp(),
+    points: 0,
+    hasAttendedFirstVenue: false,
+    agreedToTerms: true,
+    termsAgreementDate: admin.firestore.FieldValue.serverTimestamp(),
+    deviceId: deviceId
+  });
+
+  return { success: true, userId: mockUid };
 });
 
 // 🔄 5. Scheduled Recurring Story Handler

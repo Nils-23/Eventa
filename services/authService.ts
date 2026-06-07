@@ -67,6 +67,7 @@ export const createUserProfile = async (user: User) => {
   try {
     const userRef = doc(firestore, 'users', user.uid);
     const referredBy = await AsyncStorage.getItem('referredBy');
+    const deviceId = await AsyncStorage.getItem('deviceId');
     const userData: any = {
       user_id: user.uid,
       username: generateRandomUsername(),
@@ -79,6 +80,9 @@ export const createUserProfile = async (user: User) => {
     };
     if (referredBy) {
       userData.referredBy = referredBy;
+    }
+    if (deviceId) {
+      userData.deviceId = deviceId;
     }
     await setDoc(userRef, userData);
     if (referredBy) {

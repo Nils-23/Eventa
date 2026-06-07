@@ -75,7 +75,7 @@ const StoryMediaItem: React.FC<StoryMediaItemProps> = ({
         key={`video_${story.id}`}
         source={{ uri: cachedUri }}
         style={StyleSheet.absoluteFillObject}
-        resizeMode={ResizeMode.COVER}
+        resizeMode={ResizeMode.CONTAIN}
         shouldPlay={isActive && !isPaused && isVisible}
         isLooping={false}
         volume={1.0}
@@ -95,7 +95,7 @@ const StoryMediaItem: React.FC<StoryMediaItemProps> = ({
         key={`img_${story.id}`}
         source={{ uri: cachedUri }}
         style={StyleSheet.absoluteFillObject}
-        resizeMode="cover"
+        resizeMode="contain"
         onLoad={onImageLoad}
         onError={onVideoError}
       />
