@@ -14,6 +14,7 @@ interface Creator {
   referralCode: string;
   totalInstalls?: number;
   validInstalls?: number;
+  totalSignups?: number;
 }
 
 interface InstallLog {
@@ -57,6 +58,7 @@ export const AdminReferralsScreen = () => {
   const [simIsDevice, setSimIsDevice] = useState(true);
   const [isSimulatingClick, setIsSimulatingClick] = useState(false);
   const [isSimulatingOpen, setIsSimulatingOpen] = useState(false);
+  const [isSimulatingSignup, setIsSimulatingSignup] = useState(false);
 
   // Load Real-time Data
   useEffect(() => {
@@ -130,6 +132,7 @@ export const AdminReferralsScreen = () => {
         referralCode: cleanCode,
         totalInstalls: 0,
         validInstalls: 0,
+        totalSignups: 0,
         createdAt: serverTimestamp()
       });
 
@@ -237,9 +240,6 @@ export const AdminReferralsScreen = () => {
         });
       }
 
-      // Generate a new random Device ID for next simulation to prevent duplicate blocks
-      generateRandomSimDeviceId();
-
     } catch (error: any) {
       console.error("Simulation open error:", error);
       Toast.show({
@@ -249,6 +249,33 @@ export const AdminReferralsScreen = () => {
       });
     } finally {
       setIsSimulatingOpen(false);
+    }
+  };
+
+  const handleSimulateSignup = async () => {
+    setIsSimulatingSignup(true);
+    try {
+      const simulateUserSignupFn = httpsCallable(functions, 'simulateUserSignup');
+      const response = await simulateUserSignupFn({
+        deviceId: simDeviceId
+      });
+      const result = response.data as { success: boolean; userId: string };
+      if (result.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'User Profile Created!',
+          text2: `Mock user created with ID ${result.userId.substring(0, 10)}...`
+        });
+      }
+    } catch (error: any) {
+      console.error("Simulation signup error:", error);
+      Toast.show({
+        type: 'error',
+        text1: 'Callable Failed',
+        text2: error.message || 'Simulation signup error.'
+      });
+    } finally {
+      setIsSimulatingSignup(false);
     }
   };
 
@@ -267,6 +294,7 @@ export const AdminReferralsScreen = () => {
           referralCode: creator.referralCode,
           totalInstalls: 0,
           validInstalls: 0,
+          totalSignups: 0,
           createdAt: serverTimestamp()
         });
       }
@@ -301,6 +329,7 @@ export const AdminReferralsScreen = () => {
   // Calculate aggregates
   const aggTotalInstalls = creators.reduce((acc, c) => acc + (c.totalInstalls || 0), 0);
   const aggValidInstalls = creators.reduce((acc, c) => acc + (c.validInstalls || 0), 0);
+  const aggTotalSignups = creators.reduce((acc, c) => acc + (c.totalSignups || 0), 0);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -323,11 +352,15 @@ export const AdminReferralsScreen = () => {
         </View>
         <View style={styles.statCard}>
           <Text style={[styles.statVal, { color: '#FF00CC' }]}>{aggTotalInstalls}</Text>
-          <Text style={styles.statLabel}>Total Attempts</Text>
+          <Text style={styles.statLabel}>Attempts</Text>
         </View>
         <View style={styles.statCard}>
           <Text style={[styles.statVal, { color: '#00FFCC' }]}>{aggValidInstalls}</Text>
-          <Text style={styles.statLabel}>Valid Installs</Text>
+          <Text style={styles.statLabel}>Valid</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={[styles.statVal, { color: '#3399FF' }]}>{aggTotalSignups}</Text>
+          <Text style={styles.statLabel}>Signups</Text>
         </View>
       </View>
 
@@ -398,6 +431,11 @@ export const AdminReferralsScreen = () => {
                     </View>
 
                     <View style={styles.creatorMetrics}>
+                      <View style={styles.metricItem}>
+                        <Text style={styles.metricVal}>{creator.totalSignups || 0}</Text>
+                        <Text style={styles.metricLabel}>Signups</Text>
+                      </View>
+                      <View style={styles.metricDivider} />
                       <View style={styles.metricItem}>
                         <Text style={styles.metricVal}>{creator.validInstalls || 0}</Text>
                         <Text style={styles.metricLabel}>Valid</Text>
@@ -636,6 +674,27 @@ export const AdminReferralsScreen = () => {
                       <>
                         <CheckCircle color="#000" size={16} />
                         <Text style={[styles.actionButtonText, { color: '#000' }]}>Simulate App Install Open</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.simFlowCard}>
+                  <Text style={styles.simStepTitle}>Step C: Simulate User Sign Up (Account Created)</Text>
+                  <Text style={styles.simStepDesc}>
+                    Simulates the user completing onboarding terms and creating a profile. Invokes the signup trigger.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: '#3399FF' }]}
+                    onPress={handleSimulateSignup}
+                    disabled={isSimulatingSignup}
+                  >
+                    {isSimulatingSignup ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <>
+                        <Users color="#FFF" size={16} />
+                        <Text style={styles.actionButtonText}>Simulate User Sign Up</Text>
                       </>
                     )}
                   </TouchableOpacity>

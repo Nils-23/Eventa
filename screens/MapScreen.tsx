@@ -10,7 +10,7 @@ import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
-import { uploadStoryMedia, createStory } from '../services/storyService';
+import { uploadStoryMedia, createStory, deleteStory } from '../services/storyService';
 import { getDistanceInMeters } from '../utils/locationUtils';
 import { useAppStore } from '../hooks/useAppStore';
 import { VenueChat } from '../components/VenueChat';
@@ -653,6 +653,24 @@ export const MapScreen = () => {
     if (selectedMapVenue) executeStoryUpload(selectedMapVenue as LiveVenue);
   };
 
+  const handleRemoveStory = async (storyId: string) => {
+    try {
+      await deleteStory(storyId);
+      Toast.show({
+        type: 'success',
+        text1: 'Story Deleted',
+        text2: 'Your story has been removed.'
+      });
+    } catch (error) {
+      console.warn('Delete Story Error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Delete Failed',
+        text2: getFriendlyErrorMessage(error),
+      });
+    }
+  };
+
   const closestLiveVenue = useMemo(() => {
     if (!userLocation || !venues.length) return { venue: null, distance: Infinity };
     let minDist = Infinity;
@@ -808,6 +826,7 @@ export const MapScreen = () => {
           venueName={selectedMapVenue.name}
           canAddStory={Boolean(isNearLiveVenue)}
           onAddStory={handleAddStory}
+          onRemoveStory={handleRemoveStory}
         />
       )}
 

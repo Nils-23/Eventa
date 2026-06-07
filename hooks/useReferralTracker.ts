@@ -35,7 +35,7 @@ export const useReferralTracker = () => {
           // 1. Check for simulated referrer (from Admin Dashboard Simulation Suite)
           // 2. Check for deep link referral code fallback
           const simulatedReferrer = await AsyncStorage.getItem('simulated_referrer');
-          const deepLinkReferrer = await AsyncStorage.getItem('referredBy');
+          const deepLinkReferrer = await AsyncStorage.getItem('creatorReferralCode');
           referralCode = simulatedReferrer || deepLinkReferrer || null;
 
           if (simulatedReferrer) {
@@ -44,7 +44,7 @@ export const useReferralTracker = () => {
         } else {
           // On iOS, first-open attribution relies on server-side IP + User-Agent match.
           // However, if the user opened the app directly via deep link, we pass it.
-          const deepLinkReferrer = await AsyncStorage.getItem('referredBy');
+          const deepLinkReferrer = await AsyncStorage.getItem('creatorReferralCode');
           referralCode = deepLinkReferrer || null;
         }
 
@@ -78,7 +78,7 @@ export const useReferralTracker = () => {
         if (Platform.OS === 'android') {
           await AsyncStorage.removeItem('simulated_referrer');
         }
-        await AsyncStorage.removeItem('referredBy');
+        await AsyncStorage.removeItem('creatorReferralCode');
 
       } catch (error) {
         console.error('[ReferralTracker] Error tracking first open install:', error);

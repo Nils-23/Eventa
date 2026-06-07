@@ -14,12 +14,15 @@ import {
   PanResponder,
   Animated,
   TouchableWithoutFeedback,
-  Alert
+  Alert,
+  Image
 } from 'react-native';
-import { X, Send, CornerUpLeft, Trash2, Flag } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { X, Send, CornerUpLeft, Trash2, Flag, Smile } from 'lucide-react-native';
 import { ref, onValue, push, set, remove } from 'firebase/database';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
-import { realtimeDB, firestore } from '../services/firebase';
+import { ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { realtimeDB, firestore, storage } from '../services/firebase';
 import { useAppStore } from '../hooks/useAppStore';
 import { fetchUsername, hideUser } from '../services/userService';
 import { checkAndUnlockAchievements, ACHIEVEMENTS } from '../services/achievementService';
@@ -35,6 +38,7 @@ interface Message {
   username: string;
   message: string;
   timestamp: number;
+  type?: 'text' | 'sticker' | 'custom_sticker';
   activeBadge?: string;
   reactions?: Record<string, Record<string, string>>; // emoji -> userId -> username
   replyTo?: {
@@ -127,6 +131,66 @@ const SwipeableMessage: React.FC<SwipeableMessageProps> = ({ children, onSwipe, 
   );
 };
 
+const CURATED_STICKERS = [
+  '🎉', '🔥', '🍻', '🍹', '💃', '🕺',
+  '🎧', '👑', '✨', '💯', '👾', '🦄',
+  '🍕', '🎈', '🤩', '🍾', '🌮', '🙌'
+];
+
+const FloatingSticker: React.FC<{ sticker: string }> = ({ sticker }) => {
+  const floatAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatAnim, {
+          toValue: -6,
+          duration: 1200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatAnim, {
+          toValue: 0,
+          duration: 1200,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, [floatAnim]);
+
+  return (
+    <Animated.View style={{ transform: [{ translateY: floatAnim }] }}>
+      <Text style={styles.stickerText}>{sticker}</Text>
+    </Animated.View>
+  );
+};
+
+const FloatingCustomSticker: React.FC<{ uri: string }> = ({ uri }) => {
+  const floatAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatAnim, {
+          toValue: -6,
+          duration: 1200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatAnim, {
+          toValue: 0,
+          duration: 1200,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, [floatAnim]);
+
+  return (
+    <Animated.View style={{ transform: [{ translateY: floatAnim }] }}>
+      <Image source={{ uri }} style={styles.customStickerImage} />
+    </Animated.View>
+  );
+};
+
 export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueId, venueName }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -136,6 +200,8 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
   const [sendAsSimulated, setSendAsSimulated] = useState(false);
+  const [isStickerPickerVisible, setIsStickerPickerVisible] = useState(false);
+  const [isUploadingCustom, setIsUploadingCustom] = useState(false);
   
   const { user, hiddenUsers, setHiddenUsers, isAdmin, updateLastViewedChat } = useAppStore();
   const insets = useSafeAreaInsets();
@@ -147,6 +213,8 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
       updateLastViewedChat(venueId);
     }
   }, [isVisible, venueId, messages.length, updateLastViewedChat]);
+
+
 
   useEffect(() => {
     if (isVisible && user?.uid) {
@@ -166,7 +234,10 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => setKeyboardVisible(true)
+      () => {
+        setKeyboardVisible(true);
+        setIsStickerPickerVisible(false);
+      }
     );
     const hideSubscription = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
@@ -244,6 +315,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
         user_id: senderId,
         username: senderName,
         message: textToSend,
+        type: 'text',
         timestamp: Date.now(),
         ...(senderBadge ? { activeBadge: senderBadge } : {}),
         ...(previousReplyTo ? {
@@ -291,6 +363,203 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
       });
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const sendSticker = async (sticker: string) => {
+    if (!user || !venueId) return;
+
+    setIsStickerPickerVisible(false);
+    const previousReplyTo = replyingTo;
+    setReplyingTo(null);
+
+    try {
+      let senderId = user.uid;
+      let senderName = '';
+      let senderBadge: string | null = activeBadge;
+
+      if (isAdmin && sendAsSimulated) {
+        const randomNum = Math.floor(1000 + Math.random() * 9000);
+        senderId = `sim_admin_${Date.now()}_${randomNum}`;
+        senderName = await fetchUsername(senderId);
+        senderBadge = null;
+      } else {
+        senderName = await fetchUsername(user.uid);
+      }
+
+      const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
+      const newMessageRef = push(chatRef);
+      
+      await set(newMessageRef, {
+        user_id: senderId,
+        username: senderName,
+        message: sticker,
+        type: 'sticker',
+        timestamp: Date.now(),
+        ...(senderBadge ? { activeBadge: senderBadge } : {}),
+        ...(previousReplyTo ? {
+          replyTo: {
+            messageId: previousReplyTo.id,
+            username: previousReplyTo.username,
+            message: previousReplyTo.message
+          }
+        } : {})
+      });
+      
+      if (!sendAsSimulated) {
+        const userDocRef = doc(firestore, 'users', user.uid);
+        updateDoc(userDocRef, { chatMessageCount: increment(1) })
+          .then(() => checkAndUnlockAchievements(user.uid))
+          .catch((err) => console.warn('[VenueChat] Failed to update user message count/achievements:', err));
+      }
+
+      const userChatRef = ref(realtimeDB, `user_chats/${user.uid}/${venueId}`);
+      set(userChatRef, {
+        venueName: venueName,
+        lastInteractionTime: Date.now()
+      }).catch((err) => console.warn('[VenueChat] Failed to update user_chats:', err));
+
+      const venueMemberRef = ref(realtimeDB, `venue_members/${venueId}/${user.uid}`);
+      set(venueMemberRef, {
+        lastInteractionTime: Date.now()
+      }).catch((err) => console.warn('[VenueChat] Failed to update venue_members:', err));
+
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    } catch (error) {
+      console.warn("Error sending sticker:", error);
+      setReplyingTo(previousReplyTo);
+      Toast.show({
+        type: 'error',
+        text1: 'Message Failed',
+        text2: getFriendlyErrorMessage(error)
+      });
+    }
+  };
+
+  const sendCustomSticker = async (downloadUrl: string) => {
+    if (!user || !venueId) return;
+
+    setIsStickerPickerVisible(false);
+    const previousReplyTo = replyingTo;
+    setReplyingTo(null);
+
+    try {
+      let senderId = user.uid;
+      let senderName = '';
+      let senderBadge: string | null = activeBadge;
+
+      if (isAdmin && sendAsSimulated) {
+        const randomNum = Math.floor(1000 + Math.random() * 9000);
+        senderId = `sim_admin_${Date.now()}_${randomNum}`;
+        senderName = await fetchUsername(senderId);
+        senderBadge = null;
+      } else {
+        senderName = await fetchUsername(user.uid);
+      }
+
+      const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
+      const newMessageRef = push(chatRef);
+      
+      await set(newMessageRef, {
+        user_id: senderId,
+        username: senderName,
+        message: downloadUrl,
+        type: 'custom_sticker',
+        timestamp: Date.now(),
+        ...(senderBadge ? { activeBadge: senderBadge } : {}),
+        ...(previousReplyTo ? {
+          replyTo: {
+            messageId: previousReplyTo.id,
+            username: previousReplyTo.username,
+            message: previousReplyTo.message
+          }
+        } : {})
+      });
+      
+      if (!sendAsSimulated) {
+        const userDocRef = doc(firestore, 'users', user.uid);
+        updateDoc(userDocRef, { chatMessageCount: increment(1) })
+          .then(() => checkAndUnlockAchievements(user.uid))
+          .catch((err) => console.warn('[VenueChat] Failed to update user message count/achievements:', err));
+      }
+
+      const userChatRef = ref(realtimeDB, `user_chats/${user.uid}/${venueId}`);
+      set(userChatRef, {
+        venueName: venueName,
+        lastInteractionTime: Date.now()
+      }).catch((err) => console.warn('[VenueChat] Failed to update user_chats:', err));
+
+      const venueMemberRef = ref(realtimeDB, `venue_members/${venueId}/${user.uid}`);
+      set(venueMemberRef, {
+        lastInteractionTime: Date.now()
+      }).catch((err) => console.warn('[VenueChat] Failed to update venue_members:', err));
+
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    } catch (error) {
+      console.warn("Error sending custom sticker:", error);
+      setReplyingTo(previousReplyTo);
+      Toast.show({
+        type: 'error',
+        text1: 'Message Failed',
+        text2: getFriendlyErrorMessage(error)
+      });
+    }
+  };
+
+  const handleCustomStickerUpload = async () => {
+    if (!user || !venueId) return;
+
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Toast.show({
+          type: 'error',
+          text1: 'Permission Denied',
+          text2: 'Gallery access is required to upload custom stickers.'
+        });
+        return;
+      }
+
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+      };
+
+      const result = await ImagePicker.launchImageLibraryAsync(options);
+
+      if (!result.canceled && result.assets.length > 0) {
+        setIsUploadingCustom(true);
+        const uri = result.assets[0].uri;
+
+        // Upload to Firebase Storage
+        const fileExtension = uri.split('.').pop() || 'jpg';
+        const fileName = `chat_stickers/${user.uid}_${Date.now()}.${fileExtension}`;
+        const stRef = storageRef(storage, fileName);
+
+        const response = await fetch(uri);
+        const blob = await response.blob();
+
+        const uploadTask = await uploadBytesResumable(stRef, blob);
+        const downloadUrl = await getDownloadURL(uploadTask.ref);
+
+        // Send Custom Sticker
+        await sendCustomSticker(downloadUrl);
+      }
+    } catch (error) {
+      console.warn('Custom Sticker Upload Error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Upload Failed',
+        text2: getFriendlyErrorMessage(error),
+      });
+    } finally {
+      setIsUploadingCustom(false);
     }
   };
 
@@ -492,6 +761,8 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     const badgeObj = item.activeBadge ? ACHIEVEMENTS.find(a => a.id === item.activeBadge) : null;
     // @ts-ignore dynamic icon
     const BadgeIcon = badgeObj ? Icons[badgeObj.iconName] : null;
+    const isSticker = item.type === 'sticker';
+    const isCustomSticker = item.type === 'custom_sticker';
 
     return (
       <SwipeableMessage
@@ -509,10 +780,16 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             activeOpacity={0.95}
             onLongPress={() => setSelectedMessageForReaction(item)}
           >
-            <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
+            <View style={(isSticker || isCustomSticker) ? [styles.stickerContainer, isMe ? styles.mySticker : styles.otherSticker] : [styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
               {renderReplyHeader(item, isMe)}
-              <Text style={styles.messageText}>{item.message}</Text>
-              <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
+              {isSticker ? (
+                <FloatingSticker sticker={item.message} />
+              ) : isCustomSticker ? (
+                <FloatingCustomSticker uri={item.message} />
+              ) : (
+                <Text style={styles.messageText}>{item.message}</Text>
+              )}
+              <Text style={[styles.timeText, isMe ? ((isSticker || isCustomSticker) ? styles.myStickerTimeText : styles.myTimeText) : ((isSticker || isCustomSticker) ? styles.otherStickerTimeText : styles.otherTimeText)]}>
                 {formatTime(item.timestamp)}
               </Text>
             </View>
@@ -627,16 +904,68 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             </View>
           )}
 
+          {/* Sticker Picker Panel */}
+          {isStickerPickerVisible && (
+            <View style={styles.stickerPickerPanel}>
+              <FlatList
+                data={['CUSTOM_UPLOAD', ...CURATED_STICKERS]}
+                keyExtractor={(item) => item}
+                numColumns={6}
+                renderItem={({ item }) => {
+                  if (item === 'CUSTOM_UPLOAD') {
+                    return (
+                      <TouchableOpacity 
+                        style={[styles.stickerItem, styles.customUploadItem]}
+                        onPress={handleCustomStickerUpload}
+                        disabled={isUploadingCustom}
+                      >
+                        {isUploadingCustom ? (
+                          <ActivityIndicator color="#00FFCC" size="small" />
+                        ) : (
+                          <Icons.Plus color="#00FFCC" size={28} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  }
+                  return (
+                    <TouchableOpacity 
+                      style={styles.stickerItem}
+                      onPress={() => sendSticker(item)}
+                    >
+                      <Text style={styles.stickerItemText}>{item}</Text>
+                    </TouchableOpacity>
+                  );
+                }}
+                contentContainerStyle={styles.stickerGrid}
+                scrollEnabled={false}
+              />
+            </View>
+          )}
+
           <View style={[
             styles.inputContainer,
             { paddingBottom: keyboardVisible ? 12 : Math.max(12, insets.bottom) }
           ]}>
+            <TouchableOpacity 
+              style={styles.iconButton}
+              onPress={() => {
+                if (isStickerPickerVisible) {
+                  setIsStickerPickerVisible(false);
+                } else {
+                  Keyboard.dismiss();
+                  setIsStickerPickerVisible(true);
+                }
+              }}
+            >
+              <Smile color={isStickerPickerVisible ? "#00FFCC" : "#FFF"} size={24} />
+            </TouchableOpacity>
             <TextInput
               style={styles.textInput}
               placeholder="Ask about the vibe..."
               placeholderTextColor="#888"
               value={inputText}
               onChangeText={setInputText}
+              onFocus={() => setIsStickerPickerVisible(false)}
               maxLength={200}
               multiline
             />
@@ -1101,5 +1430,72 @@ const styles = StyleSheet.create({
   },
   adminToggleTextActive: {
     color: '#FFF',
+  },
+
+  // 🎭 Sticker & emoji feature styles
+  stickerContainer: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mySticker: {
+    alignSelf: 'flex-end',
+  },
+  otherSticker: {
+    alignSelf: 'flex-start',
+  },
+  stickerText: {
+    fontSize: 64,
+  },
+  myStickerTimeText: {
+    color: '#888',
+    fontSize: 10,
+    marginTop: 4,
+    alignSelf: 'flex-end',
+  },
+  otherStickerTimeText: {
+    color: '#888',
+    fontSize: 10,
+    marginTop: 4,
+    alignSelf: 'flex-start',
+  },
+  stickerPickerPanel: {
+    backgroundColor: '#1E1E1E',
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+  },
+  stickerGrid: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stickerItem: {
+    width: 50,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: 4,
+  },
+  stickerItemText: {
+    fontSize: 32,
+  },
+  iconButton: {
+    padding: 8,
+    marginRight: 8,
+  },
+  customStickerImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+  },
+  customUploadItem: {
+    backgroundColor: '#222',
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#00FFCC',
+    borderRadius: 12,
   }
 });

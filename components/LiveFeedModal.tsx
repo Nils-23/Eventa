@@ -161,23 +161,14 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   };
 
   const handleItemPress = (item: ChatFeedItem) => {
-    onClose();
-    // Micro-delay to let the modal slide out before opening chat modal
-    setTimeout(() => {
-      onOpenChat(item.venueId, item.venueName);
-    }, 250);
+    onOpenChat(item.venueId, item.venueName);
   };
 
+  if (!isVisible) return null;
+
   return (
-    <Modal
-      visible={isVisible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={onClose}
-      statusBarTranslucent={true}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={[styles.modalContainer, { paddingTop: insets.top, paddingBottom: insets.bottom || 20 }]}>
+    <View style={[StyleSheet.absoluteFillObject, styles.modalOverlay, { zIndex: 1000 }]}>
+      <View style={[styles.modalContainer, { paddingTop: insets.top, paddingBottom: insets.bottom || 20 }]}>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.titleContainer}>
@@ -244,9 +235,8 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
               }}
             />
           )}
-        </View>
       </View>
-    </Modal>
+    </View>
   );
 };
 
