@@ -44,7 +44,13 @@ export default function App() {
       if (!url) return;
       const inviteMatch = url.match(/\/invite\/([a-zA-Z0-9_-]+)/);
       if (inviteMatch && inviteMatch[1]) {
-        await AsyncStorage.setItem('referredBy', inviteMatch[1]);
+        const code = inviteMatch[1];
+        // Firebase Auth UIDs are 28 characters. Creator referral codes are shorter.
+        if (code.length === 28) {
+          await AsyncStorage.setItem('referredBy', code);
+        } else {
+          await AsyncStorage.setItem('creatorReferralCode', code.toUpperCase().trim());
+        }
       }
     };
 
@@ -71,6 +77,7 @@ export default function App() {
             screenOptions={{
               headerShown: false,
               contentStyle: { backgroundColor: '#121212' },
+              gestureEnabled: true,
             }}
           >
             {!user ? (
