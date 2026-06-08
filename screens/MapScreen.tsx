@@ -260,15 +260,12 @@ export const MapScreen = () => {
   const { user, selectedMapVenue, setSelectedMapVenue, isAdmin, pendingVenueAction, setPendingVenueAction, unreadChatCount } = useAppStore();
   const { stories } = useStories();
 
-  // ─── Region + zoom tracking ───────────────────────────────────────────────
-  // We track the current zoom level so we can convert screen-pixel sizes to
+  // ─── Zoom tracking ───────────────────────────────────────────────
+  // We track the current rounded zoom level so we can convert screen-pixel sizes to
   // geo-accurate meter radii. This fixes the zoom-in issue (GitHub #371):
   // fixed-meter circles balloon on screen as you zoom in, but pixel-based
   // circles stay a constant visual size at all zoom levels.
-  const [region, setRegion] = useState<Region | null>(null);
-  const [currentZoom, setCurrentZoom] = useState(14);
-
-  const discreteZoom = Math.round(currentZoom);
+  const [discreteZoom, setDiscreteZoom] = useState(14);
 
   const scaledPoints = useMemo(() => {
     // Boost base intensity and scale it up exponentially with zoom level
@@ -298,8 +295,8 @@ export const MapScreen = () => {
   const [showRawPoints, setShowRawPoints] = useState(false);
 
   const handleRegionChange = async (newRegion: Region) => {
-    // 1. Determine new zoom level
-    let newZoom = currentZoom;
+    // Determine new zoom level
+    let newZoom = 14;
     if (mapRef.current) {
       try {
         const cam = await mapRef.current.getCamera();
@@ -316,29 +313,10 @@ export const MapScreen = () => {
       newZoom = Math.max(1, Math.min(20, Math.log2(360 / newRegion.longitudeDelta)));
     }
 
-    // 2. Compare with existing values (using a micro-threshold) to prevent infinite re-render loops on Android
-    const isRegionSame =
-      region &&
-      Math.abs(region.latitude - newRegion.latitude) < 0.00001 &&
-      Math.abs(region.longitude - newRegion.longitude) < 0.00001 &&
-      Math.abs(region.latitudeDelta - newRegion.latitudeDelta) < 0.00001 &&
-      Math.abs(region.longitudeDelta - newRegion.longitudeDelta) < 0.00001;
-
-    const isZoomSame = Math.abs(currentZoom - newZoom) < 0.01;
-
-    if (!isRegionSame) {
-      setRegion(newRegion);
+    const newDiscreteZoom = Math.round(newZoom);
+    if (newDiscreteZoom !== discreteZoom) {
+      setDiscreteZoom(newDiscreteZoom);
     }
-    if (!isZoomSame) {
-      setCurrentZoom(newZoom);
-    }
-  };
-
-  // ─── Meters-per-pixel at a given zoom & latitude ─────────────────────────
-  // Formula from Web Mercator: metersPerPx = 156543.03392 * cos(lat°) / 2^zoom
-  // Source: https://wiki.openstreetmap.org/wiki/Zoom_levels
-  const metersPerPixel = (lat: number, zoom: number): number => {
-    return (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom);
   };
 
   // Default to a lively city area for now

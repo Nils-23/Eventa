@@ -12,6 +12,7 @@ export const useUnreadChatListener = () => {
   const latestMessagesRef = useRef<Record<string, { timestamp: number; userId: string }>>({});
   const lastViewedRef = useRef<Record<string, number>>(lastViewedChats);
   const userRef = useRef(user);
+  const subscriptionsRef = useRef<Record<string, () => void>>({});
 
   useEffect(() => {
     userRef.current = user;
@@ -69,62 +70,73 @@ export const useUnreadChatListener = () => {
     setUnreadChatCount(count);
   };
 
-  // Subscribe to latest messages for each active venue
+  // Clean up all subscriptions on user log out or unmount
+  useEffect(() => {
+    return () => {
+      Object.values(subscriptionsRef.current).forEach((unsub) => unsub());
+      subscriptionsRef.current = {};
+      latestMessagesRef.current = {};
+      setUnreadChatCount(0);
+    };
+  }, [user, setUnreadChatCount]);
+
+  // Subscribe to latest messages for each active venue incrementally
   useEffect(() => {
     if (!user || venues.length === 0) {
+      Object.values(subscriptionsRef.current).forEach((unsub) => unsub());
+      subscriptionsRef.current = {};
       latestMessagesRef.current = {};
       setUnreadChatCount(0);
       return;
     }
 
-    // Prune stored messages for venues that are no longer active/loaded
     const activeVenueIds = new Set(venues.map(v => v.id));
-    Object.keys(latestMessagesRef.current).forEach(id => {
+
+    // 1. Unsubscribe from venues that are no longer active/loaded
+    Object.keys(subscriptionsRef.current).forEach((id) => {
       if (!activeVenueIds.has(id)) {
+        subscriptionsRef.current[id]();
+        delete subscriptionsRef.current[id];
         delete latestMessagesRef.current[id];
       }
     });
 
-    const unsubscribes: Record<string, () => void> = {};
-
+    // 2. Subscribe to new active venues
     venues.forEach((venue) => {
-      const chatQuery = query(
-        ref(realtimeDB, `venue_chats/${venue.id}`),
-        limitToLast(1)
-      );
+      if (!subscriptionsRef.current[venue.id]) {
+        const chatQuery = query(
+          ref(realtimeDB, `venue_chats/${venue.id}`),
+          limitToLast(1)
+        );
 
-      const unsub = onValue(chatQuery, (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.val();
-          const keys = Object.keys(data);
-          if (keys.length > 0) {
-            const key = keys[0];
-            const msg = data[key];
-            latestMessagesRef.current[venue.id] = {
-              timestamp: msg.timestamp,
-              userId: msg.user_id,
-            };
+        const unsub = onValue(chatQuery, (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.val();
+            const keys = Object.keys(data);
+            if (keys.length > 0) {
+              const key = keys[0];
+              const msg = data[key];
+              latestMessagesRef.current[venue.id] = {
+                timestamp: msg.timestamp,
+                userId: msg.user_id,
+              };
+            } else {
+              delete latestMessagesRef.current[venue.id];
+            }
           } else {
             delete latestMessagesRef.current[venue.id];
           }
-        } else {
-          delete latestMessagesRef.current[venue.id];
-        }
-        recalculateCount();
-      }, (error) => {
-        console.warn(`[useUnreadChatListener] Error listening to ${venue.id}:`, error);
-      });
+          recalculateCount();
+        }, (error) => {
+          console.warn(`[useUnreadChatListener] Error listening to ${venue.id}:`, error);
+        });
 
-      unsubscribes[venue.id] = unsub;
+        subscriptionsRef.current[venue.id] = unsub;
+      }
     });
 
-    // Run initial calculation
     recalculateCount();
-
-    return () => {
-      Object.values(unsubscribes).forEach((unsub) => unsub());
-    };
-  }, [venues, user, setUnreadChatCount]);
+  }, [venues, user]);
 
   // Periodic pruning of expired messages (> 24 hours old)
   useEffect(() => {
