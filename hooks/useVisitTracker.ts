@@ -12,6 +12,7 @@ export const useVisitTracker = () => {
   
   // We use refs to avoid triggering unnecessary effect runs and spamming Firestore
   const trackedDailyVenuesRef = useRef<Set<string>>(new Set());
+  const isCheckingRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!user) return;
@@ -23,6 +24,15 @@ export const useVisitTracker = () => {
       if (nearbyVenues.length === 0) return;
 
       const todayStr = new Date().toISOString().split('T')[0]; // e.g. "2026-04-30"
+
+      // Check if we already have daily visit records for ALL nearby venues in this session
+      const allAlreadyTracked = nearbyVenues.every(v => 
+        trackedDailyVenuesRef.current.has(`${todayStr}_${v.id}`)
+      );
+      if (allAlreadyTracked) return;
+
+      if (isCheckingRef.current) return;
+      isCheckingRef.current = true;
       
       const userDocRef = doc(firestore, 'users', user.uid);
       
@@ -106,6 +116,8 @@ export const useVisitTracker = () => {
         
       } catch (err) {
         console.warn('[useVisitTracker] Failed to update visit stats:', err);
+      } finally {
+        isCheckingRef.current = false;
       }
     };
 

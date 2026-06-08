@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useMemo } from 'react';
 import * as Location from 'expo-location';
 import { collection, onSnapshot, query, doc, getDoc } from 'firebase/firestore';
 import { ref, onValue } from 'firebase/database';
@@ -97,6 +97,27 @@ function toActivityColor(level: ActivityLevel): string {
     default:       return '#555555';
   }
 }
+function areVenuesEqual(a: LiveVenue[], b: LiveVenue[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const va = a[i];
+    const vb = b[i];
+    if (
+      va.id !== vb.id ||
+      va.userCount !== vb.userCount ||
+      va.activityLevel !== vb.activityLevel ||
+      va.distanceKm !== vb.distanceKm ||
+      va.imageUrl !== vb.imageUrl ||
+      va.hidden !== vb.hidden ||
+      va.name !== vb.name ||
+      va.latitude !== vb.latitude ||
+      va.longitude !== vb.longitude
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
 
 function computeLiveData(
   venues: RawVenue[],
@@ -145,8 +166,16 @@ function computeLiveData(
   }
 
   for (const loc of simActiveLocs) {
-    if (loc.venueId) {
-      simCountsMap[loc.venueId] = (simCountsMap[loc.venueId] || 0) + 1;
+    let venueId = loc.venueId;
+    if (!venueId && loc.user_id && loc.user_id.startsWith('sim_')) {
+      const parts = loc.user_id.split('_');
+      if (parts.length >= 4) {
+        venueId = parts.slice(1, -2).join('_');
+      }
+    }
+
+    if (venueId) {
+      simCountsMap[venueId] = (simCountsMap[venueId] || 0) + 1;
     } else {
       for (const venue of venues) {
         if (haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS) {
@@ -296,6 +325,9 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const isProcessingRef = useRef(false);
   const pendingUpdateRef = useRef(false);
   const lastHashRef = useRef('');
+  const lastWriteTimeRef = useRef<number>(0);
+  const lastWrittenLiveRef = useRef<string>('');
+  const lastWrittenScheduledRef = useRef<string>('');
 
   const requestRecalculate = () => {
     if (isProcessingRef.current) {
@@ -332,12 +364,34 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         resolvedImages
       );
 
-      setVenues(result.venues);
-      setScheduledVenues(result.scheduledVenues);
+      setVenues((prev) => {
+        if (areVenuesEqual(prev, result.venues)) {
+          return prev;
+        }
+        return result.venues;
+      });
+
+      setScheduledVenues((prev) => {
+        if (areVenuesEqual(prev, result.scheduledVenues)) {
+          return prev;
+        }
+        return result.scheduledVenues;
+      });
+
       setIsLoading(false);
 
-      AsyncStorage.setItem('cached_live_venues', JSON.stringify(result.venues)).catch(() => {});
-      AsyncStorage.setItem('cached_scheduled_venues', JSON.stringify(result.scheduledVenues)).catch(() => {});
+      const nowTime = Date.now();
+      if (nowTime - lastWriteTimeRef.current > 30000) {
+        const liveStr = JSON.stringify(result.venues);
+        const scheduledStr = JSON.stringify(result.scheduledVenues);
+        if (liveStr !== lastWrittenLiveRef.current || scheduledStr !== lastWrittenScheduledRef.current) {
+          lastWriteTimeRef.current = nowTime;
+          lastWrittenLiveRef.current = liveStr;
+          lastWrittenScheduledRef.current = scheduledStr;
+          AsyncStorage.setItem('cached_live_venues', liveStr).catch(() => {});
+          AsyncStorage.setItem('cached_scheduled_venues', scheduledStr).catch(() => {});
+        }
+      }
 
       if (result.hash !== lastHashRef.current) {
         lastHashRef.current = result.hash;
@@ -460,8 +514,15 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, []);
 
 
+  const contextValue = useMemo(() => ({
+    venues,
+    heatPoints,
+    isLoading,
+    scheduledVenues,
+  }), [venues, heatPoints, isLoading, scheduledVenues]);
+
   return (
-    <LiveVenuesContext.Provider value={{ venues, heatPoints, isLoading, scheduledVenues }}>
+    <LiveVenuesContext.Provider value={contextValue}>
       {children}
     </LiveVenuesContext.Provider>
   );
