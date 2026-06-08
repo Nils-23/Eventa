@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Modal, ActivityIndicator, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X, Activity, Flag } from 'lucide-react-native';
+import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X, Activity, Flag, Sparkles } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
@@ -156,6 +156,18 @@ export const AdminDashboardScreen = () => {
             </View>
             <Text style={styles.cardTitle}>Platform Reports</Text>
             <Text style={styles.cardDesc}>Review and act on reports submitted by users for inappropriate venue details, chat messages, or stories.</Text>
+          </TouchableOpacity>
+
+          {/* AI Event Curator */}
+          <TouchableOpacity 
+            style={styles.card} 
+            onPress={() => navigation.navigate('AdminAICurator')}
+          >
+            <View style={[styles.iconContainer, { backgroundColor: 'rgba(0, 255, 204, 0.1)' }]}>
+              <Sparkles color="#00FFCC" size={28} />
+            </View>
+            <Text style={styles.cardTitle}>AI Event Curator</Text>
+            <Text style={styles.cardDesc}>Use Gemini to search the web for upcoming public events in Nairobi and seed them into the app automatically.</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

@@ -15,6 +15,7 @@ import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
 import { AdminUsersScreen } from './screens/AdminUsersScreen';
 import { AdminReferralsScreen } from './screens/AdminReferralsScreen';
 import { AdminReportsScreen } from './screens/AdminReportsScreen';
+import { AdminAICuratorScreen } from './screens/AdminAICuratorScreen';
 import { useAuth } from './hooks/useAuth';
 
 import { useAppStore } from './hooks/useAppStore';
@@ -95,6 +96,7 @@ export default function App() {
                 <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
                 <Stack.Screen name="AdminReferrals" component={AdminReferralsScreen} />
                 <Stack.Screen name="AdminReports" component={AdminReportsScreen} />
+                <Stack.Screen name="AdminAICurator" component={AdminAICuratorScreen} />
               </>
             )}
           </Stack.Navigator>
