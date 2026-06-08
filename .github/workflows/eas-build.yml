@@ -29,7 +29,21 @@ jobs:
 
       - name: 🚀 Build iOS App
         # --no-wait triggers the build and exits immediately, saving GitHub runner minutes
-        run: eas build --platform ios --profile production --no-wait --non-interactive
+        run: |
+          set +e
+          IOS_BUILD_OUTPUT=$(eas build --platform ios --profile production --no-wait --non-interactive 2>&1)
+          IOS_BUILD_EXIT_CODE=$?
+          set -e
+
+          echo "$IOS_BUILD_OUTPUT"
+
+          if [ "$IOS_BUILD_EXIT_CODE" -ne 0 ]; then
+            if echo "$IOS_BUILD_OUTPUT" | grep -q "used its iOS builds from the Free plan this month"; then
+              echo "::warning::Skipping iOS build because the monthly free-plan iOS build quota is exhausted."
+            else
+              exit "$IOS_BUILD_EXIT_CODE"
+            fi
+          fi
 
       - name: 🚀 Build Android App
         # --no-wait triggers the build and exits immediately, saving GitHub runner minutes
