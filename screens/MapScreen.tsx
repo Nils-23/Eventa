@@ -706,6 +706,44 @@ export const MapScreen = () => {
     getDistanceInMeters(userLocation.latitude, userLocation.longitude, selectedMapVenue.latitude, selectedMapVenue.longitude) <= 200
     : false;
 
+  const renderedMarkers = useMemo(() => {
+    return venues
+      .slice()
+      .sort((a, b) => {
+        const aHasStories = stories.some(s => s.venue_id === a.id);
+        const bHasStories = stories.some(s => s.venue_id === b.id);
+        if (aHasStories && !bHasStories) return 1;
+        if (!aHasStories && bHasStories) return -1;
+        return 0;
+      })
+      .map((venue) => {
+        const venueStories = stories.filter(s => s.venue_id === venue.id);
+        const hasStories = venueStories.length > 0;
+        const pinColor = hasStories ? "#FF00CC" : "#00FFCC";
+
+        return (
+          <Marker
+            key={venue.id}
+            coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
+            onPress={(e) => {
+              e.stopPropagation();
+              handleMarkerPress(venue);
+            }}
+            tracksViewChanges={trackMarkerChanges}
+            zIndex={hasStories ? 200 : 100}
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <View style={styles.markerContainer}>
+              <View style={[styles.pinBubble, { backgroundColor: pinColor }]}>
+                <MapPin color="#000" size={14} fill="#000" />
+              </View>
+              <View style={[styles.pinArrow, { borderTopColor: pinColor }]} />
+            </View>
+          </Marker>
+        );
+      });
+  }, [venues, stories, trackMarkerChanges]);
+
   return (
     <View style={styles.container}>
       {/* Global Top Add Story Button */}
@@ -758,42 +796,7 @@ export const MapScreen = () => {
           />
         )}
         {/* LiveVenue markers */}
-        {venues
-          .slice()
-          .sort((a, b) => {
-            const aHasStories = stories.some(s => s.venue_id === a.id);
-            const bHasStories = stories.some(s => s.venue_id === b.id);
-            if (aHasStories && !bHasStories) return 1;
-            if (!aHasStories && bHasStories) return -1;
-            return 0;
-          })
-          .map((venue) => {
-            const venueStories = stories.filter(s => s.venue_id === venue.id);
-            const hasStories = venueStories.length > 0;
-            const pinColor = hasStories ? "#FF00CC" : "#00FFCC"; // Magenta if stories exist
-
-            return (
-              <Marker
-                key={venue.id}
-                coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleMarkerPress(venue);
-                }}
-                tracksViewChanges={trackMarkerChanges}
-                zIndex={hasStories ? 200 : 100} // Prioritize venues with stories, and force elevation above heatmap
-                anchor={{ x: 0.5, y: 1 }} // Pin tip at exact coordinate
-              >
-                <View style={styles.markerContainer}>
-                  {/* Sharp high-contrast pin without fuzzy glow */}
-                  <View style={[styles.pinBubble, { backgroundColor: pinColor }]}>
-                    <MapPin color="#000" size={14} fill="#000" />
-                  </View>
-                  <View style={[styles.pinArrow, { borderTopColor: pinColor }]} />
-                </View>
-              </Marker>
-            );
-          })}
+        {renderedMarkers}
       </MapView>
 
       {/* Story Upload Overlay */}
