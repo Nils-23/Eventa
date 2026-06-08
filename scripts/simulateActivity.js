@@ -138,7 +138,8 @@ async function startSimulation() {
         latitude: u.latitude,
         longitude: u.longitude,
         timestamp: u.timestamp,
-        user_id: u.user_id
+        user_id: u.user_id,
+        venueId: u.venueId
       };
     });
 
