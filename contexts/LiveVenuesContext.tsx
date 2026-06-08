@@ -127,6 +127,36 @@ function computeLiveData(
   const heatPoints: HeatPoint[] = [];
   let hashStr = '';
 
+  // Optimized Pre-Aggregation Maps (O(L) indexing)
+  const realCountsMap: Record<string, number> = {};
+  const simCountsMap: Record<string, number> = {};
+
+  for (const loc of realActiveLocs) {
+    if (loc.venueId) {
+      realCountsMap[loc.venueId] = (realCountsMap[loc.venueId] || 0) + 1;
+    } else {
+      for (const venue of venues) {
+        if (haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS) {
+          realCountsMap[venue.id] = (realCountsMap[venue.id] || 0) + 1;
+          break;
+        }
+      }
+    }
+  }
+
+  for (const loc of simActiveLocs) {
+    if (loc.venueId) {
+      simCountsMap[loc.venueId] = (simCountsMap[loc.venueId] || 0) + 1;
+    } else {
+      for (const venue of venues) {
+        if (haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS) {
+          simCountsMap[venue.id] = (simCountsMap[venue.id] || 0) + 1;
+          break;
+        }
+      }
+    }
+  }
+
   for (const venue of venues) {
     if (!venue.latitude || !venue.longitude) continue;
 
@@ -160,15 +190,8 @@ function computeLiveData(
       continue;
     }
 
-    const realUserCount = realActiveLocs.filter((loc) => {
-      if (loc.venueId) return loc.venueId === venue.id;
-      return haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
-    }).length;
-
-    const rtdbSimCount = simActiveLocs.filter((loc) => {
-      if (loc.venueId) return loc.venueId === venue.id;
-      return haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
-    }).length;
+    const realUserCount = realCountsMap[venue.id] || 0;
+    const rtdbSimCount = simCountsMap[venue.id] || 0;
 
     const isEngineActive = simActiveLocs.length > 0;
     let simUserCount = 0;
