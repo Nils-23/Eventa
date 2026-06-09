@@ -34,7 +34,7 @@ async function mockSendPushNotification(expoPushToken, title, body, data = {}) {
 }
 
 // Logic: sendRateLimitedPushNotification
-async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0) {
+async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false) {
   if (!userId) return false;
   
   const userRef = db.collection('users').doc(userId);
@@ -47,6 +47,10 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
       const userData = userDoc.data();
       const expoPushToken = userData.expoPushToken;
       if (!expoPushToken || expoPushToken.includes('Simulator-Mock-Token')) return null;
+
+      if (bypassLimits) {
+        return expoPushToken;
+      }
 
       const nowMs = Date.now();
       const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
@@ -176,44 +180,121 @@ async function runTests() {
 
   // 5. Test Social/Engagement chat activity notifications
   console.log("\n5. Testing Social/Engagement chat activity trigger...");
-  // Mark user as active member of test venue chat
-  await rtdb.ref(`venue_members/${testVenueId}/${testUserId}`).set({
-    lastInteractionTime: Date.now()
-  });
 
   // Simulate onNewChatMessage logic
-  const simulateNewMessage = async (senderId) => {
+  const simulateNewMessage = async (senderId, messageData) => {
     sentPushes = [];
+    const now = Date.now();
+    const ONE_HOUR = 1 * 60 * 60 * 1000;
+
+    const venueSnap = await db.collection('venues').doc(testVenueId).get();
+    const venueName = venueSnap.exists ? venueSnap.data().name : "Unknown Venue";
+
+    const usersSnap = await db.collection('users').where('expoPushToken', '!=', null).get();
+    if (usersSnap.empty) return;
+    const allUsersWithToken = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
     const membersSnap = await rtdb.ref(`venue_members/${testVenueId}`).once('value');
-    if (!membersSnap.exists()) return;
-    
-    const members = membersSnap.val();
-    const activeMembers = Object.keys(members).filter(uid => {
-      if (uid === senderId) return false;
-      const lastInteraction = members[uid].lastInteractionTime || 0;
-      return (Date.now() - lastInteraction) < (24 * 60 * 60 * 1000);
-    });
+    const members = membersSnap.exists() ? membersSnap.val() : {};
 
-    console.log(`Simulating message from ${senderId}. Active members to notify:`, activeMembers);
+    let messageText = messageData.message || '';
+    if (messageData.type === 'custom_sticker') {
+      messageText = '📷 sent a custom sticker';
+    } else if (messageData.type === 'sticker') {
+      messageText = `${messageData.message} (sticker)`;
+    }
+    const body = `${messageData.username}: ${messageText}`;
 
-    for (const memberId of activeMembers) {
-      await sendRateLimitedPushNotification(
-        memberId,
-        `💬 Activity in Test VIP Lounge`,
-        `Activity is picking up in your event chat`,
-        { venueId: testVenueId, type: 'chat' },
-        `chat_${testVenueId}`,
-        1 * 60 * 60 * 1000
-      );
+    for (const user of allUsersWithToken) {
+      if (user.id === senderId) continue;
+
+      const isEngaged = members[user.id] && (now - (members[user.id].lastInteractionTime || 0) < ONE_HOUR);
+
+      if (isEngaged) {
+        await sendRateLimitedPushNotification(
+          user.id,
+          venueName,
+          body,
+          { venueId: testVenueId, type: 'chat' },
+          null,
+          0,
+          true
+        );
+      } else {
+        await sendRateLimitedPushNotification(
+          user.id,
+          venueName,
+          body,
+          { venueId: testVenueId, type: 'chat' },
+          'chat_broadcast_all',
+          1 * 60 * 60 * 1000
+        );
+      }
     }
   };
 
-  await simulateNewMessage("another_user_abc");
+  // 5a. Test broadcast for non-engaged user (should succeed)
+  console.log("5a. Testing standard broadcast for non-engaged user...");
+  await rtdb.ref(`venue_members/${testVenueId}`).set(null); // No one is engaged
+  await simulateNewMessage("another_user_abc", {
+    username: "Alex",
+    message: "Who is here?",
+    type: "text"
+  });
   console.log(`Sent pushes count: ${sentPushes.length} (Expected: 1)`);
-  if (sentPushes.length !== 1 || sentPushes[0].title !== "💬 Activity in Test VIP Lounge") {
-    throw new Error("Social chat activity notification failed!");
+  if (sentPushes.length !== 1 || sentPushes[0].title !== "Test VIP Lounge" || sentPushes[0].body !== "Alex: Who is here?") {
+    throw new Error("Standard broadcast test failed!");
   }
-  console.log("Social chat activity notification passed!");
+  console.log("Standard broadcast test passed!");
+
+  // 5b. Test broadcast throttling for non-engaged user (should be throttled)
+  console.log("5b. Testing standard broadcast throttling (should skip)...");
+  await simulateNewMessage("another_user_abc", {
+    username: "Alex",
+    message: "Any updates?",
+    type: "text"
+  });
+  console.log(`Sent pushes count: ${sentPushes.length} (Expected: 0 - throttled)`);
+  if (sentPushes.length !== 0) {
+    throw new Error("Broadcast throttling test failed!");
+  }
+  console.log("Broadcast throttling test passed!");
+
+  // Reset rate limits & throttles for test user
+  await db.collection('users').doc(testUserId).update({
+    notificationCountToday: 0,
+    notificationThrottles: {}
+  });
+
+  // 5c. Test continuation for engaged user (should bypass limits)
+  console.log("5c. Testing continuation notifications for engaged user (should succeed & not throttle)...");
+  // Mark test user as engaged (active in last 5 minutes)
+  await rtdb.ref(`venue_members/${testVenueId}/${testUserId}`).set({
+    lastInteractionTime: Date.now() - 5 * 60 * 1000
+  });
+
+  // Message 1
+  await simulateNewMessage("another_user_abc", {
+    username: "Alex",
+    message: "Hey guys!",
+    type: "text"
+  });
+  console.log(`Message 1 - Sent pushes count: ${sentPushes.length} (Expected: 1)`);
+  if (sentPushes.length !== 1 || sentPushes[0].title !== "Test VIP Lounge" || sentPushes[0].body !== "Alex: Hey guys!") {
+    throw new Error("Continuation notification message 1 failed!");
+  }
+
+  // Message 2 immediately after (normally throttled, but engaged should bypass)
+  await simulateNewMessage("another_user_abc", {
+    username: "Alex",
+    message: "Are we drinking?",
+    type: "text"
+  });
+  console.log(`Message 2 - Sent pushes count: ${sentPushes.length} (Expected: 1)`);
+  if (sentPushes.length !== 1 || sentPushes[0].title !== "Test VIP Lounge" || sentPushes[0].body !== "Alex: Are we drinking?") {
+    throw new Error("Continuation notification message 2 (bypass) failed!");
+  }
+  console.log("Continuation notifications for engaged user passed!");
 
   // Reset rate limits & throttles
   await db.collection('users').doc(testUserId).set({
@@ -395,6 +476,10 @@ async function runTests() {
 
   // 6a. Test Proximity Alert when venue is popular
   console.log("\n6a. Testing proximity alert (simulating 10 users at venue, test user nearby)...");
+  // Clean up any stale simulated locations & presence first
+  await rtdb.ref('simulated_locations').set(null);
+  await rtdb.ref(`venue_presence/${testVenueId}`).set(null);
+  
   // Simulate 10 locations inside venue radius
   const simUpdates = {};
   const presenceUpdates = {};

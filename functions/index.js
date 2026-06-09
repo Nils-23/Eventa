@@ -69,7 +69,7 @@ async function sendPushNotification(expoPushToken, title, body, data = {}) {
  * @param {number} throttleDurationMs - How long to throttle this key in ms.
  * @return {Promise<boolean>} - True if notification was sent, false otherwise.
  */
-async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0) {
+async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false) {
   if (!userId) return false;
   
   const userRef = db.collection('users').doc(userId);
@@ -82,6 +82,10 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
       const userData = userDoc.data();
       const expoPushToken = userData.expoPushToken;
       if (!expoPushToken || expoPushToken.includes('Simulator-Mock-Token')) return null;
+
+      if (bypassLimits) {
+        return expoPushToken;
+      }
 
       const nowMs = Date.now();
       const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
@@ -148,32 +152,56 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
     if (!venueSnap.exists) return;
     const venueName = venueSnap.data().name;
 
+    // Load all users with push tokens
+    const usersSnap = await db.collection('users').where('expoPushToken', '!=', null).get();
+    if (usersSnap.empty) return;
+    const allUsersWithToken = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
     // Get all members of this venue's chat
     const membersSnap = await rtdb.ref(`venue_members/${venueId}`).once('value');
-    if (!membersSnap.exists()) return;
+    const members = membersSnap.exists() ? membersSnap.val() : {};
 
-    const members = membersSnap.val();
     const now = Date.now();
-    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+    const ONE_HOUR = 1 * 60 * 60 * 1000;
 
-    // Filter active members (chatted in the last 24h, exclude sender)
-    const activeMembers = Object.keys(members).filter(uid => {
-      if (uid === senderId) return false;
-      const lastInteraction = members[uid].lastInteractionTime || 0;
-      return (now - lastInteraction) < TWENTY_FOUR_HOURS;
-    });
+    // Construct WhatsApp-style body content
+    let messageText = messageData.message || '';
+    if (messageData.type === 'custom_sticker') {
+      messageText = '📷 sent a custom sticker';
+    } else if (messageData.type === 'sticker') {
+      messageText = `${messageData.message} (sticker)`;
+    }
+    const body = `${messageData.username}: ${messageText}`;
 
-    console.log(`Notifying ${activeMembers.length} members about chat activity in venue ${venueName} (${venueId})`);
+    console.log(`Processing message from ${messageData.username} at ${venueName}. Notifying users...`);
 
-    for (const memberId of activeMembers) {
-      await sendRateLimitedPushNotification(
-        memberId,
-        `💬 Activity in ${venueName}`,
-        `Activity is picking up in your event chat`,
-        { venueId, type: 'chat' },
-        `chat_${venueId}`,
-        1 * 60 * 60 * 1000 // 1 hour throttle
-      );
+    for (const user of allUsersWithToken) {
+      if (user.id === senderId) continue;
+
+      const isEngaged = members[user.id] && (now - (members[user.id].lastInteractionTime || 0) < ONE_HOUR);
+
+      if (isEngaged) {
+        // Engaged users get unlimited notifications for this chat (bypassing daily and throttle limits)
+        await sendRateLimitedPushNotification(
+          user.id,
+          venueName,
+          body,
+          { venueId, type: 'chat' },
+          null,
+          0,
+          true // bypassLimits
+        );
+      } else {
+        // Non-engaged users receive broadcast rate-limited to 1 per hour for this type of notification
+        await sendRateLimitedPushNotification(
+          user.id,
+          venueName,
+          body,
+          { venueId, type: 'chat' },
+          'chat_broadcast_all',
+          1 * 60 * 60 * 1000 // 1 hour throttle
+        );
+      }
     }
   });
 

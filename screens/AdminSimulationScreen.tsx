@@ -17,6 +17,15 @@ export const AdminSimulationScreen = () => {
   const { venues, scheduledVenues = [], isLoading } = useLiveVenues();
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingCounts, setEditingCounts] = useState<Record<string, string>>({});
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredVenues = venues.filter(venue =>
+    venue.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const filteredScheduledVenues = scheduledVenues.filter(venue =>
+    venue.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
   const [uploadingVenueId, setUploadingVenueId] = useState<string | null>(null);
   
   // Recurring Stories State
@@ -497,10 +506,24 @@ export const AdminSimulationScreen = () => {
           Adjust the number of simulated users for each venue. Changes will reflect in real-time.
         </Text>
 
+        {/* Search Bar */}
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search venues..."
+            placeholderTextColor="#888"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+          />
+        </View>
+
         {isLoading ? (
           <Text style={styles.loadingText}>Loading venues...</Text>
+        ) : filteredVenues.length === 0 ? (
+          <Text style={styles.noVenuesText}>No venues match your search.</Text>
         ) : (
-          venues.map(venue => (
+          filteredVenues.map(venue => (
             <View key={venue.id} style={styles.venueCard}>
               <View style={styles.venueHeaderRow}>
                 <View style={styles.venueInfo}>
@@ -572,12 +595,12 @@ export const AdminSimulationScreen = () => {
         )}
 
         {/* Divider */}
-        {scheduledVenues.length > 0 && (
+        {filteredScheduledVenues.length > 0 && (
           <View style={styles.sectionDivider} />
         )}
 
         {/* Scheduled Future Events Section */}
-        {scheduledVenues.length > 0 && (
+        {filteredScheduledVenues.length > 0 && (
           <>
             <View style={[styles.sectionHeader, { marginTop: 24 }]}>
               <Calendar color="#00FFCC" size={20} />
@@ -587,7 +610,7 @@ export const AdminSimulationScreen = () => {
               These events are scheduled for a future date and are currently hidden from public maps/lists.
             </Text>
 
-            {scheduledVenues.map(venue => {
+            {filteredScheduledVenues.map(venue => {
               const startDateStr = venue.startDate ? new Date(venue.startDate).toLocaleDateString() : 'N/A';
               const endDateStr = venue.expirationDate ? new Date(venue.expirationDate).toLocaleDateString() : 'N/A';
               return (
@@ -1562,5 +1585,23 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 11,
     marginTop: 4,
+  },
+  searchContainer: {
+    marginBottom: 16,
+  },
+  searchInput: {
+    backgroundColor: '#1E1E1E',
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 8,
+    padding: 12,
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  noVenuesText: {
+    color: '#888',
+    fontSize: 14,
+    textAlign: 'center',
+    marginVertical: 24,
   },
 });

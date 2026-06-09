@@ -9,9 +9,10 @@ import {
   ActivityIndicator,
   Animated,
   ScrollView,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Flame, Navigation, Users } from 'lucide-react-native';
+import { Flame, Navigation, Users, Search } from 'lucide-react-native';
 import { useLiveVenues, LiveVenue as VenueWithDensity } from '../hooks/useLiveVenues';
 import { useNavigation } from '@react-navigation/native';
 import { useAppStore } from '../hooks/useAppStore';
@@ -107,9 +108,11 @@ const VenueCard = ({
 export const ListScreen = () => {
   const { venues, isLoading } = useLiveVenues();
   const [selectedFilter, setSelectedFilter] = useState<'All' | 'Club' | 'Bar' | 'Activity' | 'Event'>('All');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const filteredVenues = venues.filter((v) => 
-    selectedFilter === 'All' || v.type === selectedFilter
+    (selectedFilter === 'All' || v.type === selectedFilter) &&
+    v.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -126,6 +129,20 @@ export const ListScreen = () => {
           <View style={styles.liveDot} />
           <Text style={styles.liveText}>LIVE</Text>
         </View>
+      </View>
+
+      {/* Search Bar */}
+      <View style={styles.searchContainer}>
+        <Search color="#666" size={18} style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search venues..."
+          placeholderTextColor="#666"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          clearButtonMode="while-editing"
+        />
       </View>
 
       {/* Filter Row */}
@@ -182,6 +199,26 @@ export const ListScreen = () => {
 const styles = StyleSheet.create({
   container:    { flex: 1, backgroundColor: '#0A0A0A' },
   header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 24, paddingTop: 20, paddingBottom: 16 },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#131313',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#232323',
+    marginHorizontal: 24,
+    marginBottom: 16,
+    paddingHorizontal: 12,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    height: 44,
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
   headerTitle:  { fontSize: 28, fontWeight: '800', color: '#FFFFFF', letterSpacing: -0.5 },
   headerSub:    { fontSize: 13, color: '#555', marginTop: 3 },
   livePill:     { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, gap: 5, borderWidth: 1, borderColor: '#2A2A2A' },
