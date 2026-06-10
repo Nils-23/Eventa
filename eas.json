@@ -1,7 +1,7 @@
 {
   "cli": {
     "version": ">= 20.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -12,7 +12,7 @@
       "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true,
+      "autoIncrement": false,
       "env": {
         "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyApVeGl1TaO4o_7Uf9KzTNa3OCrxNJJzj8",
         "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "eventa-211fb.firebaseapp.com",
