@@ -69,7 +69,7 @@ async function sendPushNotification(expoPushToken, title, body, data = {}) {
  * @param {number} throttleDurationMs - How long to throttle this key in ms.
  * @return {Promise<boolean>} - True if notification was sent, false otherwise.
  */
-async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false) {
+async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false, bypassDailyLimit = false) {
   if (!userId) return false;
   
   const userRef = db.collection('users').doc(userId);
@@ -88,18 +88,35 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
       }
 
       const nowMs = Date.now();
+
+      // Hourly throttle for live notifications (max 2 per hour)
+      let liveTimes = userData.liveNotificationTimes || [];
+      if (data && data.type === 'live') {
+        const oneHourAgo = nowMs - (1 * 60 * 60 * 1000);
+        // Keep only timestamps within the last hour
+        liveTimes = liveTimes.filter(ts => ts > oneHourAgo);
+        
+        if (liveTimes.length >= 2) {
+          console.log(`User ${userId} reached hourly limit of 2 live notifications. Skipping.`);
+          return null;
+        }
+        liveTimes.push(nowMs);
+      }
+
       const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
       const lastDate = userData.lastNotificationDate || "";
       let count = userData.notificationCountToday || 0;
       
-      if (lastDate === dateStr) {
-        if (count >= 5) {
-          console.log(`User ${userId} reached daily limit of 5. Skipping.`);
-          return null;
+      if (!bypassDailyLimit) {
+        if (lastDate === dateStr) {
+          if (count >= 5) {
+            console.log(`User ${userId} reached daily limit of 5. Skipping.`);
+            return null;
+          }
+          count++;
+        } else {
+          count = 1;
         }
-        count++;
-      } else {
-        count = 1;
       }
 
       let throttles = userData.notificationThrottles || {};
@@ -119,11 +136,18 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         cleanedThrottles[throttleKey] = nowMs;
       }
 
-      transaction.update(userRef, {
+      const updateData = {
         lastNotificationDate: dateStr,
-        notificationCountToday: count,
         notificationThrottles: cleanedThrottles
-      });
+      };
+      if (!bypassDailyLimit) {
+        updateData.notificationCountToday = count;
+      }
+      if (data && data.type === 'live') {
+        updateData.liveNotificationTimes = liveTimes;
+      }
+
+      transaction.update(userRef, updateData);
 
       return expoPushToken;
     });
@@ -178,6 +202,7 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
     for (const user of allUsersWithToken) {
       if (user.id === senderId) continue;
 
+      // Check if user is actively engaged in chat (last interaction within 1 hour)
       const isEngaged = members[user.id] && (now - (members[user.id].lastInteractionTime || 0) < ONE_HOUR);
 
       if (isEngaged) {
@@ -192,14 +217,16 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
           true // bypassLimits
         );
       } else {
-        // Non-engaged users receive broadcast rate-limited to 1 per hour for this type of notification
+        // Non-engaged users receive broadcast rate-limited to 1 per hour per venue, bypassing daily limit
         await sendRateLimitedPushNotification(
           user.id,
           venueName,
           body,
           { venueId, type: 'chat' },
-          'chat_broadcast_all',
-          1 * 60 * 60 * 1000 // 1 hour throttle
+          `chat_${venueId}`,
+          1 * 60 * 60 * 1000, // 1 hour throttle
+          false, // bypassLimits
+          true // bypassDailyLimit
         );
       }
     }
@@ -696,6 +723,44 @@ exports.onUserCreated = functions.firestore
     } catch (error) {
       console.error(`Error in onUserCreated trigger for user ${context.params.userId}:`, error);
     }
+  });
+
+// Cleanup duplicate expoPushTokens across users to avoid multiple delivery to the same device
+exports.cleanupDuplicateTokens = functions.firestore
+  .document('users/{userId}')
+  .onWrite(async (change, context) => {
+    const userId = context.params.userId;
+    const afterData = change.after.exists ? change.after.data() : null;
+    if (!afterData) return null;
+
+    const token = afterData.expoPushToken;
+    if (!token) return null;
+
+    const beforeData = change.before.exists ? change.before.data() : null;
+    const oldToken = beforeData ? beforeData.expoPushToken : null;
+
+    // Only run cleanup if token has been updated or newly set
+    if (token !== oldToken) {
+      console.log(`🧹 [TOKEN CLEANUP] Token updated for user ${userId}. Cleaning duplicates of: ${token}`);
+      const usersRef = db.collection('users');
+      const querySnap = await usersRef.where('expoPushToken', '==', token).get();
+
+      const batch = db.batch();
+      let count = 0;
+
+      querySnap.forEach(docSnap => {
+        if (docSnap.id !== userId) {
+          batch.update(docSnap.ref, { expoPushToken: null });
+          count++;
+        }
+      });
+
+      if (count > 0) {
+        await batch.commit();
+        console.log(`🧹 [TOKEN CLEANUP] Disassociated expoPushToken ${token} from ${count} other users.`);
+      }
+    }
+    return null;
   });
 
 // 💻 Simulation helper to simulate user signup from Admin referrers dashboard

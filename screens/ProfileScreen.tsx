@@ -58,7 +58,15 @@ export const ProfileScreen = () => {
   const myStories = stories.filter(s => s.user_id === user?.uid);
   const hasStories = myStories.length > 0;
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    if (user?.uid) {
+      try {
+        const userRef = doc(firestore, 'users', user.uid);
+        await updateDoc(userRef, { expoPushToken: null });
+      } catch (error) {
+        console.warn('Error clearing push token on sign out:', error);
+      }
+    }
     auth.signOut();
   };
 

@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, ShieldCheck, LogOut } from 'lucide-react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, firestore } from '../services/firebase';
 import { createUserProfile } from '../services/authService';
 import { useAppStore } from '../hooks/useAppStore';
@@ -81,6 +81,11 @@ export const TermsScreen = () => {
   const handleSignOut = async () => {
     setIsSigningOut(true);
     try {
+      const currentUser = auth.currentUser;
+      if (currentUser?.uid) {
+        const userDocRef = doc(firestore, 'users', currentUser.uid);
+        await updateDoc(userDocRef, { expoPushToken: null });
+      }
       await auth.signOut();
       // App.tsx auth listener handles redirecting back to LoginScreen
     } catch (error) {

@@ -34,7 +34,7 @@ async function mockSendPushNotification(expoPushToken, title, body, data = {}) {
 }
 
 // Logic: sendRateLimitedPushNotification
-async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false) {
+async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false, bypassDailyLimit = false) {
   if (!userId) return false;
   
   const userRef = db.collection('users').doc(userId);
@@ -53,18 +53,34 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
       }
 
       const nowMs = Date.now();
+
+      // Hourly throttle for live notifications (max 2 per hour)
+      let liveTimes = userData.liveNotificationTimes || [];
+      if (data && data.type === 'live') {
+        const oneHourAgo = nowMs - (1 * 60 * 60 * 1000);
+        liveTimes = liveTimes.filter(ts => ts > oneHourAgo);
+        
+        if (liveTimes.length >= 2) {
+          console.log(`User ${userId} reached hourly limit of 2 live notifications. Skipping.`);
+          return null;
+        }
+        liveTimes.push(nowMs);
+      }
+
       const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
       const lastDate = userData.lastNotificationDate || "";
       let count = userData.notificationCountToday || 0;
       
-      if (lastDate === dateStr) {
-        if (count >= 5) {
-          console.log(`User ${userId} reached daily limit of 5. Skipping.`);
-          return null;
+      if (!bypassDailyLimit) {
+        if (lastDate === dateStr) {
+          if (count >= 5) {
+            console.log(`User ${userId} reached daily limit of 5. Skipping.`);
+            return null;
+          }
+          count++;
+        } else {
+          count = 1;
         }
-        count++;
-      } else {
-        count = 1;
       }
 
       let throttles = userData.notificationThrottles || {};
@@ -84,11 +100,18 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         cleanedThrottles[throttleKey] = nowMs;
       }
 
-      transaction.update(userRef, {
+      const updateData = {
         lastNotificationDate: dateStr,
-        notificationCountToday: count,
         notificationThrottles: cleanedThrottles
-      });
+      };
+      if (!bypassDailyLimit) {
+        updateData.notificationCountToday = count;
+      }
+      if (data && data.type === 'live') {
+        updateData.liveNotificationTimes = liveTimes;
+      }
+
+      transaction.update(userRef, updateData);
 
       return expoPushToken;
     });
@@ -188,6 +211,7 @@ async function runTests() {
     const ONE_HOUR = 1 * 60 * 60 * 1000;
 
     const venueSnap = await db.collection('venues').doc(testVenueId).get();
+    if (!venueSnap.exists) return;
     const venueName = venueSnap.exists ? venueSnap.data().name : "Unknown Venue";
 
     const usersSnap = await db.collection('users').where('expoPushToken', '!=', null).get();
@@ -226,8 +250,10 @@ async function runTests() {
           venueName,
           body,
           { venueId: testVenueId, type: 'chat' },
-          'chat_broadcast_all',
-          1 * 60 * 60 * 1000
+          `chat_${testVenueId}`,
+          1 * 60 * 60 * 1000,
+          false,
+          true
         );
       }
     }
@@ -241,8 +267,9 @@ async function runTests() {
     message: "Who is here?",
     type: "text"
   });
-  console.log(`Sent pushes count: ${sentPushes.length} (Expected: 1)`);
-  if (sentPushes.length !== 1 || sentPushes[0].title !== "Test VIP Lounge" || sentPushes[0].body !== "Alex: Who is here?") {
+  const testPushesA = sentPushes.filter(p => p.expoPushToken === "ExponentPushToken[test-user-token-12345]");
+  console.log(`Sent pushes count for test user: ${testPushesA.length} (Expected: 1)`);
+  if (testPushesA.length !== 1 || testPushesA[0].title !== "Test VIP Lounge" || testPushesA[0].body !== "Alex: Who is here?") {
     throw new Error("Standard broadcast test failed!");
   }
   console.log("Standard broadcast test passed!");
@@ -254,8 +281,9 @@ async function runTests() {
     message: "Any updates?",
     type: "text"
   });
-  console.log(`Sent pushes count: ${sentPushes.length} (Expected: 0 - throttled)`);
-  if (sentPushes.length !== 0) {
+  const testPushesB = sentPushes.filter(p => p.expoPushToken === "ExponentPushToken[test-user-token-12345]");
+  console.log(`Sent pushes count for test user: ${testPushesB.length} (Expected: 0 - throttled)`);
+  if (testPushesB.length !== 0) {
     throw new Error("Broadcast throttling test failed!");
   }
   console.log("Broadcast throttling test passed!");
@@ -279,8 +307,9 @@ async function runTests() {
     message: "Hey guys!",
     type: "text"
   });
-  console.log(`Message 1 - Sent pushes count: ${sentPushes.length} (Expected: 1)`);
-  if (sentPushes.length !== 1 || sentPushes[0].title !== "Test VIP Lounge" || sentPushes[0].body !== "Alex: Hey guys!") {
+  const testPushesC1 = sentPushes.filter(p => p.expoPushToken === "ExponentPushToken[test-user-token-12345]");
+  console.log(`Message 1 - Sent pushes count for test user: ${testPushesC1.length} (Expected: 1)`);
+  if (testPushesC1.length !== 1 || testPushesC1[0].title !== "Test VIP Lounge" || testPushesC1[0].body !== "Alex: Hey guys!") {
     throw new Error("Continuation notification message 1 failed!");
   }
 
@@ -290,8 +319,9 @@ async function runTests() {
     message: "Are we drinking?",
     type: "text"
   });
-  console.log(`Message 2 - Sent pushes count: ${sentPushes.length} (Expected: 1)`);
-  if (sentPushes.length !== 1 || sentPushes[0].title !== "Test VIP Lounge" || sentPushes[0].body !== "Alex: Are we drinking?") {
+  const testPushesC2 = sentPushes.filter(p => p.expoPushToken === "ExponentPushToken[test-user-token-12345]");
+  console.log(`Message 2 - Sent pushes count for test user: ${testPushesC2.length} (Expected: 1)`);
+  if (testPushesC2.length !== 1 || testPushesC2[0].title !== "Test VIP Lounge" || testPushesC2[0].body !== "Alex: Are we drinking?") {
     throw new Error("Continuation notification message 2 (bypass) failed!");
   }
   console.log("Continuation notifications for engaged user passed!");
@@ -567,6 +597,51 @@ async function runTests() {
     throw new Error("Live activity: Crazy status test failed!");
   }
   console.log("Live activity: Crazy status test passed!");
+
+  // 6e. Test Live Activity: Hourly rate limit (max 2 per hour)
+  console.log("\n6e. Testing Live Activity: Hourly rate-limiting (should stop after 2 sends)...");
+  // Clean up user document liveNotificationTimes first
+  await db.collection('users').doc(testUserId).update({
+    liveNotificationTimes: []
+  });
+
+  sentPushes = [];
+  
+  // Attempt 1: Should succeed
+  await sendRateLimitedPushNotification(
+    testUserId,
+    `🔥 Live Activity`,
+    "Live activity message 1",
+    { venueId: testVenueId, type: 'live' },
+    `live_test_1`,
+    0
+  );
+  
+  // Attempt 2: Should succeed
+  await sendRateLimitedPushNotification(
+    testUserId,
+    `🔥 Live Activity`,
+    "Live activity message 2",
+    { venueId: testVenueId, type: 'live' },
+    `live_test_2`,
+    0
+  );
+
+  // Attempt 3: Should be blocked by hourly limit (since it's the 3rd 'live' notification within 1 hour)
+  await sendRateLimitedPushNotification(
+    testUserId,
+    `🔥 Live Activity`,
+    "Live activity message 3",
+    { venueId: testVenueId, type: 'live' },
+    `live_test_3`,
+    0
+  );
+
+  console.log(`Live activity hourly count: ${sentPushes.length} (Expected: 2)`);
+  if (sentPushes.length !== 2) {
+    throw new Error("Live activity hourly rate limit failed!");
+  }
+  console.log("Live activity hourly rate limit passed!");
 
   // Cleanup Database
   console.log("\nCleaning up test data...");
