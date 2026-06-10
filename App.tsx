@@ -23,6 +23,9 @@ import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { useReferralTracker } from './hooks/useReferralTracker';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LiveVenuesProvider } from './contexts/LiveVenuesContext';
+import { useVersionCheck } from './hooks/useVersionCheck';
+import { UpdatePromptModal } from './components/UpdatePromptModal';
+
 
 // Initialize Firebase (will be evaluated once)
 import './services/firebase';
@@ -38,6 +41,11 @@ export default function App() {
 
   // Track creator referral installs on first open
   useReferralTracker();
+
+  // Check for app updates
+  const versionInfo = useVersionCheck();
+  const [hasDismissedFlexibleUpdate, setHasDismissedFlexibleUpdate] = React.useState(false);
+
 
   React.useEffect(() => {
 
@@ -103,6 +111,13 @@ export default function App() {
 
         </NavigationContainer>
       </LiveVenuesProvider>
+      <UpdatePromptModal
+        isVisible={versionInfo.showPrompt && (versionInfo.isForced || !hasDismissedFlexibleUpdate)}
+        isForced={versionInfo.isForced}
+        latestVersion={versionInfo.latestVersion}
+        updateUrl={versionInfo.updateUrl}
+        onClose={() => setHasDismissedFlexibleUpdate(true)}
+      />
       <Toast config={toastConfig} topOffset={60} />
     </ErrorBoundary>
   );

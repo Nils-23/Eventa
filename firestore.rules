@@ -52,7 +52,7 @@ service cloud.firestore {
 
     // Settings (e.g. simulation settings)
     match /settings/{settingId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() || settingId == 'app_config';
       allow write: if isAdmin();
     }
 
