@@ -14,6 +14,7 @@
     "production": {
       "autoIncrement": false,
       "env": {
+        "ANDROID_HOME": "/opt/homebrew/share/android-commandlinetools",
         "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyApVeGl1TaO4o_7Uf9KzTNa3OCrxNJJzj8",
         "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "eventa-211fb.firebaseapp.com",
         "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "eventa-211fb",

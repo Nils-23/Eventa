@@ -13,7 +13,7 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "buildNumber": "2",
+      "buildNumber": "22",
       "supportsTablet": true,
       "bundleIdentifier": "com.nils23.Eventa",
       "googleServicesFile": "./GoogleService-Info.plist",
@@ -53,7 +53,7 @@
       "usesAppleSignIn": true
     },
     "android": {
-      "versionCode": 2,
+      "versionCode": 22,
       "adaptiveIcon": {
         "foregroundImage": "./assets/App_icon.png",
         "backgroundColor": "#ffffff"
