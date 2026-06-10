@@ -11,25 +11,25 @@ if (admin.apps.length === 0) {
 const db = admin.firestore();
 
 async function setVersionConfig(mode) {
-  let latestVersion = "1.0.2";
-  let minimumVersion = "1.0.2";
+  let latestVersion = "1.0.3";
+  let minimumVersion = "1.0.3";
 
   if (mode === 'forced') {
+    latestVersion = "1.0.4";
+    minimumVersion = "1.0.4";
+    console.log("Setting app_config for FORCED update (latest: 1.0.4, minimum: 1.0.4)");
+  } else if (mode === 'flexible') {
+    latestVersion = "1.0.4";
+    minimumVersion = "1.0.3";
+    console.log("Setting app_config for FLEXIBLE update (latest: 1.0.4, minimum: 1.0.3)");
+  } else if (mode === 'none') {
+    latestVersion = "1.0.3";
+    minimumVersion = "1.0.2";
+    console.log("Setting app_config for NO update prompt (latest: 1.0.3, minimum: 1.0.2)");
+  } else {
     latestVersion = "1.0.3";
     minimumVersion = "1.0.3";
-    console.log("Setting app_config for FORCED update (latest: 1.0.3, minimum: 1.0.3)");
-  } else if (mode === 'flexible') {
-    latestVersion = "1.0.3";
-    minimumVersion = "1.0.2";
-    console.log("Setting app_config for FLEXIBLE update (latest: 1.0.3, minimum: 1.0.2)");
-  } else if (mode === 'none') {
-    latestVersion = "1.0.2";
-    minimumVersion = "1.0.1";
-    console.log("Setting app_config for NO update prompt (latest: 1.0.2, minimum: 1.0.1)");
-  } else {
-    latestVersion = "1.0.2";
-    minimumVersion = "1.0.2";
-    console.log("Setting app_config to DEFAULT values (latest: 1.0.2, minimum: 1.0.2)");
+    console.log("Setting app_config to DEFAULT values (latest: 1.0.3, minimum: 1.0.3)");
   }
 
   try {

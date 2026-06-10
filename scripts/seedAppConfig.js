@@ -12,8 +12,8 @@ async function seedAppConfig() {
   console.log("Seeding app_config in settings collection...");
   try {
     await db.collection('settings').doc('app_config').set({
-      latestVersion: "1.0.2",
-      minimumVersion: "1.0.2",
+      latestVersion: "1.0.3",
+      minimumVersion: "1.0.3",
       androidUrl: "https://play.google.com/store/apps/details?id=com.nils23.Eventa",
       iosUrl: "https://apps.apple.com/app/eventas/id6769403503"
     });
