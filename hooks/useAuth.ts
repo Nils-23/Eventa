@@ -27,6 +27,7 @@ export const useAuth = () => {
           }
         } catch (error) {
           console.error("Error fetching user data:", error);
+          setUser(null);
           setIsAdmin(false);
           setHasAgreedToTerms(false);
           setHiddenUsers([]);

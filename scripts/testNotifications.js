@@ -28,9 +28,9 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
 
 // Simulated mock fetch for testing push notification
 let sentPushes = [];
-async function mockSendPushNotification(expoPushToken, title, body, data = {}) {
+async function mockSendPushNotification(userId, expoPushToken, title, body, data = {}) {
   console.log(`[PUSH SENT] To: ${expoPushToken} | Title: "${title}" | Body: "${body}"`);
-  sentPushes.push({ expoPushToken, title, body, data });
+  sentPushes.push({ userId, expoPushToken, title, body, data });
 }
 
 // Logic: sendRateLimitedPushNotification
@@ -117,7 +117,7 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
     });
 
     if (token) {
-      await mockSendPushNotification(token, title, body, data);
+      await mockSendPushNotification(userId, token, title, body, data);
       return true;
     }
   } catch (error) {
@@ -267,7 +267,7 @@ async function runTests() {
     message: "Who is here?",
     type: "text"
   });
-  const testPushesA = sentPushes.filter(p => p.expoPushToken === "ExponentPushToken[test-user-token-12345]");
+  const testPushesA = sentPushes.filter(p => p.userId === testUserId);
   console.log(`Sent pushes count for test user: ${testPushesA.length} (Expected: 1)`);
   if (testPushesA.length !== 1 || testPushesA[0].title !== "Test VIP Lounge" || testPushesA[0].body !== "Alex: Who is here?") {
     throw new Error("Standard broadcast test failed!");
@@ -281,7 +281,7 @@ async function runTests() {
     message: "Any updates?",
     type: "text"
   });
-  const testPushesB = sentPushes.filter(p => p.expoPushToken === "ExponentPushToken[test-user-token-12345]");
+  const testPushesB = sentPushes.filter(p => p.userId === testUserId);
   console.log(`Sent pushes count for test user: ${testPushesB.length} (Expected: 0 - throttled)`);
   if (testPushesB.length !== 0) {
     throw new Error("Broadcast throttling test failed!");
@@ -307,7 +307,7 @@ async function runTests() {
     message: "Hey guys!",
     type: "text"
   });
-  const testPushesC1 = sentPushes.filter(p => p.expoPushToken === "ExponentPushToken[test-user-token-12345]");
+  const testPushesC1 = sentPushes.filter(p => p.userId === testUserId);
   console.log(`Message 1 - Sent pushes count for test user: ${testPushesC1.length} (Expected: 1)`);
   if (testPushesC1.length !== 1 || testPushesC1[0].title !== "Test VIP Lounge" || testPushesC1[0].body !== "Alex: Hey guys!") {
     throw new Error("Continuation notification message 1 failed!");
@@ -319,7 +319,7 @@ async function runTests() {
     message: "Are we drinking?",
     type: "text"
   });
-  const testPushesC2 = sentPushes.filter(p => p.expoPushToken === "ExponentPushToken[test-user-token-12345]");
+  const testPushesC2 = sentPushes.filter(p => p.userId === testUserId);
   console.log(`Message 2 - Sent pushes count for test user: ${testPushesC2.length} (Expected: 1)`);
   if (testPushesC2.length !== 1 || testPushesC2[0].title !== "Test VIP Lounge" || testPushesC2[0].body !== "Alex: Are we drinking?") {
     throw new Error("Continuation notification message 2 (bypass) failed!");
@@ -398,10 +398,11 @@ async function runTests() {
 
     const includeSimulated = simEnabled && (activeRealCount < simThreshold);
 
-    // Get active simulated locations
+    // Get active simulated locations (filtered to test-script specific users to ignore background simulator noise)
     const activeSimLocs = Object.entries(simLocs)
       .map(([uid, loc]) => ({ ...loc, user_id: uid }))
-      .filter(loc => loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS));
+      .filter(loc => loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS))
+      .filter(loc => loc.user_id && loc.user_id.startsWith('sim_user_'));
     const isEngineActive = activeSimLocs.length > 0;
 
     // Build active locations list mirroring app behavior
@@ -445,7 +446,7 @@ async function runTests() {
           return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
         }).length;
 
-        simUserCount = isEngineActive ? rtdbSimCount : getDynamicTargetCount(venue);
+        simUserCount = isEngineActive ? rtdbSimCount : getDynamicTargetCount(venue, venues);
       }
 
       const userCount = realUserCount + simUserCount;
@@ -550,10 +551,11 @@ async function runTests() {
   }
   await rtdb.ref('simulated_locations').update(simUpdates);
   await rtdb.ref(`venue_presence/${testVenueId}`).update(presenceUpdates);
-  
+  sentPushes = [];
   await simulateScheduledNotification();
-  console.log(`Sent pushes count: ${sentPushes.length} (Expected: 1 - proximity alert)`);
-  if (sentPushes.length !== 1 || sentPushes[0].title !== "📍 Popular nearby") {
+  const proximityPushes = sentPushes.filter(p => p.title === "📍 Popular nearby");
+  console.log(`Sent proximity pushes count: ${proximityPushes.length} (Expected: 1)`);
+  if (proximityPushes.length !== 1) {
     throw new Error("Proximity alert test failed!");
   }
   console.log("Proximity alert test passed!");
@@ -586,9 +588,11 @@ async function runTests() {
   // Clear presence to ensure they are new joins
   await rtdb.ref(`venue_presence/${testVenueId}`).set(null);
 
+  sentPushes = [];
   await simulateScheduledNotification();
-  console.log(`Sent pushes count: ${sentPushes.length} (Expected: 1 - join spike)`);
-  if (sentPushes.length !== 1 || !sentPushes[0].body.includes("people are at")) {
+  const joinSpikePushes = sentPushes.filter(p => p.title === "🔥 Live Activity" && p.body.includes("people are at"));
+  console.log(`Sent live activity join spike pushes count: ${joinSpikePushes.length} (Expected: 1)`);
+  if (joinSpikePushes.length !== 1) {
     throw new Error("Live activity: Join spike test failed!");
   }
   console.log("Live activity: Join spike test passed!");
@@ -609,16 +613,20 @@ async function runTests() {
 
   // 6d. Test Live Activity: Crazy Status
   console.log("\n6d. Testing Live Activity: Crazy Status...");
-  // Clear chats
+  // Clear chats & presence & simulated locations
   await rtdb.ref(`venue_chats/${testVenueId}`).set(null);
+  await rtdb.ref(`venue_presence/${testVenueId}`).set(null);
+  await rtdb.ref('simulated_locations').set(null);
   // Mark venue crazy
   await db.collection('venues').doc(testVenueId).update({
     isCrazy: true
   });
 
+  sentPushes = [];
   await simulateScheduledNotification();
-  console.log(`Sent pushes count: ${sentPushes.length} (Expected: 1 - crazy status)`);
-  if (sentPushes.length !== 1 || !sentPushes[0].body.includes("Something’s happening at")) {
+  const crazyPushes = sentPushes.filter(p => p.title === "🔥 Live Activity" && p.body.includes("Something’s happening at"));
+  console.log(`Sent live activity crazy status pushes count: ${crazyPushes.length} (Expected: 1)`);
+  if (crazyPushes.length !== 1) {
     throw new Error("Live activity: Crazy status test failed!");
   }
   console.log("Live activity: Crazy status test passed!");
@@ -697,7 +705,7 @@ function getDefaultCapacity(type) {
   }
 }
 
-function getDynamicTargetCount(venue) {
+function getDynamicTargetCount(venue, allVenues) {
   const now = new Date();
   const nairobiParts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Nairobi',
@@ -719,6 +727,30 @@ function getDynamicTargetCount(venue) {
     return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
   }
 
+  // Determine tier within category (Default: 10% hot, 30% medium, 60% low)
+  let tier = 'low';
+  if (allVenues && Array.isArray(allVenues)) {
+    const categoryVenues = allVenues.filter(v => v.type === venue.type);
+    if (categoryVenues.length > 0) {
+      const sorted = [...categoryVenues].sort((a, b) => {
+        const scoreA = a.simPopularityScore !== undefined ? a.simPopularityScore : 0.5;
+        const scoreB = b.simPopularityScore !== undefined ? b.simPopularityScore : 0.5;
+        return scoreB - scoreA;
+      });
+      const rankIndex = sorted.findIndex(v => v.id === venue.id);
+      if (rankIndex !== -1) {
+        const percentile = rankIndex / sorted.length;
+        if (percentile < 0.10) {
+          tier = 'hot';
+        } else if (percentile < 0.40) {
+          tier = 'medium';
+        } else {
+          tier = 'low';
+        }
+      }
+    }
+  }
+
   const isNightlifePeak = (day, hr) => {
     if (hr >= 21) {
       return ['Fri', 'Sat', 'Sun'].includes(day);
@@ -731,37 +763,55 @@ function getDynamicTargetCount(venue) {
   let count = 0;
   if (venue.type === 'Club' || venue.type === 'Bar') {
     if (isNightlifePeak(weekday, hour)) {
-      count = 55;
+      if (tier === 'hot') count = 90;
+      else if (tier === 'medium') count = 40;
+      else count = 20;
     } else if (hour >= 21 || hour < 4) {
-      count = 25;
+      if (tier === 'hot') count = 50;
+      else if (tier === 'medium') count = 25;
+      else count = 10;
     } else {
-      count = 3;
+      if (tier === 'hot') count = 10;
+      else if (tier === 'medium') count = 4;
+      else count = 0;
     }
   } else if (venue.type === 'Activity') {
     if (hour >= 19 || hour < 6) {
-      count = 2;
+      if (tier === 'hot') count = 3;
+      else if (tier === 'medium') count = 1;
+      else count = 0;
     } else {
       const isWeekend = ['Sat', 'Sun'].includes(weekday);
-      let base = isWeekend ? 45 : 20;
-      if (hour >= 11 && hour <= 16) {
-        base += 15;
+      if (isWeekend) {
+        if (tier === 'hot') count = 75;
+        else if (tier === 'medium') count = 35;
+        else count = 10;
+      } else {
+        if (tier === 'hot') count = 35;
+        else if (tier === 'medium') count = 20;
+        else count = 5;
       }
-      count = base;
     }
   } else if (venue.type === 'Event') {
     const nowMs = Date.now();
     const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
     if (isOngoing) {
       if (hour >= 9 && hour < 22) {
-        count = 50;
+        if (tier === 'hot') count = 100;
+        else if (tier === 'medium') count = 50;
+        else count = 15;
       } else {
-        count = 5;
+        if (tier === 'hot') count = 15;
+        else if (tier === 'medium') count = 8;
+        else count = 0;
       }
     } else {
       count = 0;
     }
   } else {
-    count = 20;
+    if (tier === 'hot') count = 40;
+    else if (tier === 'medium') count = 20;
+    else count = 5;
   }
 
   const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);

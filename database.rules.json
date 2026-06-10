@@ -27,6 +27,10 @@
           ".write": "auth != null && $userId === auth.uid"
         }
       }
+    },
+    "venue_presence": {
+      ".read": "auth != null",
+      ".write": "auth != null"
     }
   }
 }

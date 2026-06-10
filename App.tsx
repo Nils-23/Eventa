@@ -87,6 +87,7 @@ export default function App() {
               headerShown: false,
               contentStyle: { backgroundColor: '#121212' },
               gestureEnabled: true,
+              fullScreenGestureEnabled: true,
             }}
           >
             {!user ? (

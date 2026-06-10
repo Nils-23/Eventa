@@ -61,6 +61,7 @@ interface RawVenue {
   simulatedUsersCount?: number;
   isOverride?: boolean;
   maxCapacity?: number;
+  simPopularityScore?: number;
   type?: 'Club' | 'Bar' | 'Activity' | 'Event';
   expirationDate?: number;
   startDate?: number;
@@ -79,28 +80,35 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
   const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
-function toActivityLevel(count: number): ActivityLevel {
-  if (count === 0) return 'None';
-  if (count <= 25) return 'Low';
-  if (count <= 50) return 'Medium';
-  if (count <= 75) return 'High';
-  return 'Crazy';
+function toActivityLevel(count: number): 'Crazy' | 'High' | 'Medium' | 'Low' | 'None' {
+  if (count >= 50) return 'Crazy';
+  if (count >= 20) return 'High';
+  if (count >= 10) return 'Medium';
+  if (count > 0) return 'Low';
+  return 'None';
 }
 
-function toActivityColor(level: ActivityLevel): string {
+function toActivityColor(level: 'Crazy' | 'High' | 'Medium' | 'Low' | 'None'): string {
   switch (level) {
-    case 'Crazy':  return '#FF0055';
-    case 'High':   return '#FF5E00';
-    case 'Medium': return '#00FFCC';
-    case 'Low':    return '#4169E1';
-    default:       return '#555555';
+    case 'Crazy':
+      return '#FF2D55'; // Vibrant Neon Red-Pink
+    case 'High':
+      return '#FF9500'; // Vibrant Neon Orange
+    case 'Medium':
+      return '#FFCC00'; // Vibrant Neon Yellow
+    case 'Low':
+      return '#4CD964'; // Vibrant Neon Green
+    case 'None':
+      return '#8E8E93'; // Neutral gray
   }
 }
+
 function areVenuesEqual(a: LiveVenue[], b: LiveVenue[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -134,7 +142,7 @@ export function getDefaultCapacity(type?: 'Club' | 'Bar' | 'Activity' | 'Event')
   }
 }
 
-export function getDynamicTargetCount(venue: RawVenue): number {
+export function getDynamicTargetCount(venue: RawVenue, allVenues?: RawVenue[]): number {
   const now = new Date();
   const nairobiParts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Nairobi',
@@ -156,6 +164,30 @@ export function getDynamicTargetCount(venue: RawVenue): number {
     return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
   }
 
+  // Determine tier within category (Default: 10% hot, 30% medium, 60% low)
+  let tier: 'hot' | 'medium' | 'low' = 'low';
+  if (allVenues && Array.isArray(allVenues)) {
+    const categoryVenues = allVenues.filter(v => v.type === venue.type);
+    if (categoryVenues.length > 0) {
+      const sorted = [...categoryVenues].sort((a, b) => {
+        const scoreA = a.simPopularityScore !== undefined ? a.simPopularityScore : 0.5;
+        const scoreB = b.simPopularityScore !== undefined ? b.simPopularityScore : 0.5;
+        return scoreB - scoreA;
+      });
+      const rankIndex = sorted.findIndex(v => v.id === venue.id);
+      if (rankIndex !== -1) {
+        const percentile = rankIndex / sorted.length;
+        if (percentile < 0.10) {
+          tier = 'hot';
+        } else if (percentile < 0.40) {
+          tier = 'medium';
+        } else {
+          tier = 'low';
+        }
+      }
+    }
+  }
+
   const isNightlifePeak = (day: string, hr: number) => {
     if (hr >= 21) {
       return ['Fri', 'Sat', 'Sun'].includes(day);
@@ -168,37 +200,55 @@ export function getDynamicTargetCount(venue: RawVenue): number {
   let count = 0;
   if (venue.type === 'Club' || venue.type === 'Bar') {
     if (isNightlifePeak(weekday, hour)) {
-      count = 55;
+      if (tier === 'hot') count = 90;
+      else if (tier === 'medium') count = 40;
+      else count = 20;
     } else if (hour >= 21 || hour < 4) {
-      count = 25;
+      if (tier === 'hot') count = 50;
+      else if (tier === 'medium') count = 25;
+      else count = 10;
     } else {
-      count = 3;
+      if (tier === 'hot') count = 10;
+      else if (tier === 'medium') count = 4;
+      else count = 0;
     }
   } else if (venue.type === 'Activity') {
     if (hour >= 19 || hour < 6) {
-      count = 2;
+      if (tier === 'hot') count = 3;
+      else if (tier === 'medium') count = 1;
+      else count = 0;
     } else {
       const isWeekend = ['Sat', 'Sun'].includes(weekday);
-      let base = isWeekend ? 45 : 20;
-      if (hour >= 11 && hour <= 16) {
-        base += 15;
+      if (isWeekend) {
+        if (tier === 'hot') count = 75;
+        else if (tier === 'medium') count = 35;
+        else count = 10;
+      } else {
+        if (tier === 'hot') count = 35;
+        else if (tier === 'medium') count = 20;
+        else count = 5;
       }
-      count = base;
     }
   } else if (venue.type === 'Event') {
     const nowMs = Date.now();
     const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
     if (isOngoing) {
       if (hour >= 9 && hour < 22) {
-        count = 50;
+        if (tier === 'hot') count = 100;
+        else if (tier === 'medium') count = 50;
+        else count = 15;
       } else {
-        count = 5;
+        if (tier === 'hot') count = 15;
+        else if (tier === 'medium') count = 8;
+        else count = 0;
       }
     } else {
       count = 0;
     }
   } else {
-    count = 20;
+    if (tier === 'hot') count = 40;
+    else if (tier === 'medium') count = 20;
+    else count = 5;
   }
 
   const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
@@ -324,7 +374,7 @@ function computeLiveData(
       if (isEngineActive) {
         simUserCount = rtdbSimCount;
       } else {
-        simUserCount = getDynamicTargetCount(venue);
+        simUserCount = getDynamicTargetCount(venue, venues);
       }
     }
 
