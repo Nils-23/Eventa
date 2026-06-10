@@ -2,19 +2,19 @@ const admin = require('firebase-admin');
 const serviceAccount = require('./serviceAccountKey.json');
 
 // Initialize Firebase Admin
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-  databaseURL: `https://${serviceAccount.project_id}-default-rtdb.firebaseio.com`
-});
+if (admin.apps.length === 0) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: `https://${serviceAccount.project_id}-default-rtdb.firebaseio.com`
+  });
+}
 
 const db = admin.firestore();
 const rtdb = admin.database();
 
 const MAX_RADIUS_METERS = 200; // Roam within 200m
 const UPDATE_INTERVAL_MS = 15000; // Update every 15 seconds
-const DEFAULT_USERS_PER_VENUE = 80;
 
-// Helper to calculate a new location within distance
 function offsetLocation(lat, lon, maxDistanceMeters) {
   const radiusInDegrees = maxDistanceMeters / 111111;
   const u = Math.random();
@@ -30,7 +30,6 @@ function offsetLocation(lat, lon, maxDistanceMeters) {
   return { latitude: newLat, longitude: newLon };
 }
 
-// Helper to move a bit towards target or randomly
 function moveLocation(currentLat, currentLon, centerLat, centerLon, stepMeters) {
   let { latitude, longitude } = offsetLocation(currentLat, currentLon, stepMeters);
   
@@ -55,20 +54,109 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+function getDefaultCapacity(type) {
+  switch (type) {
+    case 'Club': return 250;
+    case 'Bar': return 100;
+    case 'Activity': return 200;
+    case 'Event': return 500;
+    default: return 100;
+  }
+}
+
+function getDynamicTargetCount(venue) {
+  const now = new Date();
+  const nairobiParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Nairobi',
+    weekday: 'short',
+    hour: 'numeric',
+    hour12: false
+  }).formatToParts(now);
+
+  let weekday = 'Mon';
+  let hour = 12;
+
+  nairobiParts.forEach(p => {
+    if (p.type === 'weekday') weekday = p.value;
+    if (p.type === 'hour') hour = parseInt(p.value, 10);
+  });
+
+  const isOverride = venue.isOverride === true;
+  if (isOverride) {
+    return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
+  }
+
+  const isNightlifePeak = (day, hr) => {
+    if (hr >= 21) {
+      return ['Fri', 'Sat', 'Sun'].includes(day);
+    } else if (hr < 4) {
+      return ['Sat', 'Sun', 'Mon'].includes(day);
+    }
+    return false;
+  };
+
+  let count = 0;
+  if (venue.type === 'Club' || venue.type === 'Bar') {
+    if (isNightlifePeak(weekday, hour)) {
+      count = 55;
+    } else if (hour >= 21 || hour < 4) {
+      count = 25;
+    } else {
+      count = 3;
+    }
+  } else if (venue.type === 'Activity') {
+    if (hour >= 19 || hour < 6) {
+      count = 2;
+    } else {
+      const isWeekend = ['Sat', 'Sun'].includes(weekday);
+      let base = isWeekend ? 45 : 20;
+      if (hour >= 11 && hour <= 16) {
+        base += 15;
+      }
+      count = base;
+    }
+  } else if (venue.type === 'Event') {
+    const nowMs = Date.now();
+    const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
+    if (isOngoing) {
+      if (hour >= 9 && hour < 22) {
+        count = 50;
+      } else {
+        count = 5;
+      }
+    } else {
+      count = 0;
+    }
+  } else {
+    count = 20;
+  }
+
+  const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+  count = Math.min(count, maxCapacity);
+
+  if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
+    count = Math.min(count, 5);
+  }
+  if ((venue.type === 'Club' || venue.type === 'Bar') && isNightlifePeak(weekday, hour)) {
+    count = Math.max(count, 20);
+  }
+
+  return Math.max(0, count);
+}
+
 let simulatedUsers = [];
+let activeVenues = [];
 
 function syncVenueUsers(venue, targetCount) {
-  // Count how many users we currently have for this venue
   const currentUsers = simulatedUsers.filter(u => u.venueId === venue.id);
   const currentCount = currentUsers.length;
 
   if (currentCount < targetCount) {
-    // Need to spawn more
     const toSpawn = targetCount - currentCount;
     for (let i = 0; i < toSpawn; i++) {
       const loc = offsetLocation(venue.latitude, venue.longitude, MAX_RADIUS_METERS / 2);
       simulatedUsers.push({
-        user_id: `sim_${venue.id}_${Date.now()}_${i}`,
+        user_id: `sim_${venue.id}_${Date.now()}_${i}_${Math.floor(Math.random() * 100000)}`,
         venueId: venue.id,
         centerLat: venue.latitude,
         centerLon: venue.longitude,
@@ -79,16 +167,11 @@ function syncVenueUsers(venue, targetCount) {
     }
     console.log(`[+] Spawned ${toSpawn} new users for venue ${venue.name}. Total: ${targetCount}`);
   } else if (currentCount > targetCount) {
-    // Need to despawn
     const toRemove = currentCount - targetCount;
-    
-    // Grab the ones we want to remove
     const despawnList = currentUsers.slice(0, toRemove).map(u => u.user_id);
     
-    // Remove from active array
     simulatedUsers = simulatedUsers.filter(u => !despawnList.includes(u.user_id));
     
-    // Remove from RTDB
     const locationsRef = rtdb.ref('simulated_locations');
     const updates = {};
     despawnList.forEach(uid => {
@@ -105,22 +188,112 @@ async function startSimulation() {
   
   // Listen to changes in venues dynamically
   db.collection('venues').onSnapshot((snapshot) => {
-    snapshot.docChanges().forEach((change) => {
-      const venue = { id: change.doc.id, ...change.doc.data() };
-      const targetCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : DEFAULT_USERS_PER_VENUE;
+    activeVenues = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    
+    // Sync counts immediately
+    activeVenues.forEach(venue => {
+      const currentUsers = simulatedUsers.filter(u => u.venueId === venue.id);
+      const currentCount = currentUsers.length;
 
-      if (change.type === 'added' || change.type === 'modified') {
-        syncVenueUsers(venue, targetCount);
+      const baseTarget = getDynamicTargetCount(venue);
+      const variation = (Math.random() * 0.3 - 0.15);
+      let variableTarget = Math.round(baseTarget * (1 + variation));
+
+      const isOverride = venue.isOverride === true;
+      if (!isOverride) {
+        const now = new Date();
+        const nairobiParts = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Africa/Nairobi',
+          weekday: 'short',
+          hour: 'numeric',
+          hour12: false
+        }).formatToParts(now);
+
+        let weekday = 'Mon';
+        let hour = 12;
+
+        nairobiParts.forEach(p => {
+          if (p.type === 'weekday') weekday = p.value;
+          if (p.type === 'hour') hour = parseInt(p.value, 10);
+        });
+
+        const isNightlifePeak = (day, hr) => {
+          if (hr >= 21) {
+            return ['Fri', 'Sat', 'Sun'].includes(day);
+          } else if (hr < 4) {
+            return ['Sat', 'Sun', 'Mon'].includes(day);
+          }
+          return false;
+        };
+
+        if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
+          variableTarget = Math.min(variableTarget, 5);
+        }
+        if ((venue.type === 'Club' || venue.type === 'Bar') && isNightlifePeak(weekday, hour)) {
+          variableTarget = Math.max(variableTarget, 20);
+        }
       }
-      
-      if (change.type === 'removed') {
-        syncVenueUsers(venue, 0); // Remove all users for this venue
-      }
+
+      const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+      const finalTarget = Math.max(0, Math.min(variableTarget, maxCapacity));
+      const targetCount = Math.round(currentCount * 0.7 + finalTarget * 0.3);
+
+      syncVenueUsers(venue, targetCount);
     });
   });
 
-  // Run update loop immediately and then every UPDATE_INTERVAL_MS
   const tick = () => {
+    // 1. Sync counts for all venues first on every tick
+    activeVenues.forEach(venue => {
+      const currentUsers = simulatedUsers.filter(u => u.venueId === venue.id);
+      const currentCount = currentUsers.length;
+
+      const baseTarget = getDynamicTargetCount(venue);
+      const variation = (Math.random() * 0.3 - 0.15);
+      let variableTarget = Math.round(baseTarget * (1 + variation));
+
+      const isOverride = venue.isOverride === true;
+      if (!isOverride) {
+        const now = new Date();
+        const nairobiParts = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Africa/Nairobi',
+          weekday: 'short',
+          hour: 'numeric',
+          hour12: false
+        }).formatToParts(now);
+
+        let weekday = 'Mon';
+        let hour = 12;
+
+        nairobiParts.forEach(p => {
+          if (p.type === 'weekday') weekday = p.value;
+          if (p.type === 'hour') hour = parseInt(p.value, 10);
+        });
+
+        const isNightlifePeak = (day, hr) => {
+          if (hr >= 21) {
+            return ['Fri', 'Sat', 'Sun'].includes(day);
+          } else if (hr < 4) {
+            return ['Sat', 'Sun', 'Mon'].includes(day);
+          }
+          return false;
+        };
+
+        if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
+          variableTarget = Math.min(variableTarget, 5);
+        }
+        if ((venue.type === 'Club' || venue.type === 'Bar') && isNightlifePeak(weekday, hour)) {
+          variableTarget = Math.max(variableTarget, 20);
+        }
+      }
+
+      const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+      const finalTarget = Math.max(0, Math.min(variableTarget, maxCapacity));
+      const targetCount = Math.round(currentCount * 0.7 + finalTarget * 0.3);
+
+      syncVenueUsers(venue, targetCount);
+    });
+
     if (simulatedUsers.length === 0) return;
     
     const locationsRef = rtdb.ref('simulated_locations');
@@ -128,7 +301,6 @@ async function startSimulation() {
     const now = Date.now();
 
     simulatedUsers.forEach(u => {
-      // Move them ~15 meters per tick
       const nextLoc = moveLocation(u.latitude, u.longitude, u.centerLat, u.centerLon, 15);
       u.latitude = nextLoc.latitude;
       u.longitude = nextLoc.longitude;

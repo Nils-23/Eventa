@@ -7,10 +7,12 @@ import {
   StyleSheet,
   Linking,
   Platform,
+  Alert,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { LinearGradient } from 'expo-linear-gradient';
 import { Download, AlertTriangle, Sparkles, ShieldCheck, ArrowRight } from 'lucide-react-native';
+import * as Device from 'expo-device';
 
 interface UpdatePromptModalProps {
   isVisible: boolean;
@@ -27,10 +29,18 @@ export const UpdatePromptModal: React.FC<UpdatePromptModalProps> = ({
   updateUrl,
   onClose,
 }) => {
-  const insets = useSafeAreaInsets();
+
 
   const handleUpdate = async () => {
     if (updateUrl) {
+      if (Platform.OS === 'ios' && !Device.isDevice) {
+        Alert.alert(
+          'Simulator Update',
+          `You are running on the iOS Simulator where the App Store is not available.\n\nUpdate URL:\n${updateUrl}`,
+          [{ text: 'OK' }]
+        );
+        return;
+      }
       try {
         const supported = await Linking.canOpenURL(updateUrl);
         if (supported) {

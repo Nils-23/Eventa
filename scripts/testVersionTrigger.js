@@ -11,7 +11,7 @@ if (admin.apps.length === 0) {
 const db = admin.firestore();
 
 async function setVersionConfig(mode) {
-  let latestVersion = "1.0.3";
+  let latestVersion = "1.0.2";
   let minimumVersion = "1.0.2";
 
   if (mode === 'forced') {
@@ -27,7 +27,9 @@ async function setVersionConfig(mode) {
     minimumVersion = "1.0.1";
     console.log("Setting app_config for NO update prompt (latest: 1.0.2, minimum: 1.0.1)");
   } else {
-    console.log("Setting app_config to DEFAULT values (latest: 1.0.3, minimum: 1.0.2)");
+    latestVersion = "1.0.2";
+    minimumVersion = "1.0.2";
+    console.log("Setting app_config to DEFAULT values (latest: 1.0.2, minimum: 1.0.2)");
   }
 
   try {

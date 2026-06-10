@@ -17,7 +17,10 @@ export const AdminSimulationScreen = () => {
   const { venues, scheduledVenues = [], isLoading } = useLiveVenues();
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingCounts, setEditingCounts] = useState<Record<string, string>>({});
+  const [editingCapacities, setEditingCapacities] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
+  const [newVenueMaxCapacity, setNewVenueMaxCapacity] = useState('');
+
 
   const filteredVenues = venues.filter(venue =>
     venue.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -129,7 +132,8 @@ export const AdminSimulationScreen = () => {
     try {
       const venueRef = doc(firestore, 'venues', venueId);
       await updateDoc(venueRef, {
-        simulatedUsersCount: count
+        simulatedUsersCount: count,
+        isOverride: true
       });
       Toast.show({ type: 'success', text1: 'Updated!', text2: `Simulated users count updated.` });
     } catch (error) {
@@ -137,6 +141,52 @@ export const AdminSimulationScreen = () => {
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to update simulated users count.' });
     }
   };
+
+  const handleResetToAuto = async (venueId: string) => {
+    try {
+      const venueRef = doc(firestore, 'venues', venueId);
+      await updateDoc(venueRef, {
+        isOverride: false
+      });
+      Toast.show({ type: 'success', text1: 'Reset Completed', text2: `Simulated users set to Auto.` });
+    } catch (error) {
+      console.error('Error resetting override status:', error);
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to reset override status.' });
+    }
+  };
+
+  const handleUpdateCapacity = async (venueId: string) => {
+    const value = editingCapacities[venueId];
+    if (!value) return;
+
+    const capacity = parseInt(value, 10);
+    if (isNaN(capacity) || capacity <= 0) {
+      Toast.show({ type: 'error', text1: 'Invalid Capacity', text2: 'Please enter a valid positive capacity.' });
+      return;
+    }
+
+    try {
+      const venueRef = doc(firestore, 'venues', venueId);
+      await updateDoc(venueRef, {
+        maxCapacity: capacity
+      });
+      Toast.show({ type: 'success', text1: 'Updated!', text2: `Maximum capacity updated to ${capacity}.` });
+    } catch (error) {
+      console.error('Error updating capacity:', error);
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to update maximum capacity.' });
+    }
+  };
+
+  const getDefaultCapacity = (type?: 'Club' | 'Bar' | 'Activity' | 'Event') => {
+    switch (type) {
+      case 'Club': return 250;
+      case 'Bar': return 100;
+      case 'Activity': return 200;
+      case 'Event': return 500;
+      default: return 100;
+    }
+  };
+
 
   const handleSelectCustomImage = async () => {
     try {
@@ -230,14 +280,20 @@ export const AdminSimulationScreen = () => {
       const newVenueId = `venue_${Date.now()}`;
       const venueRef = doc(firestore, 'venues', newVenueId);
       
+      const parsedCapacity = parseInt(newVenueMaxCapacity, 10);
+      const cap = (!isNaN(parsedCapacity) && parsedCapacity > 0) ? parsedCapacity : getDefaultCapacity(newVenueType);
+
       const venueData: any = {
         name: newVenueName,
         latitude: lat,
         longitude: lng,
         description: newVenueDesc,
         type: newVenueType,
-        simulatedUsersCount: 0
+        simulatedUsersCount: 0,
+        isOverride: false,
+        maxCapacity: cap
       };
+
       
       if (newVenueAddress) {
         venueData.address = newVenueAddress;
@@ -275,7 +331,9 @@ export const AdminSimulationScreen = () => {
       setNewVenueAddress('');
       setNewVenueGoogleImageUrl('');
       setCustomImageUri(null);
+      setNewVenueMaxCapacity('');
       setSuggestions([]);
+
     } catch (error) {
       console.error('Error creating venue:', error);
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to create new venue.' });
@@ -529,7 +587,10 @@ export const AdminSimulationScreen = () => {
                 <View style={styles.venueInfo}>
                   <Text style={styles.venueName}>{venue.name}</Text>
                   <Text style={styles.venueCurrentCount}>
-                    Current Target: {venue.simulatedUsersCount ?? 20}
+                    Current Target: {venue.isOverride ? `${venue.simulatedUsersCount ?? 20} (Override)` : 'Auto'}
+                  </Text>
+                  <Text style={styles.venueCurrentCount}>
+                    Max Capacity: {venue.maxCapacity ?? getDefaultCapacity(venue.type)}
                   </Text>
                   {venue.type && (
                     <Text style={styles.venueType}>Type: {venue.type}</Text>
@@ -544,23 +605,52 @@ export const AdminSimulationScreen = () => {
               </View>
               
               <View style={styles.venueActionRow}>
-                <View style={styles.countModifier}>
-                  <TextInput
-                    style={styles.countInput}
-                    keyboardType="numeric"
-                    placeholder={String(venue.simulatedUsersCount ?? 20)}
-                    placeholderTextColor="#666"
-                    value={editingCounts[venue.id] !== undefined ? editingCounts[venue.id] : ''}
-                    onChangeText={(text) => setEditingCounts(prev => ({ ...prev, [venue.id]: text }))}
-                  />
-                  <TouchableOpacity 
-                    style={styles.saveButton}
-                    onPress={() => handleUpdateCount(venue.id)}
-                  >
-                    <Save color="#000" size={14} />
-                    <Text style={styles.saveButtonText}>Set</Text>
-                  </TouchableOpacity>
+                <View style={{ flex: 1, gap: 8, minWidth: 180 }}>
+                  <View style={styles.countModifier}>
+                    <TextInput
+                      style={styles.countInput}
+                      keyboardType="numeric"
+                      placeholder={String(venue.simulatedUsersCount ?? 20)}
+                      placeholderTextColor="#666"
+                      value={editingCounts[venue.id] !== undefined ? editingCounts[venue.id] : ''}
+                      onChangeText={(text) => setEditingCounts(prev => ({ ...prev, [venue.id]: text }))}
+                    />
+                    <TouchableOpacity 
+                      style={styles.saveButton}
+                      onPress={() => handleUpdateCount(venue.id)}
+                    >
+                      <Save color="#000" size={14} />
+                      <Text style={styles.saveButtonText}>Set</Text>
+                    </TouchableOpacity>
+                    {venue.isOverride && (
+                      <TouchableOpacity 
+                        style={[styles.saveButton, { backgroundColor: '#FF8800' }]}
+                        onPress={() => handleResetToAuto(venue.id)}
+                      >
+                        <Text style={[styles.saveButtonText, { color: '#FFF' }]}>Auto</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <View style={styles.countModifier}>
+                    <TextInput
+                      style={styles.countInput}
+                      keyboardType="numeric"
+                      placeholder={String(venue.maxCapacity ?? getDefaultCapacity(venue.type))}
+                      placeholderTextColor="#666"
+                      value={editingCapacities[venue.id] !== undefined ? editingCapacities[venue.id] : ''}
+                      onChangeText={(text) => setEditingCapacities(prev => ({ ...prev, [venue.id]: text }))}
+                    />
+                    <TouchableOpacity 
+                      style={styles.saveButton}
+                      onPress={() => handleUpdateCapacity(venue.id)}
+                    >
+                      <Save color="#000" size={14} />
+                      <Text style={styles.saveButtonText}>Cap</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
+
 
                 <View style={styles.storyButtons}>
                   <TouchableOpacity 
@@ -803,7 +893,20 @@ export const AdminSimulationScreen = () => {
                 </View>
               </View>
 
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Max Capacity (Optional, default by type)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder={`e.g. ${getDefaultCapacity(newVenueType)}`}
+                  placeholderTextColor="#666"
+                  keyboardType="numeric"
+                  value={newVenueMaxCapacity}
+                  onChangeText={setNewVenueMaxCapacity}
+                />
+              </View>
+
               {(newVenueType === 'Activity' || newVenueType === 'Event') && (
+
                 <>
                   <View style={styles.formGroup}>
                     <Text style={styles.label}>Scheduled Start Date (Optional, YYYY-MM-DD)</Text>

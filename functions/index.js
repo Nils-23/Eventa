@@ -232,12 +232,130 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
     }
   });
 
+function getDefaultCapacity(type) {
+  switch (type) {
+    case 'Club': return 250;
+    case 'Bar': return 100;
+    case 'Activity': return 200;
+    case 'Event': return 500;
+    default: return 100;
+  }
+}
+
+function getDynamicTargetCount(venue) {
+  const now = new Date();
+  const nairobiParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Nairobi',
+    weekday: 'short',
+    hour: 'numeric',
+    hour12: false
+  }).formatToParts(now);
+
+  let weekday = 'Mon';
+  let hour = 12;
+
+  nairobiParts.forEach(p => {
+    if (p.type === 'weekday') weekday = p.value;
+    if (p.type === 'hour') hour = parseInt(p.value, 10);
+  });
+
+  const isOverride = venue.isOverride === true;
+  if (isOverride) {
+    return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
+  }
+
+  const isNightlifePeak = (day, hr) => {
+    if (hr >= 21) {
+      return ['Fri', 'Sat', 'Sun'].includes(day);
+    } else if (hr < 4) {
+      return ['Sat', 'Sun', 'Mon'].includes(day);
+    }
+    return false;
+  };
+
+  let count = 0;
+  if (venue.type === 'Club' || venue.type === 'Bar') {
+    if (isNightlifePeak(weekday, hour)) {
+      count = 55;
+    } else if (hour >= 21 || hour < 4) {
+      count = 25;
+    } else {
+      count = 3;
+    }
+  } else if (venue.type === 'Activity') {
+    if (hour >= 19 || hour < 6) {
+      count = 2;
+    } else {
+      const isWeekend = ['Sat', 'Sun'].includes(weekday);
+      let base = isWeekend ? 45 : 20;
+      if (hour >= 11 && hour <= 16) {
+        base += 15;
+      }
+      count = base;
+    }
+  } else if (venue.type === 'Event') {
+    const nowMs = Date.now();
+    const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
+    if (isOngoing) {
+      if (hour >= 9 && hour < 22) {
+        count = 50;
+      } else {
+        count = 5;
+      }
+    } else {
+      count = 0;
+    }
+  } else {
+    count = 20;
+  }
+
+  const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+  count = Math.min(count, maxCapacity);
+
+  if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
+    count = Math.min(count, 5);
+  }
+  if ((venue.type === 'Club' || venue.type === 'Bar') && isNightlifePeak(weekday, hour)) {
+    count = Math.max(count, 20);
+  }
+
+  return Math.max(0, count);
+}
+
+function isUnrealisticVenueTime(venue, day, hour) {
+  if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
+    return true;
+  }
+  if (venue.type === 'Club' && (hour >= 6 && hour < 18)) {
+    return true;
+  }
+  return false;
+}
+
 // Scheduled Notification Service
 exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(async (context) => {
+
   console.log('Running scheduled notification service...');
   const notifiedUserIds = new Set();
   
+  const currentDate = new Date();
+  const nairobiParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Nairobi',
+    weekday: 'short',
+    hour: 'numeric',
+    hour12: false
+  }).formatToParts(currentDate);
+
+  let weekday = 'Mon';
+  let hour = 12;
+
+  nairobiParts.forEach(p => {
+    if (p.type === 'weekday') weekday = p.value;
+    if (p.type === 'hour') hour = parseInt(p.value, 10);
+  });
+
   // 1. Load Venues
+
   const venuesSnap = await db.collection('venues').get();
   if (venuesSnap.empty) {
     console.log('No venues found.');
@@ -295,12 +413,19 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
   const allUsersWithToken = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   for (const venue of venues) {
-    // Determine active users (real + sim) currently at this venue
-    const currentUsersAtVenue = activeLocations
-      .filter(loc => {
-        if (loc.venueId) return loc.venueId === venue.id;
-        return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
-      })
+    const isUnrealistic = isUnrealisticVenueTime(venue, weekday, hour);
+    const includeSimulatedForVenue = includeSimulated && !isUnrealistic;
+
+    // Filter activeLocations for counts and presence checks at this venue
+    const venueLocations = activeLocations.filter(loc => {
+      if (isUnrealistic && loc.user_id && loc.user_id.startsWith('sim_')) {
+        return false;
+      }
+      if (loc.venueId) return loc.venueId === venue.id;
+      return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
+    });
+
+    const currentUsersAtVenue = venueLocations
       .map(loc => loc.user_id || 'unknown')
       .filter(uid => uid !== 'unknown');
 
@@ -310,18 +435,18 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
       return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
     }).length;
 
-    const rtdbSimCount = activeSimLocs.filter(loc => {
-      if (loc.venueId) return loc.venueId === venue.id;
-      return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
-    }).length;
-
     let simUserCount = 0;
-    if (includeSimulated) {
-      const customAdminCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
-      simUserCount = isEngineActive ? Math.max(rtdbSimCount, customAdminCount) : customAdminCount;
+    if (includeSimulatedForVenue) {
+      const rtdbSimCount = activeSimLocs.filter(loc => {
+        if (loc.venueId) return loc.venueId === venue.id;
+        return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
+      }).length;
+
+      simUserCount = isEngineActive ? rtdbSimCount : getDynamicTargetCount(venue);
     }
 
     const userCount = realUserCount + simUserCount;
+
 
     // Evaluate Live Activity signals
     let liveNotificationMessage = null;

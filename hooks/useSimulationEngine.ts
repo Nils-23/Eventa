@@ -39,7 +39,99 @@ function moveLocation(currentLat: number, currentLon: number, centerLat: number,
   return { latitude, longitude };
 }
 
+function getDefaultCapacity(type?: 'Club' | 'Bar' | 'Activity' | 'Event'): number {
+  if (!type) return 100;
+  switch (type) {
+    case 'Club': return 250;
+    case 'Bar': return 100;
+    case 'Activity': return 200;
+    case 'Event': return 500;
+    default: return 100;
+  }
+}
+
+function getDynamicTargetCount(venue: any): number {
+  const now = new Date();
+  const nairobiParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Nairobi',
+    weekday: 'short',
+    hour: 'numeric',
+    hour12: false
+  }).formatToParts(now);
+
+  let weekday = 'Mon';
+  let hour = 12;
+
+  nairobiParts.forEach(p => {
+    if (p.type === 'weekday') weekday = p.value;
+    if (p.type === 'hour') hour = parseInt(p.value, 10);
+  });
+
+  const isOverride = venue.isOverride === true;
+  if (isOverride) {
+    return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
+  }
+
+  const isNightlifePeak = (day: string, hr: number) => {
+    if (hr >= 21) {
+      return ['Fri', 'Sat', 'Sun'].includes(day);
+    } else if (hr < 4) {
+      return ['Sat', 'Sun', 'Mon'].includes(day);
+    }
+    return false;
+  };
+
+  let count = 0;
+  if (venue.type === 'Club' || venue.type === 'Bar') {
+    if (isNightlifePeak(weekday, hour)) {
+      count = 55;
+    } else if (hour >= 21 || hour < 4) {
+      count = 25;
+    } else {
+      count = 3;
+    }
+  } else if (venue.type === 'Activity') {
+    if (hour >= 19 || hour < 6) {
+      count = 2;
+    } else {
+      const isWeekend = ['Sat', 'Sun'].includes(weekday);
+      let base = isWeekend ? 45 : 20;
+      if (hour >= 11 && hour <= 16) {
+        base += 15;
+      }
+      count = base;
+    }
+  } else if (venue.type === 'Event') {
+    const nowMs = Date.now();
+    const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
+    if (isOngoing) {
+      if (hour >= 9 && hour < 22) {
+        count = 50;
+      } else {
+        count = 5;
+      }
+    } else {
+      count = 0;
+    }
+  } else {
+    count = 20;
+  }
+
+  const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+  count = Math.min(count, maxCapacity);
+
+  if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
+    count = Math.min(count, 5);
+  }
+  if ((venue.type === 'Club' || venue.type === 'Bar') && isNightlifePeak(weekday, hour)) {
+    count = Math.max(count, 20);
+  }
+
+  return Math.max(0, count);
+}
+
 export const useSimulationEngine = () => {
+
   const { isSimulationRunning, isAdmin } = useAppStore();
   const simulatedUsersRef = useRef<any[]>([]);
   const venuesRef = useRef<any[]>([]);
@@ -66,13 +158,56 @@ export const useSimulationEngine = () => {
     let updates: any = {};
     let needsUpdate = false;
 
+    const now = new Date();
+    const nairobiParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Africa/Nairobi',
+      weekday: 'short',
+      hour: 'numeric',
+      hour12: false
+    }).formatToParts(now);
+
+    let weekday = 'Mon';
+    let hour = 12;
+
+    nairobiParts.forEach(p => {
+      if (p.type === 'weekday') weekday = p.value;
+      if (p.type === 'hour') hour = parseInt(p.value, 10);
+    });
+
+    const isNightlifePeak = (day: string, hr: number) => {
+      if (hr >= 21) {
+        return ['Fri', 'Sat', 'Sun'].includes(day);
+      } else if (hr < 4) {
+        return ['Sat', 'Sun', 'Mon'].includes(day);
+      }
+      return false;
+    };
+
     venuesRef.current.forEach(venue => {
-      const targetCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : DEFAULT_USERS_PER_VENUE;
+      const baseTarget = getDynamicTargetCount(venue);
+      
+      const variation = (Math.random() * 0.3 - 0.15);
+      let variableTarget = Math.round(baseTarget * (1 + variation));
+
+      const isOverride = venue.isOverride === true;
+      if (!isOverride) {
+        if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
+          variableTarget = Math.min(variableTarget, 5);
+        }
+        if ((venue.type === 'Club' || venue.type === 'Bar') && isNightlifePeak(weekday, hour)) {
+          variableTarget = Math.max(variableTarget, 20);
+        }
+      }
+
+      const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+      const finalTarget = Math.max(0, Math.min(variableTarget, maxCapacity));
+
       const currentUsers = currentSims.filter(u => u.venueId === venue.id);
       const currentCount = currentUsers.length;
 
+      const targetCount = Math.round(currentCount * 0.7 + finalTarget * 0.3);
+
       if (currentCount < targetCount) {
-        // Spawn
         const toSpawn = targetCount - currentCount;
         for (let i = 0; i < toSpawn; i++) {
           const loc = offsetLocation(venue.latitude, venue.longitude, MAX_RADIUS_METERS / 2);
@@ -90,13 +225,12 @@ export const useSimulationEngine = () => {
           needsUpdate = true;
         }
       } else if (currentCount > targetCount) {
-        // Despawn
         const toRemove = currentCount - targetCount;
         const despawnList = currentUsers.slice(0, toRemove).map(u => u.user_id);
         
         currentSims = currentSims.filter(u => !despawnList.includes(u.user_id));
         despawnList.forEach(uid => {
-          updates[uid] = null; // null deletes from RTDB
+          updates[uid] = null;
         });
         needsUpdate = true;
       }
@@ -108,6 +242,7 @@ export const useSimulationEngine = () => {
       update(ref(realtimeDB, 'simulated_locations'), updates).catch(console.error);
     }
   };
+
 
   // 2. Run the main simulation loop
   useEffect(() => {
@@ -146,7 +281,10 @@ export const useSimulationEngine = () => {
     initializeEngine();
 
     const tick = async () => {
+      syncAllVenueUsers();
+
       if (simulatedUsersRef.current.length === 0) return;
+
       
       const now = Date.now();
       const updates: any = {};

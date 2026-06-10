@@ -22,6 +22,8 @@ export interface LiveVenue {
   customImageUrl?: string;
   address?: string;
   simulatedUsersCount?: number;
+  isOverride?: boolean;
+  maxCapacity?: number;
   type?: 'Club' | 'Bar' | 'Activity' | 'Event';
   expirationDate?: number; // timestamp in ms
   startDate?: number; // timestamp in ms
@@ -57,6 +59,8 @@ interface RawVenue {
   customImageUrl?: string;
   address?: string;
   simulatedUsersCount?: number;
+  isOverride?: boolean;
+  maxCapacity?: number;
   type?: 'Club' | 'Bar' | 'Activity' | 'Event';
   expirationDate?: number;
   startDate?: number;
@@ -118,6 +122,98 @@ function areVenuesEqual(a: LiveVenue[], b: LiveVenue[]): boolean {
   }
   return true;
 }
+
+export function getDefaultCapacity(type?: 'Club' | 'Bar' | 'Activity' | 'Event'): number {
+  if (!type) return 100;
+  switch (type) {
+    case 'Club': return 250;
+    case 'Bar': return 100;
+    case 'Activity': return 200;
+    case 'Event': return 500;
+    default: return 100;
+  }
+}
+
+export function getDynamicTargetCount(venue: RawVenue): number {
+  const now = new Date();
+  const nairobiParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Nairobi',
+    weekday: 'short',
+    hour: 'numeric',
+    hour12: false
+  }).formatToParts(now);
+
+  let weekday = 'Mon';
+  let hour = 12;
+
+  nairobiParts.forEach(p => {
+    if (p.type === 'weekday') weekday = p.value;
+    if (p.type === 'hour') hour = parseInt(p.value, 10);
+  });
+
+  const isOverride = venue.isOverride === true;
+  if (isOverride) {
+    return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
+  }
+
+  const isNightlifePeak = (day: string, hr: number) => {
+    if (hr >= 21) {
+      return ['Fri', 'Sat', 'Sun'].includes(day);
+    } else if (hr < 4) {
+      return ['Sat', 'Sun', 'Mon'].includes(day);
+    }
+    return false;
+  };
+
+  let count = 0;
+  if (venue.type === 'Club' || venue.type === 'Bar') {
+    if (isNightlifePeak(weekday, hour)) {
+      count = 55;
+    } else if (hour >= 21 || hour < 4) {
+      count = 25;
+    } else {
+      count = 3;
+    }
+  } else if (venue.type === 'Activity') {
+    if (hour >= 19 || hour < 6) {
+      count = 2;
+    } else {
+      const isWeekend = ['Sat', 'Sun'].includes(weekday);
+      let base = isWeekend ? 45 : 20;
+      if (hour >= 11 && hour <= 16) {
+        base += 15;
+      }
+      count = base;
+    }
+  } else if (venue.type === 'Event') {
+    const nowMs = Date.now();
+    const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
+    if (isOngoing) {
+      if (hour >= 9 && hour < 22) {
+        count = 50;
+      } else {
+        count = 5;
+      }
+    } else {
+      count = 0;
+    }
+  } else {
+    count = 20;
+  }
+
+  const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+  count = Math.min(count, maxCapacity);
+
+  if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
+    count = Math.min(count, 5);
+  }
+  if ((venue.type === 'Club' || venue.type === 'Bar') && isNightlifePeak(weekday, hour)) {
+    count = Math.max(count, 20);
+  }
+
+  return Math.max(0, count);
+}
+
 
 function computeLiveData(
   venues: RawVenue[],
@@ -225,11 +321,15 @@ function computeLiveData(
     const isEngineActive = simActiveLocs.length > 0;
     let simUserCount = 0;
     if (includeSimulated) {
-      const customAdminCount = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
-      simUserCount = isEngineActive ? Math.max(rtdbSimCount, customAdminCount) : customAdminCount;
+      if (isEngineActive) {
+        simUserCount = rtdbSimCount;
+      } else {
+        simUserCount = getDynamicTargetCount(venue);
+      }
     }
 
     const userCount = realUserCount + simUserCount;
+
 
     const activityLevel = toActivityLevel(userCount);
     liveVenues.push({
