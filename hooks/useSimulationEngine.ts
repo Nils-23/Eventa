@@ -72,30 +72,6 @@ function getDynamicTargetCount(venue: any, allVenues?: any[]): number {
     return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
   }
 
-  // Determine tier within category (Default: 10% hot, 30% medium, 60% low)
-  let tier: 'hot' | 'medium' | 'low' = 'low';
-  if (allVenues && Array.isArray(allVenues)) {
-    const categoryVenues = allVenues.filter(v => v.type === venue.type);
-    if (categoryVenues.length > 0) {
-      const sorted = [...categoryVenues].sort((a, b) => {
-        const scoreA = a.simPopularityScore !== undefined ? a.simPopularityScore : 0.5;
-        const scoreB = b.simPopularityScore !== undefined ? b.simPopularityScore : 0.5;
-        return scoreB - scoreA;
-      });
-      const rankIndex = sorted.findIndex(v => v.id === venue.id);
-      if (rankIndex !== -1) {
-        const percentile = rankIndex / sorted.length;
-        if (percentile < 0.10) {
-          tier = 'hot';
-        } else if (percentile < 0.40) {
-          tier = 'medium';
-        } else {
-          tier = 'low';
-        }
-      }
-    }
-  }
-
   const isNightlifePeak = (day: string, hr: number) => {
     if (hr >= 21) {
       return ['Fri', 'Sat', 'Sun'].includes(day);
@@ -105,70 +81,42 @@ function getDynamicTargetCount(venue: any, allVenues?: any[]): number {
     return false;
   };
 
-  let count = 0;
+  // Determine baseCapacity depending on category and time-window
+  let baseCapacity = 50;
   if (venue.type === 'Club' || venue.type === 'Bar') {
     if (isNightlifePeak(weekday, hour)) {
-      if (tier === 'hot') count = 90;
-      else if (tier === 'medium') count = 40;
-      else count = 20;
+      baseCapacity = venue.type === 'Club' ? 100 : 50;
     } else if (hour >= 21 || hour < 4) {
-      if (tier === 'hot') count = 50;
-      else if (tier === 'medium') count = 25;
-      else count = 10;
+      baseCapacity = venue.type === 'Club' ? 60 : 30;
     } else {
-      if (tier === 'hot') count = 10;
-      else if (tier === 'medium') count = 4;
-      else count = 0;
+      baseCapacity = venue.type === 'Club' ? 10 : 5;
     }
   } else if (venue.type === 'Activity') {
     if (hour >= 19 || hour < 6) {
-      if (tier === 'hot') count = 3;
-      else if (tier === 'medium') count = 1;
-      else count = 0;
+      baseCapacity = 5;
     } else {
       const isWeekend = ['Sat', 'Sun'].includes(weekday);
-      if (isWeekend) {
-        if (tier === 'hot') count = 75;
-        else if (tier === 'medium') count = 35;
-        else count = 10;
-      } else {
-        if (tier === 'hot') count = 35;
-        else if (tier === 'medium') count = 20;
-        else count = 5;
-      }
+      baseCapacity = isWeekend ? 75 : 45;
     }
   } else if (venue.type === 'Event') {
     const nowMs = Date.now();
     const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
     if (isOngoing) {
-      if (hour >= 9 && hour < 22) {
-        if (tier === 'hot') count = 100;
-        else if (tier === 'medium') count = 50;
-        else count = 15;
-      } else {
-        if (tier === 'hot') count = 15;
-        else if (tier === 'medium') count = 8;
-        else count = 0;
-      }
+      baseCapacity = (hour >= 9 && hour < 22) ? 150 : 20;
     } else {
-      count = 0;
+      baseCapacity = 0;
     }
-  } else {
-    if (tier === 'hot') count = 40;
-    else if (tier === 'medium') count = 20;
-    else count = 5;
   }
+
+  // Retrieve slow-drifting simPopularityScore (default to 0.5)
+  const score = venue.simPopularityScore !== undefined ? venue.simPopularityScore : 0.5;
+
+  // Apply Pareto Power-Law distribution (exponent 6.2 guarantees top 20% of venues get 80% of simulated users)
+  let count = Math.round(baseCapacity * Math.pow(score, 6.2));
 
   const defaultCap = getDefaultCapacity(venue.type);
   const maxCapacity = Math.min(defaultCap, venue.maxCapacity !== undefined ? venue.maxCapacity : defaultCap);
   count = Math.min(count, maxCapacity);
-
-  if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
-    count = Math.min(count, 5);
-  }
-  if ((venue.type === 'Club' || venue.type === 'Bar') && isNightlifePeak(weekday, hour)) {
-    count = Math.max(count, 20);
-  }
 
   return Math.max(0, count);
 }
