@@ -69,7 +69,7 @@ async function sendPushNotification(expoPushToken, title, body, data = {}) {
  * @param {number} throttleDurationMs - How long to throttle this key in ms.
  * @return {Promise<boolean>} - True if notification was sent, false otherwise.
  */
-async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false, bypassDailyLimit = false) {
+async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false, bypassDailyLimit = false, testTimeMs = null) {
   if (!userId) return false;
   
   const userRef = db.collection('users').doc(userId);
@@ -87,7 +87,7 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         return expoPushToken;
       }
 
-      const nowMs = Date.now();
+      const nowMs = testTimeMs || Date.now();
 
       // Hourly throttle for live notifications (max 2 per hour)
       let liveTimes = userData.liveNotificationTimes || [];
@@ -103,19 +103,77 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         liveTimes.push(nowMs);
       }
 
-      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
+      const dateToUse = testTimeMs ? new Date(testTimeMs) : new Date();
+      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(dateToUse);
+      
+      const nairobiParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Africa/Nairobi',
+        hour: 'numeric',
+        hour12: false
+      }).formatToParts(dateToUse);
+      
+      let hour = 12;
+      nairobiParts.forEach(p => {
+        if (p.type === 'hour') hour = parseInt(p.value, 10);
+      });
+      if (hour === 24) hour = 0;
+
+      // Reset logic when date changes
       const lastDate = userData.lastNotificationDate || "";
       let count = userData.notificationCountToday || 0;
-      
+      let periodCounts = userData.notificationCountsByPeriod || {
+        "00-06": 0,
+        "06-12": 0,
+        "12-18": 0,
+        "18-24": 0
+      };
+
+      if (lastDate !== dateStr) {
+        count = 0;
+        periodCounts = {
+          "00-06": 0,
+          "06-12": 0,
+          "12-18": 0,
+          "18-24": 0
+        };
+      }
+
+      const DAILY_LIMIT = 5;
+      let periodKey = "";
+      let periodLimit = 0;
+      let periodPercentageLabel = "";
+
+      if (hour >= 0 && hour < 6) {
+        periodKey = "00-06";
+        periodLimit = Math.floor(DAILY_LIMIT * 0.20); // 1
+        periodPercentageLabel = "20%";
+      } else if (hour >= 6 && hour < 12) {
+        periodKey = "06-12";
+        periodLimit = Math.floor(DAILY_LIMIT * 0.00); // 0
+        periodPercentageLabel = "0%";
+      } else if (hour >= 12 && hour < 18) {
+        periodKey = "12-18";
+        periodLimit = Math.floor(DAILY_LIMIT * 0.40); // 2
+        periodPercentageLabel = "40%";
+      } else {
+        // hour >= 18 && hour < 24
+        periodKey = "18-24";
+        periodLimit = Math.floor(DAILY_LIMIT * 0.40); // 2
+        periodPercentageLabel = "40%";
+      }
+
       if (!bypassDailyLimit) {
-        if (lastDate === dateStr) {
-          if (count >= 5) {
-            console.log(`User ${userId} reached daily limit of 5. Skipping.`);
-            return null;
-          }
-          count++;
-        } else {
-          count = 1;
+        // Enforce daily limit
+        if (count >= DAILY_LIMIT) {
+          console.log(`User ${userId} reached daily limit of ${DAILY_LIMIT}. Skipping.`);
+          return null;
+        }
+
+        // Enforce period-specific limit
+        const currentPeriodCount = periodCounts[periodKey] || 0;
+        if (currentPeriodCount >= periodLimit) {
+          console.log(`User ${userId} reached period limit of ${periodLimit} (${periodPercentageLabel}) for period ${periodKey}. Skipping.`);
+          return null;
         }
       }
 
@@ -125,6 +183,18 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         if (nowMs - ts < 24 * 60 * 60 * 1000) {
           cleanedThrottles[k] = ts;
         }
+      }
+
+      // Enforce general venue throttle for 'live' and 'nearby' notifications (at most 1 per hour per venue)
+      if (data && (data.type === 'live' || data.type === 'nearby') && data.venueId) {
+        const venueThrottleKey = `venue_${data.venueId}`;
+        const lastVenueSent = cleanedThrottles[venueThrottleKey] || 0;
+        const ONE_HOUR_MS = 60 * 60 * 1000;
+        if (nowMs - lastVenueSent < ONE_HOUR_MS) {
+          console.log(`Notification for user ${userId} regarding venue ${data.venueId} is throttled (venue-specific 1-hour limit).`);
+          return null;
+        }
+        cleanedThrottles[venueThrottleKey] = nowMs;
       }
       
       if (throttleKey) {
@@ -136,12 +206,19 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         cleanedThrottles[throttleKey] = nowMs;
       }
 
+      // Increment counts if not bypassed
+      if (!bypassDailyLimit) {
+        count++;
+        periodCounts[periodKey] = (periodCounts[periodKey] || 0) + 1;
+      }
+
       const updateData = {
         lastNotificationDate: dateStr,
         notificationThrottles: cleanedThrottles
       };
       if (!bypassDailyLimit) {
         updateData.notificationCountToday = count;
+        updateData.notificationCountsByPeriod = periodCounts;
       }
       if (data && data.type === 'live') {
         updateData.liveNotificationTimes = liveTimes;
@@ -234,10 +311,10 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
 
 function getDefaultCapacity(type) {
   switch (type) {
-    case 'Club': return 250;
-    case 'Bar': return 100;
-    case 'Activity': return 200;
-    case 'Event': return 500;
+    case 'Club': return 100;
+    case 'Bar': return 50;
+    case 'Activity': return 75;
+    case 'Event': return 150;
     default: return 100;
   }
 }
@@ -455,6 +532,12 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
   const allUsersWithToken = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   for (const venue of venues) {
+    // If the venue has a start date in the future, skip notifications for it
+    if (venue.startDate && now < venue.startDate) {
+      console.log(`Venue/Event ${venue.name} has not started yet (starts at ${new Date(venue.startDate).toISOString()}). Skipping.`);
+      continue;
+    }
+
     const isUnrealistic = isUnrealisticVenueTime(venue, weekday, hour);
     const includeSimulatedForVenue = includeSimulated && !isUnrealistic;
 

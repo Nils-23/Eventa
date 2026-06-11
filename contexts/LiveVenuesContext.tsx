@@ -134,10 +134,10 @@ function areVenuesEqual(a: LiveVenue[], b: LiveVenue[]): boolean {
 export function getDefaultCapacity(type?: 'Club' | 'Bar' | 'Activity' | 'Event'): number {
   if (!type) return 100;
   switch (type) {
-    case 'Club': return 250;
-    case 'Bar': return 100;
-    case 'Activity': return 200;
-    case 'Event': return 500;
+    case 'Club': return 100;
+    case 'Bar': return 50;
+    case 'Activity': return 75;
+    case 'Event': return 150;
     default: return 100;
   }
 }
@@ -368,14 +368,9 @@ function computeLiveData(
     const realUserCount = realCountsMap[venue.id] || 0;
     const rtdbSimCount = simCountsMap[venue.id] || 0;
 
-    const isEngineActive = simActiveLocs.length > 0;
     let simUserCount = 0;
     if (includeSimulated) {
-      if (isEngineActive) {
-        simUserCount = rtdbSimCount;
-      } else {
-        simUserCount = getDynamicTargetCount(venue, venues);
-      }
+      simUserCount = rtdbSimCount;
     }
 
     const userCount = realUserCount + simUserCount;

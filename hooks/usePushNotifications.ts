@@ -23,7 +23,7 @@ export function usePushNotifications() {
   const [expoPushToken, setExpoPushToken] = useState<string>('');
   const { user, setSelectedMapVenue, pendingVenueId, setPendingVenueId, setPendingVenueAction } = useAppStore();
   const navigation = useNavigation<any>();
-  const { venues, isLoading } = useLiveVenues();
+  const { venues, scheduledVenues, isLoading } = useLiveVenues();
   const venuesRef = useRef(venues);
 
   useEffect(() => {
@@ -32,15 +32,15 @@ export function usePushNotifications() {
 
   useEffect(() => {
     if (pendingVenueId && !isLoading) {
-      const venue = venues.find(v => v.id === pendingVenueId);
+      const venue = venues.find(v => v.id === pendingVenueId) || scheduledVenues.find(v => v.id === pendingVenueId);
       if (venue) {
         setSelectedMapVenue(venue);
       } else {
-        console.warn(`Venue ${pendingVenueId} not found in loaded venues`);
+        console.warn(`Venue ${pendingVenueId} not found in loaded or scheduled venues`);
       }
       setPendingVenueId(null);
     }
-  }, [venues, isLoading, pendingVenueId, setSelectedMapVenue, setPendingVenueId]);
+  }, [venues, scheduledVenues, isLoading, pendingVenueId, setSelectedMapVenue, setPendingVenueId]);
 
   useEffect(() => {
     registerForPushNotificationsAsync().then(token => {
@@ -56,8 +56,9 @@ export function usePushNotifications() {
     Notifications.getLastNotificationResponseAsync().then(response => {
       if (response) {
         const data = response.notification.request.content.data;
-        if (data?.venueId) {
-          setPendingVenueId(data.venueId as string);
+        const venueId = data?.venueId || data?.venue_id;
+        if (venueId) {
+          setPendingVenueId(venueId as string);
           setPendingVenueAction((data.type as string) === 'chat' ? 'chat' : 'details');
           navigation.navigate('Main', { screen: 'Map' });
         }
@@ -67,8 +68,9 @@ export function usePushNotifications() {
     const subscription = Notifications.addNotificationResponseReceivedListener(response => {
       console.log('Notification tapped:', response);
       const data = response.notification.request.content.data;
-      if (data?.venueId) {
-        setPendingVenueId(data.venueId as string);
+      const venueId = data?.venueId || data?.venue_id;
+      if (venueId) {
+        setPendingVenueId(venueId as string);
         setPendingVenueAction((data.type as string) === 'chat' ? 'chat' : 'details');
         navigation.navigate('Main', { screen: 'Map' });
       }

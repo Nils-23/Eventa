@@ -10,6 +10,10 @@
       ".read": true,
       ".write": "auth != null"
     },
+    "simulation_status": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
     "venue_chats": {
       ".read": "auth != null",
       ".write": "auth != null"

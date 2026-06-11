@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X, Activity, Flag, Sparkles } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 import { firestore, realtimeDB } from '../services/firebase';
 import { ref, onValue } from 'firebase/database';
@@ -15,6 +15,43 @@ export const AdminDashboardScreen = () => {
   const { isSimulationRunning, setIsSimulationRunning } = useAppStore();
   const [liveUserCount, setLiveUserCount] = useState<number>(0);
   const [pendingReportsCount, setPendingReportsCount] = useState<number>(0);
+  const [isSimulationRunningState, setIsSimulationRunningState] = useState(true);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(firestore, 'settings', 'simulation'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.enabled !== undefined) {
+          setIsSimulationRunningState(data.enabled);
+          setIsSimulationRunning(data.enabled);
+        }
+      }
+    }, (error) => {
+      console.warn("Failed to listen to simulation settings:", error);
+    });
+
+    return () => unsub();
+  }, [setIsSimulationRunning]);
+
+  const handleToggleSimulation = async (value: boolean) => {
+    try {
+      await updateDoc(doc(firestore, 'settings', 'simulation'), {
+        enabled: value
+      });
+      Toast.show({
+        type: 'success',
+        text1: value ? 'Simulation Started' : 'Simulation Paused',
+        text2: value ? 'Fake locations are active.' : 'Fake locations are paused.'
+      });
+    } catch (err) {
+      console.warn('Failed to update simulation settings:', err);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to update simulation status'
+      });
+    }
+  };
 
   useEffect(() => {
     const reportsRef = collection(firestore, 'reports');
@@ -93,20 +130,20 @@ export const AdminDashboardScreen = () => {
           <View style={[styles.card, styles.toggleCard]}>
             <View style={{ flex: 1 }}>
               <View style={styles.toggleHeader}>
-                <Zap color={isSimulationRunning ? "#FF00CC" : "#888"} size={20} />
+                <Zap color={isSimulationRunningState ? "#FF00CC" : "#888"} size={20} />
                 <Text style={styles.cardTitle}>Simulation Engine</Text>
               </View>
               <Text style={styles.cardDesc}>
-                {isSimulationRunning 
+                {isSimulationRunningState 
                   ? "Running in background. Fake locations are actively syncing to the map."
                   : "Engine is paused. Toggle to start simulating activity locally."}
               </Text>
             </View>
             <Switch
-              value={isSimulationRunning}
-              onValueChange={setIsSimulationRunning}
+              value={isSimulationRunningState}
+              onValueChange={handleToggleSimulation}
               trackColor={{ false: '#222', true: '#FF00CC' }}
-              thumbColor={isSimulationRunning ? '#FFFFFF' : '#888'}
+              thumbColor={isSimulationRunningState ? '#FFFFFF' : '#888'}
             />
           </View>
 

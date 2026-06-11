@@ -12,7 +12,7 @@ import {
   TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Flame, Navigation, Users, Search } from 'lucide-react-native';
+import { Flame, Navigation, Users, Search, Calendar } from 'lucide-react-native';
 import { useLiveVenues, LiveVenue as VenueWithDensity } from '../hooks/useLiveVenues';
 import { useNavigation } from '@react-navigation/native';
 import { useAppStore } from '../hooks/useAppStore';
@@ -35,9 +35,10 @@ const VenueCard = ({
   index: number;
 }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const config = ACTIVITY_CONFIG[item.activityLevel];
-  const color = item.activityColor;
-  const isTop = index < 3;
+  const isUpcoming = (item.type === 'Activity' || item.type === 'Event') && item.startDate && Date.now() < item.startDate;
+  const config = ACTIVITY_CONFIG[isUpcoming ? 'None' : item.activityLevel];
+  const color = isUpcoming ? '#666666' : item.activityColor;
+  const isTop = index < 3 && !isUpcoming;
   const navigation = useNavigation<any>();
   const { setSelectedMapVenue } = useAppStore();
 
@@ -57,10 +58,29 @@ const VenueCard = ({
     return `${km.toFixed(1)}km`;
   };
 
+  const formatStartDate = (startDate?: number) => {
+    if (!startDate) return '';
+    const date = new Date(startDate);
+    const options: Intl.DateTimeFormatOptions = {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Africa/Nairobi'
+    };
+    return 'Starts ' + new Intl.DateTimeFormat('en-US', options).format(date);
+  };
+
   return (
     <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
       <TouchableOpacity
-        style={[styles.card, isTop && { borderColor: `${color}55` }]}
+        style={[
+          styles.card, 
+          isTop ? { borderColor: `${color}55` } : undefined,
+          isUpcoming ? styles.cardUpcoming : undefined
+        ]}
         activeOpacity={1}
         onPressIn={onPressIn}
         onPressOut={onPressOut}
@@ -68,7 +88,11 @@ const VenueCard = ({
       >
         {/* Left: rank */}
         <View style={styles.rankCol}>
-          <Text style={[styles.rankNum, isTop && { color }]}>
+          <Text style={[
+            styles.rankNum, 
+            isTop ? { color } : undefined, 
+            isUpcoming ? { color: '#444' } : undefined
+          ]}>
             {index + 1}
           </Text>
           {isTop && <View style={[styles.rankBar, { backgroundColor: color }]} />}
@@ -78,27 +102,45 @@ const VenueCard = ({
         <View style={styles.infoCol}>
           <Text style={styles.venueName} numberOfLines={1}>{item.name}</Text>
           <View style={styles.metaRow}>
-            <Navigation color="#888" size={12} />
-            <Text style={styles.metaText}>{formatDistance(item.distanceKm)}</Text>
-            <Users color="#555" size={12} style={{ marginLeft: 10 }} />
-            <Text style={styles.metaText}>{item.userCount} nearby</Text>
+            <View style={styles.metaGroup}>
+              <Navigation color="#888" size={12} />
+              <Text style={styles.metaText}>{formatDistance(item.distanceKm)}</Text>
+            </View>
+            {isUpcoming ? (
+              <View style={styles.metaGroup}>
+                <Calendar color="#666" size={12} />
+                <Text style={styles.metaText}>{formatStartDate(item.startDate)}</Text>
+              </View>
+            ) : (
+              <View style={styles.metaGroup}>
+                <Users color="#555" size={12} />
+                <Text style={styles.metaText}>{item.userCount} nearby</Text>
+              </View>
+            )}
           </View>
         </View>
 
         {/* Right: activity badge */}
-        <View style={[styles.badge, { backgroundColor: `${color}15`, borderColor: `${color}60` }]}>
-          {/* Flame icons */}
-          <View style={styles.flameRow}>
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Flame
-                key={i}
-                size={11}
-                color={i < config.flames ? color : '#333'}
-              />
-            ))}
+        {isUpcoming ? (
+          <View style={[styles.badge, { backgroundColor: '#22222215', borderColor: '#33333360' }]}>
+            <Calendar color="#666" size={11} style={{ marginBottom: 4 }} />
+            <Text style={[styles.badgeLabel, { color: '#666' }]}>UPCOMING</Text>
           </View>
-          <Text style={[styles.badgeLabel, { color }]}>{config.label}</Text>
-        </View>
+        ) : (
+          <View style={[styles.badge, { backgroundColor: `${color}15`, borderColor: `${color}60` }]}>
+            {/* Flame icons */}
+            <View style={styles.flameRow}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Flame
+                  key={i}
+                  size={11}
+                  color={i < config.flames ? color : '#333'}
+                />
+              ))}
+            </View>
+            <Text style={[styles.badgeLabel, { color }]}>{config.label}</Text>
+          </View>
+        )}
       </TouchableOpacity>
     </Animated.View>
   );
@@ -106,11 +148,13 @@ const VenueCard = ({
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 export const ListScreen = () => {
-  const { venues, isLoading } = useLiveVenues();
+  const { venues, scheduledVenues, isLoading } = useLiveVenues();
   const [selectedFilter, setSelectedFilter] = useState<'All' | 'Club' | 'Bar' | 'Activity' | 'Event'>('All');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const filteredVenues = venues.filter((v) => 
+  const combinedVenues = [...venues, ...scheduledVenues];
+
+  const filteredVenues = combinedVenues.filter((v) => 
     (selectedFilter === 'All' || v.type === selectedFilter) &&
     v.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -267,19 +311,24 @@ const styles = StyleSheet.create({
   rankBar:   { width: 3, height: 16, borderRadius: 2, marginTop: 3 },
   infoCol:   { flex: 1 },
   venueName: { fontSize: 16, fontWeight: '700', color: '#F0F0F0', marginBottom: 6 },
-  metaRow:   { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metaRow:   { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  metaGroup: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText:  { color: '#666', fontSize: 12, fontWeight: '500' },
   badge: {
     alignItems: 'center',
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 8,
     borderRadius: 12,
     borderWidth: 1,
-    minWidth: 60,
+    minWidth: 75,
   },
   flameRow:   { flexDirection: 'row', gap: 2, marginBottom: 4 },
   badgeLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   ctr:         { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
   loadingText: { color: '#555', fontSize: 14 },
   emptyText:   { color: '#444', fontSize: 16 },
+  cardUpcoming: {
+    opacity: 0.55,
+    borderColor: '#1e1e1e',
+  },
 });

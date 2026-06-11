@@ -179,10 +179,10 @@ export const AdminSimulationScreen = () => {
 
   const getDefaultCapacity = (type?: 'Club' | 'Bar' | 'Activity' | 'Event') => {
     switch (type) {
-      case 'Club': return 250;
-      case 'Bar': return 100;
-      case 'Activity': return 200;
-      case 'Event': return 500;
+      case 'Club': return 100;
+      case 'Bar': return 50;
+      case 'Activity': return 75;
+      case 'Event': return 150;
       default: return 100;
     }
   };

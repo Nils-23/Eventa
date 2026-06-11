@@ -34,7 +34,7 @@ async function mockSendPushNotification(userId, expoPushToken, title, body, data
 }
 
 // Logic: sendRateLimitedPushNotification
-async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false, bypassDailyLimit = false) {
+async function sendRateLimitedPushNotification(userId, title, body, data = {}, throttleKey = null, throttleDurationMs = 0, bypassLimits = false, bypassDailyLimit = false, testTimeMs = null) {
   if (!userId) return false;
   
   const userRef = db.collection('users').doc(userId);
@@ -52,7 +52,7 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         return expoPushToken;
       }
 
-      const nowMs = Date.now();
+      const nowMs = testTimeMs || Date.now();
 
       // Hourly throttle for live notifications (max 2 per hour)
       let liveTimes = userData.liveNotificationTimes || [];
@@ -67,19 +67,82 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         liveTimes.push(nowMs);
       }
 
-      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
+      const dateToUse = testTimeMs ? new Date(testTimeMs) : new Date();
+      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(dateToUse);
+      
+      const nairobiParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Africa/Nairobi',
+        hour: 'numeric',
+        hour12: false
+      }).formatToParts(dateToUse);
+      
+      let hour = 12;
+      nairobiParts.forEach(p => {
+        if (p.type === 'hour') hour = parseInt(p.value, 10);
+      });
+      if (hour === 24) hour = 0;
+
+      // Reset logic when date changes
       const lastDate = userData.lastNotificationDate || "";
       let count = userData.notificationCountToday || 0;
-      
+      let periodCounts = userData.notificationCountsByPeriod || {
+        "00-06": 0,
+        "06-12": 0,
+        "12-18": 0,
+        "18-24": 0
+      };
+
+      console.log(`[DEBUG] tx start: userId=${userId} lastDate="${lastDate}" dateStr="${dateStr}" dbCount=${count} periodCounts=${JSON.stringify(periodCounts)}`);
+
+      if (lastDate !== dateStr) {
+        count = 0;
+        periodCounts = {
+          "00-06": 0,
+          "06-12": 0,
+          "12-18": 0,
+          "18-24": 0
+        };
+        console.log(`[DEBUG] tx reset count to 0`);
+      }
+
+      const DAILY_LIMIT = 5;
+      let periodKey = "";
+      let periodLimit = 0;
+      let periodPercentageLabel = "";
+
+      if (hour >= 0 && hour < 6) {
+        periodKey = "00-06";
+        periodLimit = Math.floor(DAILY_LIMIT * 0.20); // 1
+        periodPercentageLabel = "20%";
+      } else if (hour >= 6 && hour < 12) {
+        periodKey = "06-12";
+        periodLimit = Math.floor(DAILY_LIMIT * 0.00); // 0
+        periodPercentageLabel = "0%";
+      } else if (hour >= 12 && hour < 18) {
+        periodKey = "12-18";
+        periodLimit = Math.floor(DAILY_LIMIT * 0.40); // 2
+        periodPercentageLabel = "40%";
+      } else {
+        // hour >= 18 && hour < 24
+        periodKey = "18-24";
+        periodLimit = Math.floor(DAILY_LIMIT * 0.40); // 2
+        periodPercentageLabel = "40%";
+      }
+
+      console.log(`[DEBUG] tx hour=${hour} periodKey=${periodKey} periodLimit=${periodLimit}`);
+
       if (!bypassDailyLimit) {
-        if (lastDate === dateStr) {
-          if (count >= 5) {
-            console.log(`User ${userId} reached daily limit of 5. Skipping.`);
-            return null;
-          }
-          count++;
-        } else {
-          count = 1;
+        // Enforce daily limit
+        if (count >= DAILY_LIMIT) {
+          console.log(`User ${userId} reached daily limit of ${DAILY_LIMIT}. Skipping.`);
+          return null;
+        }
+
+        // Enforce period-specific limit
+        const currentPeriodCount = periodCounts[periodKey] || 0;
+        if (currentPeriodCount >= periodLimit) {
+          console.log(`User ${userId} reached period limit of ${periodLimit} (${periodPercentageLabel}) for period ${periodKey}. Skipping.`);
+          return null;
         }
       }
 
@@ -89,6 +152,18 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         if (nowMs - ts < 24 * 60 * 60 * 1000) {
           cleanedThrottles[k] = ts;
         }
+      }
+
+      // Enforce general venue throttle for 'live' and 'nearby' notifications (at most 1 per hour per venue)
+      if (data && (data.type === 'live' || data.type === 'nearby') && data.venueId) {
+        const venueThrottleKey = `venue_${data.venueId}`;
+        const lastVenueSent = cleanedThrottles[venueThrottleKey] || 0;
+        const ONE_HOUR_MS = 60 * 60 * 1000;
+        if (nowMs - lastVenueSent < ONE_HOUR_MS) {
+          console.log(`Notification for user ${userId} regarding venue ${data.venueId} is throttled (venue-specific 1-hour limit).`);
+          return null;
+        }
+        cleanedThrottles[venueThrottleKey] = nowMs;
       }
       
       if (throttleKey) {
@@ -100,12 +175,19 @@ async function sendRateLimitedPushNotification(userId, title, body, data = {}, t
         cleanedThrottles[throttleKey] = nowMs;
       }
 
+      // Increment counts if not bypassed
+      if (!bypassDailyLimit) {
+        count++;
+        periodCounts[periodKey] = (periodCounts[periodKey] || 0) + 1;
+      }
+
       const updateData = {
         lastNotificationDate: dateStr,
         notificationThrottles: cleanedThrottles
       };
       if (!bypassDailyLimit) {
         updateData.notificationCountToday = count;
+        updateData.notificationCountsByPeriod = periodCounts;
       }
       if (data && data.type === 'live') {
         updateData.liveNotificationTimes = liveTimes;
@@ -131,6 +213,7 @@ async function runTests() {
   
   const testUserId = "test_user_notification_sys";
   const testVenueId = "test_venue_notification_sys";
+  const testVenueId2 = "test_venue_notification_sys_2";
   
   // 1. Setup Test User in Firestore
   console.log("\n1. Setting up test user...");
@@ -139,11 +222,17 @@ async function runTests() {
     expoPushToken: "ExponentPushToken[test-user-token-12345]",
     notificationCountToday: 0,
     lastNotificationDate: "",
-    notificationThrottles: {}
+    notificationThrottles: {},
+    notificationCountsByPeriod: {
+      "00-06": 0,
+      "06-12": 0,
+      "12-18": 0,
+      "18-24": 0
+    }
   });
 
-  // 2. Setup Test Venue in Firestore
-  console.log("2. Setting up test venue...");
+  // 2. Setup Test Venues in Firestore
+  console.log("2. Setting up test venues...");
   await db.collection('venues').doc(testVenueId).set({
     name: "Test VIP Lounge",
     latitude: -1.2833, // Nairobi Central coords
@@ -152,62 +241,149 @@ async function runTests() {
     isCrazy: false,
     activityLevel: "None"
   });
-
-  // 3. Test daily frequency rate-limiting (max 5)
-  console.log("\n3. Testing daily rate limiting (should stop after 5 sends)...");
-  sentPushes = [];
-  for (let i = 0; i < 7; i++) {
-    console.log(`Attempt ${i + 1}:`);
-    await sendRateLimitedPushNotification(testUserId, "Test Title", `Message ${i + 1}`);
-  }
-  console.log(`Sent pushes count: ${sentPushes.length} (Expected: 5)`);
-  if (sentPushes.length !== 5) {
-    throw new Error("Daily frequency rate limit check failed!");
-  }
-  console.log("Daily rate limit check passed!");
-
-  // Reset rate limits for further testing
-  await db.collection('users').doc(testUserId).set({
-    username: "Test Notification User",
-    expoPushToken: "ExponentPushToken[test-user-token-12345]",
-    notificationCountToday: 0,
-    lastNotificationDate: "",
-    notificationThrottles: {}
+  await db.collection('venues').doc(testVenueId2).set({
+    name: "Test Rooftop Bar",
+    latitude: -1.2933,
+    longitude: 36.8319,
+    description: "Another test venue",
+    isCrazy: false,
+    activityLevel: "None"
   });
 
-  // 4. Test Event/Venue Throttling
-  console.log("\n4. Testing Event/Venue Throttling (should skip second consecutive send)...");
+  // 3. Test sub-daily distribution period limits
+  console.log("\n3. Testing sub-daily distribution limits...");
+  
+  // Setup timestamps for Nairobi periods on the same day (2026-06-11)
+  const timePeriod1 = new Date('2026-06-11T02:00:00+03:00').getTime(); // 02:00 AM (00-06) - limit 1
+  const timePeriod2 = new Date('2026-06-11T08:00:00+03:00').getTime(); // 08:00 AM (06-12) - limit 0
+  const timePeriod3 = new Date('2026-06-11T14:00:00+03:00').getTime(); // 02:00 PM (12-18) - limit 2
+  const timePeriod4 = new Date('2026-06-11T20:00:00+03:00').getTime(); // 08:00 PM (18-24) - limit 2
+  const timeNextDay = new Date('2026-06-12T02:00:00+03:00').getTime();  // 02:00 AM next day
+  
+  // Period 1: limit 20% = 1
+  console.log("--- Testing Period 00-06 (Limit: 1) ---");
   sentPushes = [];
-  const throttleKey = `test_throttle_${testVenueId}`;
-  const throttleDuration = 10000; // 10 seconds for test
-  
-  // Attempt 1: Should succeed
-  await sendRateLimitedPushNotification(testUserId, "Throttle Test 1", "Hello 1", {}, throttleKey, throttleDuration);
-  // Attempt 2: Should be throttled
-  await sendRateLimitedPushNotification(testUserId, "Throttle Test 2", "Hello 2", {}, throttleKey, throttleDuration);
-  
-  console.log(`Sent pushes count: ${sentPushes.length} (Expected: 1)`);
-  if (sentPushes.length !== 1) {
-    throw new Error("Event/Venue throttling failed!");
+  let s1 = await sendRateLimitedPushNotification(testUserId, "P1 Attempt 1", "Hello", {}, null, 0, false, false, timePeriod1);
+  let s2 = await sendRateLimitedPushNotification(testUserId, "P1 Attempt 2", "Hello", {}, null, 0, false, false, timePeriod1);
+  console.log(`P1: Successes = ${sentPushes.length} (Expected: 1)`);
+  if (!s1 || s2 || sentPushes.length !== 1) {
+    throw new Error("Period 00-06 limit failed!");
   }
-  console.log("Event/Venue throttling passed!");
 
-  // Reset rate limits & throttles
-  await db.collection('users').doc(testUserId).set({
-    username: "Test Notification User",
-    expoPushToken: "ExponentPushToken[test-user-token-12345]",
+  // Period 2: limit 0% = 0
+  console.log("--- Testing Period 06-12 (Limit: 0) ---");
+  sentPushes = [];
+  let s3 = await sendRateLimitedPushNotification(testUserId, "P2 Attempt 1", "Hello", {}, null, 0, false, false, timePeriod2);
+  console.log(`P2: Successes = ${sentPushes.length} (Expected: 0)`);
+  if (s3 || sentPushes.length !== 0) {
+    throw new Error("Period 06-12 limit failed!");
+  }
+
+  // Period 3: limit 40% = 2
+  console.log("--- Testing Period 12-18 (Limit: 2) ---");
+  sentPushes = [];
+  let s4 = await sendRateLimitedPushNotification(testUserId, "P3 Attempt 1", "Hello", {}, null, 0, false, false, timePeriod3);
+  let s5 = await sendRateLimitedPushNotification(testUserId, "P3 Attempt 2", "Hello", {}, null, 0, false, false, timePeriod3);
+  let s6 = await sendRateLimitedPushNotification(testUserId, "P3 Attempt 3", "Hello", {}, null, 0, false, false, timePeriod3);
+  console.log(`P3: Successes = ${sentPushes.length} (Expected: 2)`);
+  if (!s4 || !s5 || s6 || sentPushes.length !== 2) {
+    throw new Error("Period 12-18 limit failed!");
+  }
+
+  // Period 4: limit 40% = 2 (daily limit total of 5 will be reached)
+  console.log("--- Testing Period 18-24 (Limit: 2) ---");
+  sentPushes = [];
+  let s7 = await sendRateLimitedPushNotification(testUserId, "P4 Attempt 1", "Hello", {}, null, 0, false, false, timePeriod4);
+  let s8 = await sendRateLimitedPushNotification(testUserId, "P4 Attempt 2", "Hello", {}, null, 0, false, false, timePeriod4);
+  let s9 = await sendRateLimitedPushNotification(testUserId, "P4 Attempt 3", "Hello", {}, null, 0, false, false, timePeriod4);
+  console.log(`P4: Successes = ${sentPushes.length} (Expected: 2)`);
+  if (!s7 || !s8 || s9 || sentPushes.length !== 2) {
+    throw new Error("Period 18-24 limit failed!");
+  }
+  
+  // Try sending one more now that daily limit of 5 is reached
+  console.log("--- Testing overall daily limit constraint (Total: 5 reached) ---");
+  const userDocSnap = await db.collection('users').doc(testUserId).get();
+  console.log(`Total count today: ${userDocSnap.data().notificationCountToday} (Expected: 5)`);
+  if (userDocSnap.data().notificationCountToday !== 5) {
+    throw new Error("Expected notificationCountToday to be 5!");
+  }
+  
+  // Try to send one more on the same day in Period 4 (should be blocked by daily limit)
+  let s10 = await sendRateLimitedPushNotification(testUserId, "Daily Limit overflow", "Hello", {}, null, 0, false, false, timePeriod4 + 5000);
+  if (s10) {
+    throw new Error("Overall daily limit was not enforced!");
+  }
+  console.log("Overall daily limit of 5 enforced successfully.");
+
+  // Test reset on next day
+  console.log("--- Testing date reset logic for next day ---");
+  sentPushes = [];
+  let sNext = await sendRateLimitedPushNotification(testUserId, "Next day attempt", "Hello", {}, null, 0, false, false, timeNextDay);
+  console.log(`Next Day P1: Successes = ${sentPushes.length} (Expected: 1)`);
+  if (!sNext || sentPushes.length !== 1) {
+    throw new Error("Next day reset failed!");
+  }
+
+  // Reset user document for subsequent tests
+  await db.collection('users').doc(testUserId).update({
     notificationCountToday: 0,
     lastNotificationDate: "",
-    notificationThrottles: {}
+    notificationThrottles: {},
+    notificationCountsByPeriod: {
+      "00-06": 0,
+      "06-12": 0,
+      "12-18": 0,
+      "18-24": 0
+    }
+  });
+
+  // 4. Test Event/Venue 1-Hour Throttling for live/nearby
+  console.log("\n4. Testing Event/Venue 1-Hour Throttling for live/nearby...");
+  sentPushes = [];
+  const testTime = timePeriod3; // 14:00 PM (12-18 has limit of 2)
+  
+  // Attempt 1: Send 'live' type notification for venue - should succeed
+  console.log("Attempt 1: Sending 'live' notification for testVenueId...");
+  let v1 = await sendRateLimitedPushNotification(testUserId, "Live alert", "Something is happening", { venueId: testVenueId, type: 'live' }, null, 0, false, false, testTime);
+  
+  // Attempt 2: Send 'nearby' type notification for same venue within 5 minutes - should be throttled
+  console.log("Attempt 2: Sending 'nearby' notification for same venue within 1 hour...");
+  let v2 = await sendRateLimitedPushNotification(testUserId, "Nearby alert", "Popular nearby", { venueId: testVenueId, type: 'nearby' }, null, 0, false, false, testTime + 5 * 60 * 1000);
+
+  // Attempt 3: Send 'chat' type notification for same venue - should succeed (chats bypass venue throttle)
+  console.log("Attempt 3: Sending 'chat' notification for same venue...");
+  let v3 = await sendRateLimitedPushNotification(testUserId, "New Message", "Alex: Hello", { venueId: testVenueId, type: 'chat' }, `chat_${testVenueId}`, 0, false, true, testTime + 10 * 60 * 1000);
+
+  // Attempt 4: Send 'live' type notification for a DIFFERENT venue - should succeed
+  console.log("Attempt 4: Sending 'live' notification for different venue...");
+  let v4 = await sendRateLimitedPushNotification(testUserId, "Live alert 2", "Something is happening at rooftop", { venueId: testVenueId2, type: 'live' }, null, 0, false, false, testTime + 15 * 60 * 1000);
+
+  console.log(`Venue throttle successes: ${sentPushes.length} (Expected: 3 - Attempt 1, 3, 4 succeeded)`);
+  if (!v1 || v2 || !v3 || !v4 || sentPushes.length !== 3) {
+    throw new Error("Venue-specific 1-hour throttle test failed!");
+  }
+  console.log("Venue-specific 1-hour throttle test passed!");
+
+  // Reset user document
+  await db.collection('users').doc(testUserId).update({
+    notificationCountToday: 0,
+    notificationThrottles: {},
+    notificationCountsByPeriod: {
+      "00-06": 0,
+      "06-12": 0,
+      "12-18": 0,
+      "18-24": 0
+    }
   });
 
   // 5. Test Social/Engagement chat activity notifications
   console.log("\n5. Testing Social/Engagement chat activity trigger...");
 
   // Simulate onNewChatMessage logic
-  const simulateNewMessage = async (senderId, messageData) => {
+  const simulateNewMessage = async (senderId, messageData, timeMs = timePeriod3) => {
     sentPushes = [];
-    const now = Date.now();
+    const now = timeMs;
     const ONE_HOUR = 1 * 60 * 60 * 1000;
 
     const venueSnap = await db.collection('venues').doc(testVenueId).get();
@@ -242,7 +418,9 @@ async function runTests() {
           { venueId: testVenueId, type: 'chat' },
           null,
           0,
-          true
+          true,
+          false,
+          timeMs
         );
       } else {
         await sendRateLimitedPushNotification(
@@ -253,7 +431,8 @@ async function runTests() {
           `chat_${testVenueId}`,
           1 * 60 * 60 * 1000,
           false,
-          true
+          true,
+          timeMs
         );
       }
     }
@@ -266,7 +445,7 @@ async function runTests() {
     username: "Alex",
     message: "Who is here?",
     type: "text"
-  });
+  }, timePeriod3);
   const testPushesA = sentPushes.filter(p => p.userId === testUserId);
   console.log(`Sent pushes count for test user: ${testPushesA.length} (Expected: 1)`);
   if (testPushesA.length !== 1 || testPushesA[0].title !== "Test VIP Lounge" || testPushesA[0].body !== "Alex: Who is here?") {
@@ -280,7 +459,7 @@ async function runTests() {
     username: "Alex",
     message: "Any updates?",
     type: "text"
-  });
+  }, timePeriod3 + 5 * 60 * 1000);
   const testPushesB = sentPushes.filter(p => p.userId === testUserId);
   console.log(`Sent pushes count for test user: ${testPushesB.length} (Expected: 0 - throttled)`);
   if (testPushesB.length !== 0) {
@@ -291,14 +470,20 @@ async function runTests() {
   // Reset rate limits & throttles for test user
   await db.collection('users').doc(testUserId).update({
     notificationCountToday: 0,
-    notificationThrottles: {}
+    notificationThrottles: {},
+    notificationCountsByPeriod: {
+      "00-06": 0,
+      "06-12": 0,
+      "12-18": 0,
+      "18-24": 0
+    }
   });
 
   // 5c. Test continuation for engaged user (should bypass limits)
   console.log("5c. Testing continuation notifications for engaged user (should succeed & not throttle)...");
   // Mark test user as engaged (active in last 5 minutes)
   await rtdb.ref(`venue_members/${testVenueId}/${testUserId}`).set({
-    lastInteractionTime: Date.now() - 5 * 60 * 1000
+    lastInteractionTime: timePeriod3 - 5 * 60 * 1000
   });
 
   // Message 1
@@ -306,7 +491,7 @@ async function runTests() {
     username: "Alex",
     message: "Hey guys!",
     type: "text"
-  });
+  }, timePeriod3);
   const testPushesC1 = sentPushes.filter(p => p.userId === testUserId);
   console.log(`Message 1 - Sent pushes count for test user: ${testPushesC1.length} (Expected: 1)`);
   if (testPushesC1.length !== 1 || testPushesC1[0].title !== "Test VIP Lounge" || testPushesC1[0].body !== "Alex: Hey guys!") {
@@ -318,7 +503,7 @@ async function runTests() {
     username: "Alex",
     message: "Are we drinking?",
     type: "text"
-  });
+  }, timePeriod3 + 5 * 60 * 1000);
   const testPushesC2 = sentPushes.filter(p => p.userId === testUserId);
   console.log(`Message 2 - Sent pushes count for test user: ${testPushesC2.length} (Expected: 1)`);
   if (testPushesC2.length !== 1 || testPushesC2[0].title !== "Test VIP Lounge" || testPushesC2[0].body !== "Alex: Are we drinking?") {
@@ -332,7 +517,13 @@ async function runTests() {
     expoPushToken: "ExponentPushToken[test-user-token-12345]",
     notificationCountToday: 0,
     lastNotificationDate: "",
-    notificationThrottles: {}
+    notificationThrottles: {},
+    notificationCountsByPeriod: {
+      "00-06": 0,
+      "06-12": 0,
+      "12-18": 0,
+      "18-24": 0
+    }
   });
 
   // 6. Test Live Activity signals & Proximity Alert in Scheduled Function
@@ -346,9 +537,9 @@ async function runTests() {
     timestamp: Date.now()
   });
 
-  const simulateScheduledNotification = async () => {
+  const simulateScheduledNotification = async (testTimeMs = null) => {
     sentPushes = [];
-    const now = Date.now();
+    const now = testTimeMs || Date.now();
     const notifiedUserIds = new Set();
 
     const nairobiParts = new Intl.DateTimeFormat('en-US', {
@@ -356,7 +547,7 @@ async function runTests() {
       weekday: 'short',
       hour: 'numeric',
       hour12: false
-    }).formatToParts(new Date());
+    }).formatToParts(testTimeMs ? new Date(testTimeMs) : new Date());
 
     let weekday = 'Mon';
     let hour = 12;
@@ -417,6 +608,11 @@ async function runTests() {
 
     for (const venue of venues) {
       if (venue.id !== testVenueId) continue; // Only test our test venue
+
+      if (venue.startDate && now < venue.startDate) {
+        console.log(`Venue/Event ${venue.name} has not started yet (starts at ${new Date(venue.startDate).toISOString()}). Skipping.`);
+        continue;
+      }
 
       const isUnrealistic = isUnrealisticVenueTime(venue, weekday, hour);
       const includeSimulatedForVenue = includeSimulated && !isUnrealistic;
@@ -493,7 +689,10 @@ async function runTests() {
             liveNotificationMessage,
             { venueId: venue.id, type: 'live' },
             `live_${venue.id}`,
-            4 * 60 * 60 * 1000
+            4 * 60 * 60 * 1000,
+            false,
+            false,
+            testTimeMs
           );
           if (sent) {
             if (user.id !== testUserId) {
@@ -519,7 +718,10 @@ async function runTests() {
               `Something popular happening near you`,
               { venueId: venue.id, type: 'nearby' },
               `nearby_${venue.id}`,
-              6 * 60 * 60 * 1000
+              6 * 60 * 60 * 1000,
+              false,
+              false,
+              testTimeMs
             );
             if (sent) {
               notifiedUserIds.add(userId);
@@ -539,20 +741,20 @@ async function runTests() {
   // Simulate 10 locations inside venue radius
   const simUpdates = {};
   const presenceUpdates = {};
-  const thirtyMinAgo = Date.now() - 30 * 60 * 1000;
+  const thirtyMinAgo = timePeriod3 - 30 * 60 * 1000;
   for (let i = 0; i < 10; i++) {
     const uid = `sim_user_prox_${i}`;
     simUpdates[uid] = {
       latitude: -1.2833,
       longitude: 36.8219,
-      timestamp: Date.now()
+      timestamp: timePeriod3
     };
     presenceUpdates[uid] = thirtyMinAgo;
   }
   await rtdb.ref('simulated_locations').update(simUpdates);
   await rtdb.ref(`venue_presence/${testVenueId}`).update(presenceUpdates);
   sentPushes = [];
-  await simulateScheduledNotification();
+  await simulateScheduledNotification(timePeriod3); // Pass Period 3 (14:00) so daily/period limits do not block
   const proximityPushes = sentPushes.filter(p => p.title === "📍 Popular nearby");
   console.log(`Sent proximity pushes count: ${proximityPushes.length} (Expected: 1)`);
   if (proximityPushes.length !== 1) {
@@ -566,7 +768,13 @@ async function runTests() {
     expoPushToken: "ExponentPushToken[test-user-token-12345]",
     notificationCountToday: 0,
     lastNotificationDate: "",
-    notificationThrottles: {}
+    notificationThrottles: {},
+    notificationCountsByPeriod: {
+      "00-06": 0,
+      "06-12": 0,
+      "12-18": 0,
+      "18-24": 0
+    }
   });
 
   // Clean simulated locations
@@ -580,7 +788,7 @@ async function runTests() {
     joinsUpdates[`sim_user_join_${i}`] = {
       latitude: -1.2833,
       longitude: 36.8219,
-      timestamp: Date.now()
+      timestamp: timePeriod3
     };
   }
   await rtdb.ref('simulated_locations').update(joinsUpdates);
@@ -589,7 +797,7 @@ async function runTests() {
   await rtdb.ref(`venue_presence/${testVenueId}`).set(null);
 
   sentPushes = [];
-  await simulateScheduledNotification();
+  await simulateScheduledNotification(timePeriod3); // Pass Period 3 (14:00)
   const joinSpikePushes = sentPushes.filter(p => p.title === "🔥 Live Activity" && p.body.includes("people are at"));
   console.log(`Sent live activity join spike pushes count: ${joinSpikePushes.length} (Expected: 1)`);
   if (joinSpikePushes.length !== 1) {
@@ -603,13 +811,17 @@ async function runTests() {
     expoPushToken: "ExponentPushToken[test-user-token-12345]",
     notificationCountToday: 0,
     lastNotificationDate: "",
-    notificationThrottles: {}
+    notificationThrottles: {},
+    notificationCountsByPeriod: {
+      "00-06": 0,
+      "06-12": 0,
+      "12-18": 0,
+      "18-24": 0
+    }
   });
 
   // Clean simulated locations
   await rtdb.ref('simulated_locations').set(null);
-
-  // 6c. Test Live Activity: Chat Spike removed (now decoupled from hot venues notification).
 
   // 6d. Test Live Activity: Crazy Status
   console.log("\n6d. Testing Live Activity: Crazy Status...");
@@ -623,7 +835,7 @@ async function runTests() {
   });
 
   sentPushes = [];
-  await simulateScheduledNotification();
+  await simulateScheduledNotification(timePeriod3); // Pass Period 3 (14:00)
   const crazyPushes = sentPushes.filter(p => p.title === "🔥 Live Activity" && p.body.includes("Something’s happening at"));
   console.log(`Sent live activity crazy status pushes count: ${crazyPushes.length} (Expected: 1)`);
   if (crazyPushes.length !== 1) {
@@ -635,7 +847,14 @@ async function runTests() {
   console.log("\n6e. Testing Live Activity: Hourly rate-limiting (should stop after 2 sends)...");
   // Clean up user document liveNotificationTimes first
   await db.collection('users').doc(testUserId).update({
-    liveNotificationTimes: []
+    liveNotificationTimes: [],
+    notificationCountsByPeriod: {
+      "00-06": 0,
+      "06-12": 0,
+      "12-18": 0,
+      "18-24": 0
+    },
+    notificationCountToday: 0
   });
 
   sentPushes = [];
@@ -645,9 +864,12 @@ async function runTests() {
     testUserId,
     `🔥 Live Activity`,
     "Live activity message 1",
-    { venueId: testVenueId, type: 'live' },
+    { venueId: 'venue_a', type: 'live' },
     `live_test_1`,
-    0
+    0,
+    false,
+    false,
+    timePeriod3
   );
   
   // Attempt 2: Should succeed
@@ -655,9 +877,12 @@ async function runTests() {
     testUserId,
     `🔥 Live Activity`,
     "Live activity message 2",
-    { venueId: testVenueId, type: 'live' },
+    { venueId: 'venue_b', type: 'live' },
     `live_test_2`,
-    0
+    0,
+    false,
+    false,
+    timePeriod3 + 1000
   );
 
   // Attempt 3: Should be blocked by hourly limit (since it's the 3rd 'live' notification within 1 hour)
@@ -665,9 +890,12 @@ async function runTests() {
     testUserId,
     `🔥 Live Activity`,
     "Live activity message 3",
-    { venueId: testVenueId, type: 'live' },
+    { venueId: 'venue_c', type: 'live' },
     `live_test_3`,
-    0
+    0,
+    false,
+    false,
+    timePeriod3 + 2000
   );
 
   console.log(`Live activity hourly count: ${sentPushes.length} (Expected: 2)`);
@@ -676,10 +904,38 @@ async function runTests() {
   }
   console.log("Live activity hourly rate limit passed!");
 
+  // 6f. Test Upcoming Event Throttling (should skip scheduled notifications for future start dates)
+  console.log("\n6f. Testing Upcoming Event Throttling...");
+  // Set venue crazy to normally trigger live activity, but make it start 2 hours in the future
+  await db.collection('venues').doc(testVenueId).update({
+    isCrazy: true,
+    startDate: timePeriod3 + 2 * 60 * 60 * 1000 // starts 2 hours after timePeriod3
+  });
+  // Clear user throttling to ensure it's not blocked by 1-hour limits
+  await db.collection('users').doc(testUserId).update({
+    notificationThrottles: {},
+    notificationCountsByPeriod: {
+      "00-06": 0,
+      "06-12": 0,
+      "12-18": 0,
+      "18-24": 0
+    },
+    notificationCountToday: 0
+  });
+
+  sentPushes = [];
+  await simulateScheduledNotification(timePeriod3); // Pass Period 3 (14:00)
+  console.log(`Upcoming event pushes count: ${sentPushes.length} (Expected: 0)`);
+  if (sentPushes.length !== 0) {
+    throw new Error("Upcoming event throttling test failed!");
+  }
+  console.log("Upcoming event throttling test passed!");
+
   // Cleanup Database
   console.log("\nCleaning up test data...");
   await db.collection('users').doc(testUserId).delete();
   await db.collection('venues').doc(testVenueId).delete();
+  await db.collection('venues').doc(testVenueId2).delete();
   await rtdb.ref(`venue_members/${testVenueId}`).set(null);
   await rtdb.ref(`locations/${testUserId}`).set(null);
   await rtdb.ref(`venue_presence/${testVenueId}`).set(null);
@@ -697,10 +953,10 @@ runTests().catch(err => {
 
 function getDefaultCapacity(type) {
   switch (type) {
-    case 'Club': return 250;
-    case 'Bar': return 100;
-    case 'Activity': return 200;
-    case 'Event': return 500;
+    case 'Club': return 100;
+    case 'Bar': return 50;
+    case 'Activity': return 75;
+    case 'Event': return 150;
     default: return 100;
   }
 }

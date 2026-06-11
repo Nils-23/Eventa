@@ -288,6 +288,7 @@ export const MapScreen = () => {
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [chatVenue, setChatVenue] = useState<{ id: string; name: string } | null>(null);
   const [isLiveFeedVisible, setIsLiveFeedVisible] = useState(false);
+  const [isMapReady, setIsMapReady] = useState(false);
 
   // Debug states
   const [isDebugMode, setIsDebugMode] = useState(false);
@@ -340,7 +341,7 @@ export const MapScreen = () => {
   }, [venues, stories]);
 
   useEffect(() => {
-    if (selectedMapVenue && mapRef.current) {
+    if (selectedMapVenue && mapRef.current && isMapReady) {
       mapRef.current.animateCamera({
         center: {
           latitude: selectedMapVenue.latitude,
@@ -349,6 +350,16 @@ export const MapScreen = () => {
         zoom: 16,
         pitch: 45,
       }, { duration: 1000 });
+    }
+  }, [selectedMapVenue, isMapReady]);
+
+  // Automatically close any overlay modals (chat, stories, live feed) when a new venue is focused on the map
+  useEffect(() => {
+    if (selectedMapVenue) {
+      setIsChatVisible(false);
+      setChatVenue(null);
+      setIsViewerVisible(false);
+      setIsLiveFeedVisible(false);
     }
   }, [selectedMapVenue]);
 
@@ -760,6 +771,7 @@ export const MapScreen = () => {
         minZoomLevel={3}
         maxZoomLevel={18}
         onRegionChangeComplete={handleRegionChange}
+        onMapReady={() => setIsMapReady(true)}
       >
         {/* ── Native Heatmap (KDE blending) ──────────────────────────────
              Uses react-native-maps's native Heatmap implementation which supports
