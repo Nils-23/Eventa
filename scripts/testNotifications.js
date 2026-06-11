@@ -12,7 +12,7 @@ const rtdb = admin.database();
 
 const VENUE_RADIUS_METERS = 200;
 const STALE_MS = 2 * 60 * 60 * 1000;
-const CRAZY_THRESHOLD = 75;
+const CRAZY_THRESHOLD = 90;
 
 // Haversine distance
 function getDistanceInMeters(lat1, lon1, lat2, lon2) {

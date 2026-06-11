@@ -10,7 +10,7 @@ const rtdb = admin.database();
 
 const VENUE_RADIUS_METERS = 200;
 const STALE_MS = 2 * 60 * 60 * 1000; // 2 hours for location staleness
-const CRAZY_THRESHOLD = 75; // > 75 users
+const CRAZY_THRESHOLD = 90; // >= 90 users
 
 // Helper: Haversine distance
 function getDistanceInMeters(lat1, lon1, lat2, lon2) {

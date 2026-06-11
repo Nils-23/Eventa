@@ -173,7 +173,8 @@ function getDynamicTargetCount(venue, allVenues) {
     else count = 5;
   }
 
-  const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+  const defaultCap = getDefaultCapacity(venue.type);
+  const maxCapacity = Math.min(defaultCap, venue.maxCapacity !== undefined ? venue.maxCapacity : defaultCap);
   count = Math.min(count, maxCapacity);
 
   if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
@@ -228,7 +229,7 @@ function getTargetForVenue(venue, currentCount, realUserCount, allVenues) {
 
   const isOverride = venue.isOverride === true;
   const baseTarget = getDynamicTargetCount(venue, allVenues);
-  const variation = (Math.random() * 0.3 - 0.15);
+  const variation = (Math.random() * 0.16 - 0.08); // -8% to +8%
   let variableTarget = Math.round(baseTarget * (1 + variation));
 
   if (!isOverride) {
@@ -240,7 +241,8 @@ function getTargetForVenue(venue, currentCount, realUserCount, allVenues) {
     }
   }
 
-  const maxCapacity = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+  const defaultCap = getDefaultCapacity(venue.type);
+  const maxCapacity = Math.min(defaultCap, venue.maxCapacity !== undefined ? venue.maxCapacity : defaultCap);
   const finalTarget = Math.max(0, Math.min(variableTarget, maxCapacity));
 
   // Subtract real user counts from target count to prioritize real user activity
@@ -307,13 +309,44 @@ async function syncAllVenueUsers(isTick = false) {
     }
 
     const currentUsers = simulatedUsers.filter(u => u.venueId === venue.id);
-    const currentCount = currentUsers.length;
+    let currentCount = currentUsers.length;
+
+    const defaultCap = getDefaultCapacity(venue.type);
+    const maxCapacity = Math.min(defaultCap, venue.maxCapacity !== undefined ? venue.maxCapacity : defaultCap);
+
+    // Instantly prune any excess simulated users exceeding the absolute simulated cap
+    if (currentCount > maxCapacity) {
+      const excessCount = currentCount - maxCapacity;
+      const toPrune = currentUsers.slice(0, excessCount).map(u => u.user_id);
+      simulatedUsers = simulatedUsers.filter(u => !toPrune.includes(u.user_id));
+      toPrune.forEach(uid => {
+        updates[uid] = null;
+      });
+      needsUpdate = true;
+      currentCount = maxCapacity;
+    }
 
     let state = venueSimStates[venue.id];
-    const targetCount = getTargetForVenue(venue, currentCount, realUserCount, activeVenues);
+    const hasConfigChanged = !state ||
+      state.isOverride !== venue.isOverride ||
+      state.simulatedUsersCount !== venue.simulatedUsersCount ||
+      state.maxCapacity !== maxCapacity ||
+      state.startDate !== venue.startDate ||
+      state.expirationDate !== venue.expirationDate;
 
-    if (shouldRecalculate || !state || state.ultimateTarget !== targetCount) {
-      const diff = targetCount - currentCount;
+    if (shouldRecalculate || hasConfigChanged) {
+      const targetCount = getTargetForVenue(venue, currentCount, realUserCount, activeVenues);
+      let diff = targetCount - currentCount;
+
+      // Enforce maximum change of 10 users per 5-minute interval
+      const MAX_CHANGE_PER_INTERVAL = 10;
+      if (diff > MAX_CHANGE_PER_INTERVAL) {
+        diff = MAX_CHANGE_PER_INTERVAL;
+      } else if (diff < -MAX_CHANGE_PER_INTERVAL) {
+        diff = -MAX_CHANGE_PER_INTERVAL;
+      }
+
+      const cappedTargetCount = currentCount + diff;
       const steps = 5;
       const changeQueue = [];
       let remaining = diff;
@@ -324,9 +357,14 @@ async function syncAllVenueUsers(isTick = false) {
       }
 
       state = {
-        ultimateTarget: targetCount,
+        ultimateTarget: cappedTargetCount,
         changeQueue,
-        currentCount
+        currentCount,
+        isOverride: venue.isOverride,
+        simulatedUsersCount: venue.simulatedUsersCount,
+        maxCapacity: maxCapacity,
+        startDate: venue.startDate,
+        expirationDate: venue.expirationDate
       };
       venueSimStates[venue.id] = state;
     }

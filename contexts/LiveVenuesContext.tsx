@@ -87,9 +87,9 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
 }
 
 function toActivityLevel(count: number): 'Crazy' | 'High' | 'Medium' | 'Low' | 'None' {
-  if (count >= 50) return 'Crazy';
-  if (count >= 20) return 'High';
-  if (count >= 10) return 'Medium';
+  if (count >= 90) return 'Crazy';
+  if (count >= 50) return 'High';
+  if (count >= 25) return 'Medium';
   if (count > 0) return 'Low';
   return 'None';
 }
