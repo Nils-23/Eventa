@@ -32,6 +32,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import * as Icons from 'lucide-react-native';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
+import { StoryViewer } from './StoryViewer';
 
 interface Message {
   id: string;
@@ -39,13 +40,24 @@ interface Message {
   username: string;
   message: string;
   timestamp: number;
-  type?: 'text' | 'sticker' | 'custom_sticker';
+  type?: 'text' | 'sticker' | 'custom_sticker' | 'story_reaction';
   activeBadge?: string;
   reactions?: Record<string, Record<string, string>>; // emoji -> userId -> username
   replyTo?: {
     messageId: string;
     username: string;
     message: string;
+  };
+  storyData?: {
+    id: string;
+    media_url: string;
+    media_type: 'image' | 'video';
+    user_id: string;
+    username: string;
+    created_at: number;
+    expires_at: number;
+    venue_id?: string;
+    activeBadge?: string;
   };
 }
 
@@ -204,6 +216,8 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   const [sendAsSimulated, setSendAsSimulated] = useState(false);
   const [isStickerPickerVisible, setIsStickerPickerVisible] = useState(false);
   const [isUploadingCustom, setIsUploadingCustom] = useState(false);
+  const [selectedStoryForViewer, setSelectedStoryForViewer] = useState<any[]>([]);
+  const [isStoryViewerVisible, setIsStoryViewerVisible] = useState(false);
   
   const { user, hiddenUsers, setHiddenUsers, isAdmin, updateLastViewedChat } = useAppStore();
   const insets = useSafeAreaInsets();
@@ -721,6 +735,62 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     }
   };
 
+  const handleReportStory = (msg: Message) => {
+    if (!user || !venueId || !msg.storyData) return;
+
+    Alert.alert(
+      "Report Story",
+      "Why are you reporting this story?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Inappropriate Content", 
+          onPress: () => submitStoryReport(msg, "Inappropriate Content")
+        },
+        { 
+          text: "Harassment / Bullying", 
+          onPress: () => submitStoryReport(msg, "Harassment or Bullying")
+        },
+        { 
+          text: "Spam / Scams", 
+          onPress: () => submitStoryReport(msg, "Spam or scams")
+        },
+        { 
+          text: "Hate Speech", 
+          onPress: () => submitStoryReport(msg, "Hate Speech")
+        }
+      ]
+    );
+  };
+
+  const submitStoryReport = async (msg: Message, reason: string) => {
+    if (!user || !msg.storyData) return;
+    try {
+      await createReport(
+        user.uid,
+        msg.storyData.user_id,
+        'post',
+        msg.storyData.id,
+        msg.storyData.media_url,
+        venueId,
+        reason
+      );
+      Toast.show({
+        type: 'success',
+        text1: 'Report Submitted',
+        text2: 'Thank you. We will review this story.'
+      });
+    } catch (error) {
+      console.warn("Failed to submit story report:", error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to submit report. Please try again.'
+      });
+    }
+  };
+
+
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -776,6 +846,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     const BadgeIcon = badgeObj ? Icons[badgeObj.iconName] : null;
     const isSticker = item.type === 'sticker';
     const isCustomSticker = item.type === 'custom_sticker';
+    const isStoryReaction = item.type === 'story_reaction' && item.storyData;
 
     return (
       <SwipeableMessage
@@ -792,20 +863,68 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           <TouchableOpacity
             activeOpacity={0.95}
             onLongPress={() => setSelectedMessageForReaction(item)}
+            onPress={() => {
+              if (isStoryReaction && item.storyData) {
+                const storyObj = {
+                  id: item.storyData.id,
+                  user_id: item.storyData.user_id,
+                  media_url: item.storyData.media_url,
+                  media_type: item.storyData.media_type,
+                  created_at: item.storyData.created_at ? {
+                    toDate: () => new Date(item.storyData!.created_at)
+                  } : null,
+                  expires_at: item.storyData.expires_at ? {
+                    toDate: () => new Date(item.storyData!.expires_at)
+                  } : null,
+                  venue_id: item.storyData.venue_id || venueId,
+                  activeBadge: item.storyData.activeBadge || undefined
+                };
+                setSelectedStoryForViewer([storyObj]);
+                setIsStoryViewerVisible(true);
+              }
+            }}
           >
-            <View style={(isSticker || isCustomSticker) ? [styles.stickerContainer, isMe ? styles.mySticker : styles.otherSticker] : [styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
-              {renderReplyHeader(item, isMe)}
-              {isSticker ? (
-                <FloatingSticker sticker={item.message} />
-              ) : isCustomSticker ? (
-                <FloatingCustomSticker uri={item.message} />
-              ) : (
-                <Text style={styles.messageText}>{item.message}</Text>
-              )}
-              <Text style={[styles.timeText, isMe ? ((isSticker || isCustomSticker) ? styles.myStickerTimeText : styles.myTimeText) : ((isSticker || isCustomSticker) ? styles.otherStickerTimeText : styles.otherTimeText)]}>
-                {formatTime(item.timestamp)}
-              </Text>
-            </View>
+            {isStoryReaction && item.storyData ? (
+              <View style={[
+                styles.storyReactionBubble, 
+                isMe ? styles.myStoryReactionBubble : styles.otherStoryReactionBubble
+              ]}>
+                <View style={styles.storyReactionContent}>
+                  <View style={styles.storyThumbnailContainer}>
+                    <Image source={{ uri: item.storyData.media_url }} style={styles.storyThumbnail} />
+                    {item.storyData.media_type === 'video' && (
+                      <View style={styles.playIconOverlay}>
+                        <Icons.Play size={10} color="#000" fill="#000" />
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.storyReactionDetails}>
+                    <Text style={styles.storyReactionText}>{item.message}</Text>
+                    <View style={styles.tapToViewContainer}>
+                      <Icons.Sparkles size={10} color="#00FFCC" style={{ marginRight: 4 }} />
+                      <Text style={styles.tapToViewText}>Tap to view story</Text>
+                    </View>
+                  </View>
+                </View>
+                <Text style={[styles.timeText, styles.storyReactionTime]}>
+                  {formatTime(item.timestamp)}
+                </Text>
+              </View>
+            ) : (
+              <View style={(isSticker || isCustomSticker) ? [styles.stickerContainer, isMe ? styles.mySticker : styles.otherSticker] : [styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
+                {renderReplyHeader(item, isMe)}
+                {isSticker ? (
+                  <FloatingSticker sticker={item.message} />
+                ) : isCustomSticker ? (
+                  <FloatingCustomSticker uri={item.message} />
+                ) : (
+                  <Text style={styles.messageText}>{item.message}</Text>
+                )}
+                <Text style={[styles.timeText, isMe ? ((isSticker || isCustomSticker) ? styles.myStickerTimeText : styles.myTimeText) : ((isSticker || isCustomSticker) ? styles.otherStickerTimeText : styles.otherTimeText)]}>
+                  {formatTime(item.timestamp)}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
           
           {renderReactions(item, isMe)}
@@ -1037,7 +1156,11 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                         style={styles.deleteOption}
                         onPress={() => {
                           if (selectedMessageForReaction) {
-                            handleDeleteMessage(selectedMessageForReaction.id);
+                            const msgId = selectedMessageForReaction.id;
+                            setSelectedMessageForReaction(null);
+                            setTimeout(() => {
+                              handleDeleteMessage(msgId);
+                            }, 100);
                           }
                         }}
                       >
@@ -1052,7 +1175,11 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                         style={styles.deleteOption}
                         onPress={() => {
                           if (selectedMessageForReaction) {
-                            handleReportMessage(selectedMessageForReaction);
+                            const msg = selectedMessageForReaction;
+                            setSelectedMessageForReaction(null);
+                            setTimeout(() => {
+                              handleReportMessage(msg);
+                            }, 100);
                           }
                         }}
                       >
@@ -1064,15 +1191,40 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                         style={styles.deleteOption}
                         onPress={() => {
                           if (selectedMessageForReaction) {
-                            handleHideUserPrompt(
-                              selectedMessageForReaction.user_id,
-                              selectedMessageForReaction.username
-                            );
+                            const uid = selectedMessageForReaction.user_id;
+                            const uname = selectedMessageForReaction.username;
+                            setSelectedMessageForReaction(null);
+                            setTimeout(() => {
+                              handleHideUserPrompt(uid, uname);
+                            }, 100);
                           }
                         }}
                       >
                         <Icons.UserX color="#FF3366" size={16} style={{ marginRight: 8 }} />
                         <Text style={[styles.deleteOptionText, { color: '#FF3366' }]}>Hide User</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+
+                  {selectedMessageForReaction?.type === 'story_reaction' &&
+                   selectedMessageForReaction?.storyData &&
+                   selectedMessageForReaction.storyData.user_id !== user?.uid && (
+                    <>
+                      <View style={styles.reactionSeparator} />
+                      <TouchableOpacity
+                        style={styles.deleteOption}
+                        onPress={() => {
+                          if (selectedMessageForReaction) {
+                            const msg = selectedMessageForReaction;
+                            setSelectedMessageForReaction(null);
+                            setTimeout(() => {
+                              handleReportStory(msg);
+                            }, 100);
+                          }
+                        }}
+                      >
+                        <Icons.AlertTriangle color="#FFD700" size={16} style={{ marginRight: 8 }} />
+                        <Text style={[styles.deleteOptionText, { color: '#FFD700' }]}>Report Story</Text>
                       </TouchableOpacity>
                     </>
                   )}
@@ -1082,6 +1234,17 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           </TouchableWithoutFeedback>
         </Modal>
 
+        <StoryViewer
+          isVisible={isStoryViewerVisible}
+          onClose={() => {
+            setIsStoryViewerVisible(false);
+            setSelectedStoryForViewer([]);
+          }}
+          stories={selectedStoryForViewer}
+          venueName={venueName}
+          canAddStory={false}
+          onAddStory={() => {}}
+        />
       </KeyboardAvoidingView>
       )}
     </Modal>
@@ -1516,5 +1679,86 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     borderColor: '#00FFCC',
     borderRadius: 12,
+  },
+  storyReactionBubble: {
+    padding: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    minWidth: 220,
+    maxWidth: 280,
+  },
+  myStoryReactionBubble: {
+    backgroundColor: 'rgba(255, 0, 204, 0.12)',
+    borderColor: 'rgba(255, 0, 204, 0.35)',
+    borderBottomRightRadius: 4,
+  },
+  otherStoryReactionBubble: {
+    backgroundColor: 'rgba(0, 255, 204, 0.1)',
+    borderColor: 'rgba(0, 255, 204, 0.3)',
+    borderBottomLeftRadius: 4,
+  },
+  storyReactionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  storyThumbnailContainer: {
+    width: 50,
+    height: 50,
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginRight: 12,
+    backgroundColor: '#222',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    position: 'relative',
+  },
+  storyThumbnail: {
+    width: '100%',
+    height: '100%',
+  },
+  playIconOverlay: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FFF',
+    marginLeft: -9,
+    marginTop: -9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  storyReactionDetails: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  storyReactionText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  tapToViewContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  tapToViewText: {
+    color: '#00FFCC',
+    fontSize: 10,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  storyReactionTime: {
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: 9,
+    marginTop: 6,
+    alignSelf: 'flex-end',
   }
 });

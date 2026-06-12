@@ -255,7 +255,11 @@ export const useSimulationEngine = () => {
     // 1. Initialise missing metrics in Firestore batch if needed
     try {
       for (const v of rawVenues) {
+        let needsUpdate = false;
+        const updateObj: any = {};
+
         if (v.venueViews === undefined) {
+          needsUpdate = true;
           const type = (v.type || 'Club').toUpperCase();
           const defaultPop = type === 'CLUB' ? 60 : type === 'BAR' ? 50 : type === 'ACTIVITY' ? 45 : 50;
           const baseViews = Math.floor(defaultPop * 3 + Math.random() * 100);
@@ -264,14 +268,14 @@ export const useSimulationEngine = () => {
           const baseVisits = Math.floor(defaultPop * 0.8 + Math.random() * 20);
           const baseCheckIns = Math.floor(defaultPop * 0.3 + Math.random() * 10);
           
-          const updateObj: any = {
+          Object.assign(updateObj, {
             venueViews: baseViews,
             favorites: baseFavs,
             shares: baseShares,
             venueVisits: baseVisits,
             checkIns: baseCheckIns,
             popularityDrift: 1.0
-          };
+          });
           
           if (v.type === 'Event') {
             Object.assign(updateObj, {
@@ -281,7 +285,14 @@ export const useSimulationEngine = () => {
               shares: Math.floor(5 + Math.random() * 15)
             });
           }
-          
+        }
+
+        if (v.venueIdentityFactor === undefined) {
+          needsUpdate = true;
+          updateObj.venueIdentityFactor = 0.90 + Math.random() * 0.20; // 0.90 to 1.10
+        }
+
+        if (needsUpdate) {
           await updateDoc(doc(firestore, 'venues', v.id), updateObj);
           Object.assign(v, updateObj);
         }
@@ -385,10 +396,15 @@ export const useSimulationEngine = () => {
       console.error('[useSimulationEngine] Failed to fetch presence:', err);
     }
 
-    // 6. Recalculate targets and update simulated locations
-    let currentSims = [...simulatedUsersRef.current];
-    let updates: any = {};
-    let needsUpdate = false;
+    // 6. Recalculate targets (Pass 1)
+    const proposedCounts: Record<string, number> = {};
+    const calculatedTargets: Record<string, number> = {};
+    const venueContexts: Record<string, {
+      cap: number;
+      currentCount: number;
+      realUserCount: number;
+      currentUsers: any[];
+    }> = {};
 
     venuesWithFactors.forEach(venue => {
       const isOverride = venue.isOverride === true;
@@ -424,6 +440,11 @@ export const useSimulationEngine = () => {
         targetAttendance = Math.max(0, Math.min(cap, Math.round(calculatedTarget)));
       }
 
+      // Apply venueIdentityFactor
+      const identityFactor = venue.venueIdentityFactor !== undefined ? venue.venueIdentityFactor : 1.0;
+      const adjustedTargetAttendance = Math.max(0, Math.min(cap, Math.round(targetAttendance * identityFactor)));
+      calculatedTargets[venue.id] = adjustedTargetAttendance;
+
       // Count real users within last 15 minutes
       const presenceObj = allPresence[venue.id] || {};
       const fifteenMinAgo = Date.now() - 15 * 60 * 1000;
@@ -434,34 +455,22 @@ export const useSimulationEngine = () => {
         }
       }
 
-      const currentUsers = currentSims.filter(u => u.venueId === venue.id);
+      const currentUsers = simulatedUsersRef.current.filter(u => u.venueId === venue.id);
       let currentCount = currentUsers.length;
-
-      // Force prune if excess sims exceed capacity
-      if (currentCount > cap) {
-        const excessCount = currentCount - cap;
-        const toPrune = currentUsers.slice(0, excessCount).map(u => u.user_id);
-        currentSims = currentSims.filter(u => !toPrune.includes(u.user_id));
-        toPrune.forEach(uid => {
-          updates[uid] = null;
-        });
-        needsUpdate = true;
-        currentCount = cap;
-      }
 
       // Momentum System: Drift slowly by ±0.02
       let state = venueSimStatesRef.current[venue.id];
       if (state) {
         let momentum = state.momentumScore || 1.0;
-        if (targetAttendance > currentCount) {
+        if (adjustedTargetAttendance > currentCount) {
           momentum = Math.min(1.2, momentum + 0.02);
-        } else if (targetAttendance < currentCount) {
+        } else if (adjustedTargetAttendance < currentCount) {
           momentum = Math.max(0.8, momentum - 0.02);
         }
         state.momentumScore = momentum;
       }
 
-      let simulatedTarget = Math.max(0, targetAttendance - realUserCount);
+      let simulatedTarget = Math.max(0, adjustedTargetAttendance - realUserCount);
 
       // Random Noise: Apply tiny randomness of ±2% to ±5%
       const noisePercentage = 0.02 + Math.random() * 0.03;
@@ -496,6 +505,82 @@ export const useSimulationEngine = () => {
         newCount = 0;
       }
 
+      proposedCounts[venue.id] = newCount;
+      venueContexts[venue.id] = {
+        cap,
+        currentCount,
+        realUserCount,
+        currentUsers
+      };
+    });
+
+    // Collision Safeguard Step
+    const venueTypes = ['CLUB', 'BAR', 'ACTIVITY', 'EVENT'];
+    for (const vType of venueTypes) {
+      const typeVenues = venuesWithFactors.filter(v => (v.type || 'Club').toUpperCase() === vType);
+      
+      // Find collision groups: venues of same type with identical or near-identical values (difference <= 1)
+      const inCollision = new Set<string>();
+      for (const v1 of typeVenues) {
+        const count1 = proposedCounts[v1.id];
+        if (count1 === undefined) continue;
+        
+        const matched = typeVenues.filter(v2 => {
+          const count2 = proposedCounts[v2.id];
+          return count2 !== undefined && Math.abs(count1 - count2) <= 1;
+        });
+        
+        // If 3 or more venues end up with near-identical values
+        if (matched.length >= 3) {
+          matched.forEach(v => inCollision.add(v.id));
+        }
+      }
+
+      // Apply micro-adjustments
+      if (inCollision.size >= 3) {
+        const affectedIds = Array.from(inCollision);
+        affectedIds.forEach(vid => {
+          const venue = typeVenues.find(v => v.id === vid);
+          if (!venue) return;
+          const cap = venueContexts[vid].cap;
+          
+          const correction = Math.random() > 0.5 ? 1 : -1;
+          const current = proposedCounts[vid];
+          let nextVal = current + correction;
+          
+          // Ensure capacity constraints are not violated
+          if (nextVal < 0) nextVal = current + 1;
+          if (nextVal > cap) nextVal = current - 1;
+          
+          proposedCounts[vid] = Math.max(0, Math.min(cap, nextVal));
+        });
+      }
+    }
+
+    // Pass 2: Apply resolved counts and spawn/despawn simulated users
+    let currentSims = [...simulatedUsersRef.current];
+    let updates: any = {};
+    let needsUpdate = false;
+
+    venuesWithFactors.forEach(venue => {
+      const { cap, currentUsers } = venueContexts[venue.id];
+      let currentCount = currentUsers.length;
+
+      // Force prune if excess sims exceed capacity
+      if (currentCount > cap) {
+        const excessCount = currentCount - cap;
+        const toPrune = currentUsers.slice(0, excessCount).map(u => u.user_id);
+        currentSims = currentSims.filter(u => !toPrune.includes(u.user_id));
+        toPrune.forEach(uid => {
+          updates[uid] = null;
+        });
+        needsUpdate = true;
+        currentCount = cap;
+      }
+
+      const newCount = proposedCounts[venue.id];
+      const targetAttendance = calculatedTargets[venue.id];
+
       const finalDiff = newCount - currentCount;
       if (finalDiff > 0) {
         for (let i = 0; i < finalDiff; i++) {
@@ -523,6 +608,8 @@ export const useSimulationEngine = () => {
         needsUpdate = true;
       }
 
+      // Update local memory state tracking
+      let state = venueSimStatesRef.current[venue.id];
       if (state) {
         state.ultimateTarget = targetAttendance;
         state.currentCount = newCount;
