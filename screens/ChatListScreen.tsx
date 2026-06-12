@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MessageCircle, ChevronRight } from 'lucide-react-native';
-import { ref, onValue } from 'firebase/database';
+import { ref } from 'firebase/database';
+import { subscribeToRTDB } from '../utils/firebaseUtils';
 import { realtimeDB } from '../services/firebase';
 import { useAppStore } from '../hooks/useAppStore';
 import { VenueChat } from '../components/VenueChat';
@@ -33,7 +34,7 @@ export const ChatListScreen = () => {
     }
 
     const chatsRef = ref(realtimeDB, `user_chats/${user.uid}`);
-    const unsubscribe = onValue(chatsRef, (snapshot) => {
+    const unsubscribe = subscribeToRTDB(chatsRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
         const now = Date.now();

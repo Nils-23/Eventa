@@ -9,7 +9,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ref, query, limitToLast, onValue } from 'firebase/database';
+import { ref, query, limitToLast } from 'firebase/database';
+import { subscribeToRTDB } from '../utils/firebaseUtils';
 import { realtimeDB } from '../services/firebase';
 import { LiveVenue } from '../contexts/LiveVenuesContext';
 import { StoryData } from '../services/storyService';
@@ -44,13 +45,25 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   onOpenChat,
 }) => {
   const insets = useSafeAreaInsets();
+  const [shouldRender, setShouldRender] = useState(false);
   const [latestMessages, setLatestMessages] = useState<Record<string, { username: string; message: string; timestamp: number; userId?: string }>>({});
   const [loadingChats, setLoadingChats] = useState(true);
   const { hiddenUsers, lastViewedChats, user } = useAppStore();
 
+  useEffect(() => {
+    if (isVisible) {
+      const timer = setTimeout(() => {
+        setShouldRender(true);
+      }, 150);
+      return () => clearTimeout(timer);
+    } else {
+      setShouldRender(false);
+    }
+  }, [isVisible]);
+
   // Fetch the single latest chat message for each live venue in real-time
   useEffect(() => {
-    if (!isVisible || venues.length === 0) return;
+    if (!isVisible || venues.length === 0 || !shouldRender) return;
 
     setLoadingChats(true);
     let activeListeners = 0;
@@ -60,7 +73,7 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
       const chatRef = query(ref(realtimeDB, `venue_chats/${venue.id}`), limitToLast(10));
       activeListeners++;
 
-      const unsub = onValue(chatRef, (snapshot) => {
+      const unsub = subscribeToRTDB(chatRef, (snapshot) => {
         if (snapshot.exists()) {
           const val = snapshot.val();
           const keys = Object.keys(val);
@@ -118,7 +131,7 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
       clearTimeout(timer);
       unsubscribes.forEach((unsub) => unsub());
     };
-  }, [isVisible, venues, hiddenUsers]);
+  }, [isVisible, venues, hiddenUsers, shouldRender]);
 
   // Filter and sort chat items in the last 24 hours
   const activeChats = React.useMemo(() => {
@@ -165,6 +178,14 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   };
 
   if (!isVisible) return null;
+
+  if (!shouldRender) {
+    return (
+      <View style={[StyleSheet.absoluteFillObject, styles.modalOverlay, { zIndex: 1000, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator color="#00FFCC" size="large" />
+      </View>
+    );
+  }
 
   return (
     <View style={[StyleSheet.absoluteFillObject, styles.modalOverlay, { zIndex: 1000 }]}>

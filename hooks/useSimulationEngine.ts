@@ -1,13 +1,12 @@
 import { useEffect, useRef } from 'react';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
 import { ref, update, set, get, onValue } from 'firebase/database';
 import { firestore, realtimeDB } from '../services/firebase';
 import { getDistanceInMeters } from '../utils/locationUtils';
 import { useAppStore } from './useAppStore';
 
 const MAX_RADIUS_METERS = 200; // Roam within 200m
-const UPDATE_INTERVAL_MS = 15000; // Update every 15 seconds
-const DEFAULT_USERS_PER_VENUE = 20;
+const HEARTBEAT_INTERVAL_MS = 15000; // Heartbeat lease & micro-movement every 15 seconds
 
 // Helper to calculate a new location within distance
 function offsetLocation(lat: number, lon: number, maxDistanceMeters: number) {
@@ -34,7 +33,7 @@ function moveLocation(currentLat: number, currentLon: number, centerLat: number,
      return {
        latitude: (latitude + centerLat) / 2,
        longitude: (longitude + centerLon) / 2
-     }
+     };
   }
   return { latitude, longitude };
 }
@@ -50,93 +49,134 @@ function getDefaultCapacity(type?: 'Club' | 'Bar' | 'Activity' | 'Event'): numbe
   }
 }
 
-function getDynamicTargetCount(venue: any, allVenues?: any[]): number {
-  const now = new Date();
-  const nairobiParts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Africa/Nairobi',
-    weekday: 'short',
-    hour: 'numeric',
-    hour12: false
-  }).formatToParts(now);
-
-  let weekday = 'Mon';
-  let hour = 12;
-
-  nairobiParts.forEach(p => {
-    if (p.type === 'weekday') weekday = p.value;
-    if (p.type === 'hour') hour = parseInt(p.value, 10);
-  });
-
-  const isOverride = venue.isOverride === true;
-  if (isOverride) {
-    return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
-  }
-
-  const isNightlifePeak = (day: string, hr: number) => {
-    if (hr >= 21) {
-      return ['Fri', 'Sat', 'Sun'].includes(day);
-    } else if (hr < 4) {
-      return ['Sat', 'Sun', 'Mon'].includes(day);
+// Weekday Multipliers
+function getWeekdayMultiplier(venueType: string, day: string): number {
+  const type = (venueType || '').toUpperCase();
+  if (type === 'CLUB') {
+    switch (day) {
+      case 'Mon': return 0.2;
+      case 'Tue': return 0.2;
+      case 'Wed': return 0.4;
+      case 'Thu': return 0.7;
+      case 'Fri': return 1.0;
+      case 'Sat': return 1.0;
+      case 'Sun': return 0.5;
     }
-    return false;
-  };
-
-  // Determine baseCapacity depending on category and time-window
-  let baseCapacity = 50;
-  if (venue.type === 'Club' || venue.type === 'Bar') {
-    if (isNightlifePeak(weekday, hour)) {
-      baseCapacity = venue.type === 'Club' ? 100 : 50;
-    } else if (hour >= 21 || hour < 4) {
-      baseCapacity = venue.type === 'Club' ? 60 : 30;
-    } else {
-      baseCapacity = venue.type === 'Club' ? 10 : 5;
+  } else if (type === 'BAR') {
+    switch (day) {
+      case 'Mon': return 0.4;
+      case 'Tue': return 0.5;
+      case 'Wed': return 0.6;
+      case 'Thu': return 0.8;
+      case 'Fri': return 1.0;
+      case 'Sat': return 1.0;
+      case 'Sun': return 0.7;
     }
-  } else if (venue.type === 'Activity') {
-    if (hour >= 19 || hour < 6) {
-      baseCapacity = 5;
-    } else {
-      const isWeekend = ['Sat', 'Sun'].includes(weekday);
-      baseCapacity = isWeekend ? 75 : 45;
-    }
-  } else if (venue.type === 'Event') {
-    const nowMs = Date.now();
-    const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
-    if (isOngoing) {
-      baseCapacity = (hour >= 9 && hour < 22) ? 150 : 20;
-    } else {
-      baseCapacity = 0;
+  } else if (type === 'ACTIVITY') {
+    switch (day) {
+      case 'Mon': return 0.8;
+      case 'Tue': return 0.8;
+      case 'Wed': return 0.9;
+      case 'Thu': return 0.9;
+      case 'Fri': return 1.0;
+      case 'Sat': return 1.0;
+      case 'Sun': return 1.0;
     }
   }
+  return 1.0;
+}
 
-  // Retrieve slow-drifting simPopularityScore (default to 0.5)
-  const score = venue.simPopularityScore !== undefined ? venue.simPopularityScore : 0.5;
+// Hour Multipliers
+function getHourMultiplier(
+  venueType: string,
+  hour: number,
+  nowMs: number,
+  eventStart?: number,
+  eventEnd?: number
+): number {
+  const type = (venueType || '').toUpperCase();
+  if (type === 'CLUB') {
+    if (hour >= 22 || hour <= 2) return 1.0;
+    if (hour === 20) return 0.2;
+    if (hour === 21) return 0.5;
+    if (hour === 3) return 0.6;
+    if (hour === 4) return 0.3;
+    if (hour === 5) return 0.1;
+    if (hour === 6) return 0.05;
+    return 0.05;
+  } else if (type === 'BAR') {
+    if (hour >= 19 && hour <= 23) return 1.0;
+    if (hour === 16) return 0.2;
+    if (hour === 17) return 0.5;
+    if (hour === 18) return 0.8;
+    if (hour === 0) return 0.6;
+    if (hour === 1) return 0.3;
+    if (hour === 2) return 0.1;
+    if (hour === 3) return 0.05;
+    return 0.02;
+  } else if (type === 'ACTIVITY') {
+    if (hour >= 11 && hour <= 16) return 1.0;
+    if (hour === 8) return 0.3;
+    if (hour === 9) return 0.6;
+    if (hour === 10) return 0.8;
+    if (hour === 17) return 0.8;
+    if (hour === 18) return 0.5;
+    if (hour === 19) return 0.2;
+    return 0.05;
+  } else if (type === 'EVENT' && eventStart && eventEnd) {
+    if (nowMs < eventStart - 2 * 3600 * 1000) return 0.0;
+    if (nowMs >= eventStart && nowMs <= eventEnd) return 1.0;
+    
+    if (nowMs < eventStart) {
+      const timeDiff = nowMs - (eventStart - 2 * 3600 * 1000);
+      const ratio = timeDiff / (2 * 3600 * 1000);
+      return 0.1 + ratio * 0.9;
+    } else {
+      const timeDiff = nowMs - eventEnd;
+      const ratio = timeDiff / (2 * 3600 * 1000);
+      return Math.max(0, 1.0 - ratio * 1.0);
+    }
+  }
+  return 1.0;
+}
 
-  // Apply Pareto Power-Law distribution (exponent 6.2 guarantees top 20% of venues get 80% of simulated users)
-  let count = Math.round(baseCapacity * Math.pow(score, 6.2));
-
-  const defaultCap = getDefaultCapacity(venue.type);
-  const maxCapacity = Math.min(defaultCap, venue.maxCapacity !== undefined ? venue.maxCapacity : defaultCap);
-  count = Math.min(count, maxCapacity);
-
-  return Math.max(0, count);
+// Automatic Event Strength
+function getEventStrengthMultiplier(venue: any): number {
+  if (venue.type !== 'Event') return 1.0;
+  
+  const savedCount = venue.savedCount !== undefined ? venue.savedCount : null;
+  const views = venue.views !== undefined ? venue.views : null;
+  const shares = venue.shares !== undefined ? venue.shares : null;
+  const comments = venue.comments !== undefined ? venue.comments : null;
+  
+  if (savedCount === null && views === null && shares === null && comments === null) {
+    return 1.5; // MEDIUM
+  }
+  
+  const sc = savedCount || 0;
+  const v = views || 0;
+  const sh = shares || 0;
+  const c = comments || 0;
+  
+  const score = (sc * 2) + (v * 0.1) + (sh * 5) + (c * 3);
+  if (score <= 50) return 1.0; // SMALL
+  if (score <= 150) return 1.5; // MEDIUM
+  if (score <= 400) return 2.5; // LARGE
+  return 4.0; // MAJOR
 }
 
 export const useSimulationEngine = () => {
-
   const { isSimulationRunning, isAdmin } = useAppStore();
   const simulatedUsersRef = useRef<any[]>([]);
   const MY_SIMULATOR_ID = useRef(`sim_client_${Date.now()}_${Math.floor(Math.random() * 100000)}`);
+  
   const venuesRef = useRef<any[]>([]);
-  const lastRecalculateTimeRef = useRef<number>(0);
+  const storiesRef = useRef<any[]>([]);
+  
   const venueSimStatesRef = useRef<Record<string, {
     ultimateTarget: number;
-    changeQueue: number[];
     currentCount: number;
-    isOverride?: boolean;
-    simulatedUsersCount?: number;
-    maxCapacity?: number;
-    startDate?: number;
-    expirationDate?: number;
+    momentumScore: number;
   }>>({});
 
   const serverTimeOffsetRef = useRef<number>(0);
@@ -169,40 +209,34 @@ export const useSimulationEngine = () => {
 
   const getServerTime = () => Date.now() + serverTimeOffsetRef.current;
 
-  // 1. Maintain realtime venues list for target counts
+  // Maintain realtime venues list
   useEffect(() => {
-    if (!isAdmin) return; // Only admins need this
-
+    if (!isAdmin) return;
     const unsubscribe = onSnapshot(collection(firestore, 'venues'), (snapshot) => {
-      const venues = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
-      venuesRef.current = venues;
-      
-      // If simulation is running, instantly sync counts
-      if (isSimulationRunning) {
-        syncAllVenueUsers();
-      }
+      venuesRef.current = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     });
-
     return () => unsubscribe();
-  }, [isAdmin, isSimulationRunning]);
+  }, [isAdmin]);
 
-  const syncAllVenueUsers = async (isTick = false) => {
-    let currentSims = [...simulatedUsersRef.current];
-    let updates: any = {};
-    let needsUpdate = false;
+  // Maintain realtime stories list
+  useEffect(() => {
+    if (!isAdmin) return;
+    const unsubscribe = onSnapshot(collection(firestore, 'stories'), (snapshot) => {
+      storiesRef.current = snapshot.docs.map(doc => doc.data());
+    });
+    return () => unsubscribe();
+  }, [isAdmin]);
 
-    // Fetch the entire venue_presence once to count real users
-    let allPresence: Record<string, Record<string, number>> = {};
-    try {
-      const presenceSnap = await get(ref(realtimeDB, 'venue_presence'));
-      if (presenceSnap.exists()) {
-        allPresence = presenceSnap.val();
-      }
-    } catch (err) {
-      console.error('[syncAllVenueUsers] Failed to fetch presence:', err);
-    }
+  // Main calculations algorithm cycle (Runs dynamically inside useEffect timeout loop)
+  const runSimulationAlgorithm = async () => {
+    if (venuesRef.current.length === 0) return;
 
+    console.log('[useSimulationEngine] Executing Eventas Simulation Cycle...');
+    const rawVenues = [...venuesRef.current];
     const now = new Date();
+    const nowMs = Date.now();
+    
+    // Get current Nairobi weekday and hour
     const nairobiParts = new Intl.DateTimeFormat('en-US', {
       timeZone: 'Africa/Nairobi',
       weekday: 'short',
@@ -218,70 +252,179 @@ export const useSimulationEngine = () => {
       if (p.type === 'hour') hour = parseInt(p.value, 10);
     });
 
-    const isNightlifePeak = (day: string, hr: number) => {
-      if (hr >= 21) {
-        return ['Fri', 'Sat', 'Sun'].includes(day);
-      } else if (hr < 4) {
-        return ['Sat', 'Sun', 'Mon'].includes(day);
+    // 1. Initialise missing metrics in Firestore batch if needed
+    try {
+      for (const v of rawVenues) {
+        if (v.venueViews === undefined) {
+          const type = (v.type || 'Club').toUpperCase();
+          const defaultPop = type === 'CLUB' ? 60 : type === 'BAR' ? 50 : type === 'ACTIVITY' ? 45 : 50;
+          const baseViews = Math.floor(defaultPop * 3 + Math.random() * 100);
+          const baseFavs = Math.floor(defaultPop * 0.5 + Math.random() * 10);
+          const baseShares = Math.floor(defaultPop * 0.2 + Math.random() * 5);
+          const baseVisits = Math.floor(defaultPop * 0.8 + Math.random() * 20);
+          const baseCheckIns = Math.floor(defaultPop * 0.3 + Math.random() * 10);
+          
+          const updateObj: any = {
+            venueViews: baseViews,
+            favorites: baseFavs,
+            shares: baseShares,
+            venueVisits: baseVisits,
+            checkIns: baseCheckIns,
+            popularityDrift: 1.0
+          };
+          
+          if (v.type === 'Event') {
+            Object.assign(updateObj, {
+              savedCount: Math.floor(10 + Math.random() * 40),
+              views: Math.floor(100 + Math.random() * 200),
+              comments: Math.floor(2 + Math.random() * 10),
+              shares: Math.floor(5 + Math.random() * 15)
+            });
+          }
+          
+          await updateDoc(doc(firestore, 'venues', v.id), updateObj);
+          Object.assign(v, updateObj);
+        }
       }
-      return false;
-    };
-
-    const nowMs = Date.now();
-    const shouldRecalculate = lastRecalculateTimeRef.current === 0 || (nowMs - lastRecalculateTimeRef.current >= 5 * 60 * 1000);
-
-    if (shouldRecalculate && isTick) {
-      lastRecalculateTimeRef.current = nowMs;
+    } catch (err) {
+      console.error('[useSimulationEngine] Failed to initialize stats:', err);
     }
 
-    const getTargetForVenue = (venue: any, currentCount: number, realUserCount: number): number => {
-      const isOverride = venue.isOverride === true;
-      const baseTarget = getDynamicTargetCount(venue, venuesRef.current);
+    // 2. Weekly popularity drift check
+    try {
+      const docRef = doc(firestore, 'settings', 'simulation');
+      const docSnap = await getDoc(docRef);
+      let lastDriftTime = 0;
+      if (docSnap.exists()) {
+        lastDriftTime = docSnap.data().lastDriftTime || 0;
+      }
+      if (nowMs - lastDriftTime > 7 * 24 * 3600 * 1000) {
+        console.log('[useSimulationEngine] Triggering weekly drift update...');
+        const batch = writeBatch(firestore);
+        for (const v of rawVenues) {
+          const currentDrift = v.popularityDrift || 1.0;
+          const magnitude = 0.05 + Math.random() * 0.05; // 5% to 10%
+          const sign = Math.random() > 0.5 ? 1 : -1;
+          const drift = 1 + sign * magnitude;
+          const newDrift = Math.max(0.5, Math.min(2.0, currentDrift * drift));
+          batch.update(doc(firestore, 'venues', v.id), {
+            popularityDrift: newDrift
+          });
+          v.popularityDrift = newDrift;
+        }
+        batch.update(docRef, {
+          lastDriftTime: nowMs
+        });
+        await batch.commit();
+      }
+    } catch (err) {
+      console.error('[useSimulationEngine] Weekly drift failed:', err);
+    }
+
+    // 3. Dynamic Popularity Score Calculation
+    const scores = rawVenues.map(v => {
+      const sc = (v.venueViews || 0) * 0.2 + 
+                 (v.favorites || 0) * 2 + 
+                 (v.shares || 0) * 3 + 
+                 (v.venueVisits || 0) * 5 + 
+                 (v.checkIns || 0) * 10;
+      return { id: v.id, rawScore: sc };
+    });
+
+    const rawScoresList = scores.map(s => s.rawScore);
+    const minHP = Math.min(...rawScoresList);
+    const maxHP = Math.max(...rawScoresList);
+
+    const rawStories = storiesRef.current || [];
+
+    const computedVenues = rawVenues.map(v => {
+      const rawObj = scores.find(s => s.id === v.id);
+      const rawScore = rawObj ? rawObj.rawScore : 0;
       
-      const variation = (Math.random() * 0.16 - 0.08); // -8% to +8%
-      let variableTarget = Math.round(baseTarget * (1 + variation));
+      const historicalPopularity = maxHP > minHP 
+        ? 1 + 99 * (rawScore - minHP) / (maxHP - minHP) 
+        : 50;
 
-      if (!isOverride) {
-        if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
-          variableTarget = Math.min(variableTarget, 5);
-        }
-        if ((venue.type === 'Club' || venue.type === 'Bar') && isNightlifePeak(weekday, hour)) {
-          variableTarget = Math.max(variableTarget, 20);
-        }
+      const recentStoriesCount = rawStories.filter(s => s.venue_id === v.id).length;
+      const recentChatsCount = Math.floor(Math.random() * 10);
+      const recentActivity = (recentStoriesCount * 15) + (recentChatsCount * 5);
+
+      const popularityBase = historicalPopularity + recentActivity;
+      const popularityDrift = v.popularityDrift || 1.0;
+      const trendFactor = 0.85 + Math.random() * 0.3; // random(0.85 - 1.15)
+
+      const resultingPopularity = popularityBase * popularityDrift * trendFactor;
+
+      return {
+        ...v,
+        resultingPopularity
+      };
+    });
+
+    // 4. Popularity Distribution (Rank^5.5 Power-Law Exponent)
+    computedVenues.sort((a, b) => a.resultingPopularity - b.resultingPopularity);
+    const totalVenues = computedVenues.length;
+
+    const venuesWithFactors = computedVenues.map((v, index) => {
+      const rank = totalVenues > 1 ? index / (totalVenues - 1) : 1.0;
+      const popularityFactor = Math.pow(rank, 5.5);
+      return {
+        ...v,
+        popularityFactor
+      };
+    });
+
+    // 5. Fetch presence to count real users
+    let allPresence: Record<string, Record<string, number>> = {};
+    try {
+      const presenceSnap = await get(ref(realtimeDB, 'venue_presence'));
+      if (presenceSnap.exists()) {
+        allPresence = presenceSnap.val();
       }
+    } catch (err) {
+      console.error('[useSimulationEngine] Failed to fetch presence:', err);
+    }
 
-      const defaultCap = getDefaultCapacity(venue.type);
-      const maxCapacity = Math.min(defaultCap, venue.maxCapacity !== undefined ? venue.maxCapacity : defaultCap);
-      const finalTarget = Math.max(0, Math.min(variableTarget, maxCapacity));
+    // 6. Recalculate targets and update simulated locations
+    let currentSims = [...simulatedUsersRef.current];
+    let updates: any = {};
+    let needsUpdate = false;
 
-      const rawTargetCount = Math.round(currentCount * 0.7 + finalTarget * 0.3);
-      let targetCount = Math.max(0, rawTargetCount - realUserCount);
-      if (venue.startDate && Date.now() < venue.startDate) {
-        targetCount = 0;
-      }
-      return targetCount;
-    };
-
-    venuesRef.current.forEach(venue => {
-      // 1. Initialize & drift popularity scores in Firestore slowly
+    venuesWithFactors.forEach(venue => {
       const isOverride = venue.isOverride === true;
-      if (!isOverride && isTick) {
-        if (venue.simPopularityScore === undefined) {
-          const initialScore = Math.random();
-          updateDoc(doc(firestore, 'venues', venue.id), {
-            simPopularityScore: initialScore
-          }).catch(err => console.error(`[useSimulationEngine] Failed to initialize score for ${venue.name}:`, err));
-        } else if (Math.random() < 0.01) {
-          const currentScore = venue.simPopularityScore;
-          const drift = (Math.random() - 0.5) * 0.1;
-          const newScore = Math.max(0.0, Math.min(1.0, currentScore + drift));
-          updateDoc(doc(firestore, 'venues', venue.id), {
-            simPopularityScore: newScore
-          }).catch(err => console.error(`[useSimulationEngine] Failed to drift score for ${venue.name}:`, err));
+      const cap = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
+
+      let targetAttendance = 0;
+
+      if (isOverride) {
+        targetAttendance = venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
+      } else {
+        const weekdayMultiplier = getWeekdayMultiplier(venue.type, weekday);
+        const hourMultiplier = getHourMultiplier(venue.type, hour, nowMs, venue.startDate, venue.expirationDate);
+        const eventStrengthMultiplier = getEventStrengthMultiplier(venue);
+
+        let state = venueSimStatesRef.current[venue.id];
+        if (!state) {
+          state = {
+            ultimateTarget: 0,
+            currentCount: 0,
+            momentumScore: 1.0
+          };
+          venueSimStatesRef.current[venue.id] = state;
         }
+        
+        const momentumScore = state.momentumScore || 1.0;
+        const calculatedTarget = cap * 
+                                 venue.popularityFactor * 
+                                 weekdayMultiplier * 
+                                 hourMultiplier * 
+                                 eventStrengthMultiplier * 
+                                 momentumScore;
+
+        targetAttendance = Math.max(0, Math.min(cap, Math.round(calculatedTarget)));
       }
 
-      // 2. Count real users present within last 15 minutes
+      // Count real users within last 15 minutes
       const presenceObj = allPresence[venue.id] || {};
       const fifteenMinAgo = Date.now() - 15 * 60 * 1000;
       let realUserCount = 0;
@@ -294,68 +437,68 @@ export const useSimulationEngine = () => {
       const currentUsers = currentSims.filter(u => u.venueId === venue.id);
       let currentCount = currentUsers.length;
 
-      const defaultCap = getDefaultCapacity(venue.type);
-      const maxCapacity = Math.min(defaultCap, venue.maxCapacity !== undefined ? venue.maxCapacity : defaultCap);
-
-      // Instantly prune any excess simulated users exceeding the absolute simulated cap
-      if (currentCount > maxCapacity) {
-        const excessCount = currentCount - maxCapacity;
+      // Force prune if excess sims exceed capacity
+      if (currentCount > cap) {
+        const excessCount = currentCount - cap;
         const toPrune = currentUsers.slice(0, excessCount).map(u => u.user_id);
         currentSims = currentSims.filter(u => !toPrune.includes(u.user_id));
         toPrune.forEach(uid => {
           updates[uid] = null;
         });
         needsUpdate = true;
-        currentCount = maxCapacity;
+        currentCount = cap;
       }
 
+      // Momentum System: Drift slowly by ±0.02
       let state = venueSimStatesRef.current[venue.id];
-      const hasConfigChanged = !state ||
-        state.isOverride !== venue.isOverride ||
-        state.simulatedUsersCount !== venue.simulatedUsersCount ||
-        state.maxCapacity !== maxCapacity ||
-        state.startDate !== venue.startDate ||
-        state.expirationDate !== venue.expirationDate;
-
-      if (shouldRecalculate || hasConfigChanged) {
-        const targetCount = getTargetForVenue(venue, currentCount, realUserCount);
-        let diff = targetCount - currentCount;
-
-        // Enforce maximum change of 10 users per 5-minute interval
-        const MAX_CHANGE_PER_INTERVAL = 10;
-        if (diff > MAX_CHANGE_PER_INTERVAL) {
-          diff = MAX_CHANGE_PER_INTERVAL;
-        } else if (diff < -MAX_CHANGE_PER_INTERVAL) {
-          diff = -MAX_CHANGE_PER_INTERVAL;
+      if (state) {
+        let momentum = state.momentumScore || 1.0;
+        if (targetAttendance > currentCount) {
+          momentum = Math.min(1.2, momentum + 0.02);
+        } else if (targetAttendance < currentCount) {
+          momentum = Math.max(0.8, momentum - 0.02);
         }
-
-        const cappedTargetCount = currentCount + diff;
-        const steps = 5;
-        const changeQueue: number[] = [];
-        let remaining = diff;
-        for (let i = 0; i < steps; i++) {
-          const stepChange = Math.round(remaining / (steps - i));
-          changeQueue.push(stepChange);
-          remaining -= stepChange;
-        }
-
-        state = {
-          ultimateTarget: cappedTargetCount,
-          changeQueue,
-          currentCount,
-          isOverride: venue.isOverride,
-          simulatedUsersCount: venue.simulatedUsersCount,
-          maxCapacity: maxCapacity,
-          startDate: venue.startDate,
-          expirationDate: venue.expirationDate
-        };
-        venueSimStatesRef.current[venue.id] = state;
+        state.momentumScore = momentum;
       }
 
-      const stepChange = (isTick && state.changeQueue.length > 0) ? state.changeQueue.shift()! : 0;
+      let simulatedTarget = Math.max(0, targetAttendance - realUserCount);
 
-      if (stepChange > 0) {
-        for (let i = 0; i < stepChange; i++) {
+      // Random Noise: Apply tiny randomness of ±2% to ±5%
+      const noisePercentage = 0.02 + Math.random() * 0.03;
+      const noiseSign = Math.random() > 0.5 ? 1 : -1;
+      const noiseFactor = 1.0 + (noiseSign * noisePercentage);
+      simulatedTarget = Math.max(0, Math.round(simulatedTarget * noiseFactor));
+
+      // Smooth Transitions: Move only 5-15% toward target
+      const diff = simulatedTarget - currentCount;
+      const transitionFactor = 0.05 + Math.random() * 0.10;
+      let newCount = Math.round(currentCount + diff * transitionFactor);
+
+      // Spike Protection: Cap max change per cycle (±3, ±8, ±15)
+      let delta = newCount - currentCount;
+      let maxDelta = 15;
+      if (currentCount < 15) {
+        maxDelta = 3;
+      } else if (currentCount <= 50) {
+        maxDelta = 8;
+      } else {
+        maxDelta = 15;
+      }
+
+      if (delta > maxDelta) delta = maxDelta;
+      if (delta < -maxDelta) delta = -maxDelta;
+      newCount = currentCount + delta;
+
+      newCount = Math.max(0, Math.min(cap, newCount));
+
+      // Force 0 for future unstarted events
+      if (venue.type === 'Event' && venue.startDate && Date.now() < venue.startDate) {
+        newCount = 0;
+      }
+
+      const finalDiff = newCount - currentCount;
+      if (finalDiff > 0) {
+        for (let i = 0; i < finalDiff; i++) {
           const loc = offsetLocation(venue.latitude, venue.longitude, MAX_RADIUS_METERS / 2);
           const newUser = {
             user_id: `sim_${venue.id}_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
@@ -370,28 +513,37 @@ export const useSimulationEngine = () => {
           updates[newUser.user_id] = newUser;
           needsUpdate = true;
         }
-      } else if (stepChange < 0) {
-        const toRemove = Math.abs(stepChange);
+      } else if (finalDiff < 0) {
+        const toRemove = Math.abs(finalDiff);
         const despawnList = currentUsers.slice(0, toRemove).map(u => u.user_id);
-        
         currentSims = currentSims.filter(u => !despawnList.includes(u.user_id));
         despawnList.forEach(uid => {
           updates[uid] = null;
         });
         needsUpdate = true;
       }
+
+      if (state) {
+        state.ultimateTarget = targetAttendance;
+        state.currentCount = newCount;
+      }
     });
 
     simulatedUsersRef.current = currentSims;
 
     if (needsUpdate) {
-      update(ref(realtimeDB, 'simulated_locations'), updates).catch(console.error);
+      try {
+        await update(ref(realtimeDB, 'simulated_locations'), updates);
+      } catch (err) {
+        console.error('[useSimulationEngine] RTDB updates failed:', err);
+      }
     }
   };
-  // 2. Run the main simulation loop
+
+  // Run the main simulation loops
   useEffect(() => {
     if (!isSimulationRunning || !isAdmin) {
-      // Clean up local reference and wipe RTDB only if we are the active leader holding the lease
+      // Clean up local reference and release RTDB lease if we hold it
       import('firebase/auth').then(({ getAuth }) => {
         const auth = getAuth();
         if (auth.currentUser) {
@@ -405,7 +557,6 @@ export const useSimulationEngine = () => {
         }
       });
       simulatedUsersRef.current = [];
-      lastRecalculateTimeRef.current = 0;
       venueSimStatesRef.current = {};
       return;
     }
@@ -413,12 +564,9 @@ export const useSimulationEngine = () => {
     // Initial sync
     const initializeEngine = async () => {
       try {
-        // Fetch existing sims from RTDB so we don't infinitely duplicate them on app restart
-        const { get } = await import('firebase/database');
         const snap = await get(ref(realtimeDB, 'simulated_locations'));
         if (snap.exists()) {
           const existingSims = Object.values(snap.val());
-          // Only keep sims that are structurally valid
           simulatedUsersRef.current = existingSims.filter((s: any) => s.user_id && s.venueId);
         }
       } catch (err) {
@@ -426,7 +574,6 @@ export const useSimulationEngine = () => {
       }
       
       try {
-        const { get } = await import('firebase/database');
         const statusSnap = await get(ref(realtimeDB, 'simulation_status'));
         let activeId = null;
         let lastHeartbeat = 0;
@@ -442,7 +589,7 @@ export const useSimulationEngine = () => {
             activeSimulatorId: MY_SIMULATOR_ID.current,
             lastHeartbeat: nowMs
           });
-          syncAllVenueUsers();
+          await runSimulationAlgorithm();
         }
       } catch (err) {
         console.error('[useSimulationEngine] Initial lease claim failed:', err);
@@ -451,8 +598,8 @@ export const useSimulationEngine = () => {
 
     initializeEngine();
 
-    const tick = async () => {
-      // 1. Leader election check
+    // Loop 1: Fast Heartbeat & Micro-movements Roaming (Runs every 15 seconds)
+    const fastIntervalId = setInterval(async () => {
       let activeId = null;
       let lastHeartbeat = 0;
       try {
@@ -463,43 +610,39 @@ export const useSimulationEngine = () => {
           lastHeartbeat = val.lastHeartbeat || 0;
         }
       } catch (err) {
-        console.error('[useSimulationEngine] Failed to read simulation status:', err);
+        console.error('[useSimulationEngine] Fast check failed to read status:', err);
+        return;
       }
 
       const nowMs = getServerTime();
       const isLeaseActive = activeId && (nowMs - lastHeartbeat < 30000);
 
-      if (isLeaseActive && activeId !== MY_SIMULATOR_ID.current) {
-        console.log(`[useSimulationEngine] Standing by. Active simulator is ${activeId}`);
-        return;
+      // Claim or renew lease
+      if (!isLeaseActive || activeId === MY_SIMULATOR_ID.current) {
+        try {
+          await set(ref(realtimeDB, 'simulation_status'), {
+            activeSimulatorId: MY_SIMULATOR_ID.current,
+            lastHeartbeat: nowMs
+          });
+        } catch (err) {
+          console.error('[useSimulationEngine] Heartbeat lease renewal failed:', err);
+          return;
+        }
+      } else {
+        return; // Standby client
       }
 
-      // Claim/Renew lease
-      try {
-        await set(ref(realtimeDB, 'simulation_status'), {
-          activeSimulatorId: MY_SIMULATOR_ID.current,
-          lastHeartbeat: nowMs
-        });
-      } catch (err) {
-        console.error('[useSimulationEngine] Failed to claim simulation lease:', err);
-        return;
-      }
-
-      syncAllVenueUsers(true);
-
+      // Roam/Move existing users slightly to make them roam organically
       if (simulatedUsersRef.current.length === 0) return;
 
-      
-      const now = getServerTime();
       const updates: any = {};
-
       const nextState = simulatedUsersRef.current.map(u => {
         const nextLoc = moveLocation(u.latitude, u.longitude, u.centerLat, u.centerLon, 15);
         const updatedUser = {
           ...u,
           latitude: nextLoc.latitude,
           longitude: nextLoc.longitude,
-          timestamp: now
+          timestamp: nowMs
         };
 
         updates[u.user_id] = {
@@ -518,12 +661,46 @@ export const useSimulationEngine = () => {
       try {
         await update(ref(realtimeDB, 'simulated_locations'), updates);
       } catch (err) {
-        console.error('Simulation RTDB Error:', err);
+        console.error('[useSimulationEngine] Fast tick movement update failed:', err);
       }
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // Loop 2: Simulation Cycle (Runs recalculations and spawning on a random 2-5 minutes recursive timeout)
+    let simTimerId: NodeJS.Timeout;
+
+    const scheduleNextSimulationTick = () => {
+      // Choose a random interval between 2 and 5 minutes
+      const randomMinutes = 2 + Math.random() * 3;
+      const intervalMs = Math.round(randomMinutes * 60 * 1000);
+      
+      simTimerId = setTimeout(async () => {
+        // Verify lease before running calculation
+        try {
+          const statusSnap = await get(ref(realtimeDB, 'simulation_status'));
+          if (statusSnap.exists()) {
+            const activeId = statusSnap.val().activeSimulatorId;
+            if (activeId !== MY_SIMULATOR_ID.current) {
+              console.log('[useSimulationEngine] Standing by, lease held by:', activeId);
+              scheduleNextSimulationTick();
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('[useSimulationEngine] Failed lease check in simulation cycle:', err);
+        }
+
+        await runSimulationAlgorithm();
+        scheduleNextSimulationTick();
+      }, intervalMs);
+      
+      console.log(`[useSimulationEngine] Next simulation tick scheduled in ${Math.round(intervalMs / 1000)} seconds.`);
     };
 
-    const intervalId = setInterval(tick, UPDATE_INTERVAL_MS);
+    scheduleNextSimulationTick();
 
-    return () => clearInterval(intervalId);
+    return () => {
+      clearInterval(fastIntervalId);
+      clearTimeout(simTimerId);
+    };
   }, [isSimulationRunning, isAdmin]);
 };

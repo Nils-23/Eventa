@@ -118,6 +118,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const insets = useSafeAreaInsets();
   const { user, hiddenUsers, setHiddenUsers } = useAppStore();
 
+  const [shouldRender, setShouldRender] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
@@ -175,17 +176,29 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     })
   ).current;
 
+  // Defer rendering until transition is finished
+  useEffect(() => {
+    if (isVisible) {
+      const timer = setTimeout(() => {
+        setShouldRender(true);
+      }, 300);
+      return () => clearTimeout(timer);
+    } else {
+      setShouldRender(false);
+    }
+  }, [isVisible]);
+
   // Prefetch stories media when viewer opens
   useEffect(() => {
-    if (isVisible && stories.length > 0) {
+    if (isVisible && stories.length > 0 && shouldRender) {
       const mediaUrls = stories.map(s => s.media_url).filter(Boolean);
       prefetchStoriesMedia(mediaUrls);
     }
-  }, [isVisible, stories]);
+  }, [isVisible, stories, shouldRender]);
 
   // ─── Prefetch usernames for all stories at once ──────────────────────────
   useEffect(() => {
-    if (!isVisible || stories.length === 0) return;
+    if (!isVisible || stories.length === 0 || !shouldRender) return;
     const uniqueIds = [...new Set(stories.map(s => s.user_id))];
     uniqueIds.forEach(uid => {
       if (!usernameMap[uid]) {
@@ -194,7 +207,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         });
       }
     });
-  }, [isVisible, stories]);
+  }, [isVisible, stories, shouldRender]);
 
   // ─── Pre-resolve: current story's username ───────────────────────────────
   const currentUsername = currentStory
@@ -203,7 +216,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
 
   // ─── Audio session: override iOS silent switch when viewer opens ────────
   useEffect(() => {
-    if (isVisible) {
+    if (isVisible && shouldRender) {
       Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
         allowsRecordingIOS: false,
@@ -216,7 +229,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         allowsRecordingIOS: false,
       }).catch(() => {});
     }
-  }, [isVisible]);
+  }, [isVisible, shouldRender]);
 
   // ─── Reset on open ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -405,9 +418,21 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
   const calculateHoursAgo = (timestamp: any) => {
-    if (!timestamp?.toDate) return 0;
-    const diff = new Date().getTime() - timestamp.toDate().getTime();
-    return Math.floor(diff / 3600000);
+    if (!timestamp) return 0;
+    let ms = 0;
+    if (typeof timestamp.toDate === 'function') {
+      ms = timestamp.toDate().getTime();
+    } else if (typeof timestamp === 'number') {
+      ms = timestamp;
+    } else if (timestamp.seconds !== undefined) {
+      ms = timestamp.seconds * 1000;
+    } else if (typeof timestamp === 'string') {
+      ms = Date.parse(timestamp);
+    } else {
+      return 0;
+    }
+    const diff = Date.now() - ms;
+    return Math.max(0, Math.floor(diff / 3600000));
   };
 
   // ─── Remove story ────────────────────────────────────────────────────────
@@ -448,15 +473,39 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
 
       const displayAuthor = currentUsername || 'someone';
 
+      const createdAtVal = currentStory.created_at ? (
+        typeof currentStory.created_at.toDate === 'function' 
+          ? currentStory.created_at.toDate().getTime()
+          : (currentStory.created_at.seconds !== undefined ? currentStory.created_at.seconds * 1000 : Date.now())
+      ) : Date.now();
+
+      const expiresAtVal = currentStory.expires_at ? (
+        typeof currentStory.expires_at.toDate === 'function'
+          ? currentStory.expires_at.toDate().getTime()
+          : (currentStory.expires_at.seconds !== undefined ? currentStory.expires_at.seconds * 1000 : Date.now() + 24 * 3600 * 1000)
+      ) : Date.now() + 24 * 3600 * 1000;
+
       await set(newMessageRef, {
         user_id: user.uid,
         username: senderName,
         message: `Reacted ${emoji} to ${displayAuthor}'s story`,
+        type: 'story_reaction',
         timestamp: Date.now(),
         reactions: {
           [emoji]: {
             [user.uid]: senderName
           }
+        },
+        storyData: {
+          id: currentStory.id || '',
+          media_url: currentStory.media_url,
+          media_type: currentStory.media_type,
+          user_id: currentStory.user_id,
+          username: displayAuthor,
+          created_at: createdAtVal,
+          expires_at: expiresAtVal,
+          venue_id: currentStory.venue_id,
+          activeBadge: currentStory.activeBadge || ''
         }
       });
 
@@ -605,7 +654,11 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
           style={[styles.container, { transform: [{ translateY }] }]}
           {...panResponder.panHandlers}
         >
-          {stories.length === 0 ? (
+          {!shouldRender ? (
+            <View style={styles.loadingOverlay}>
+              <ActivityIndicator color="#FFFFFF" size="large" />
+            </View>
+          ) : stories.length === 0 ? (
             /* ── Empty state ─────────────────────────────── */
             <View style={styles.emptyContainer}>
               <Pressable

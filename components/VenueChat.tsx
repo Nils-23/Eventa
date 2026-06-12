@@ -19,7 +19,8 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { X, Send, CornerUpLeft, Trash2, Flag, Smile } from 'lucide-react-native';
-import { ref, onValue, push, set, remove } from 'firebase/database';
+import { ref, push, set, remove } from 'firebase/database';
+import { subscribeToRTDB } from '../utils/firebaseUtils';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { realtimeDB, firestore, storage } from '../services/firebase';
@@ -192,6 +193,7 @@ const FloatingCustomSticker: React.FC<{ uri: string }> = ({ uri }) => {
 };
 
 export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueId, venueName }) => {
+  const [shouldRender, setShouldRender] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -217,7 +219,18 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
 
 
   useEffect(() => {
-    if (isVisible && user?.uid) {
+    if (isVisible) {
+      const timer = setTimeout(() => {
+        setShouldRender(true);
+      }, 150);
+      return () => clearTimeout(timer);
+    } else {
+      setShouldRender(false);
+    }
+  }, [isVisible]);
+
+  useEffect(() => {
+    if (isVisible && user?.uid && shouldRender) {
       const userDocRef = doc(firestore, 'users', user.uid);
       getDoc(userDocRef)
         .then((docSnap) => {
@@ -229,7 +242,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           console.warn('[VenueChat] Failed to fetch active badge:', err);
         });
     }
-  }, [isVisible, user?.uid]);
+  }, [isVisible, user?.uid, shouldRender]);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
@@ -251,12 +264,12 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   }, []);
 
   useEffect(() => {
-    if (!isVisible || !venueId) return;
+    if (!isVisible || !venueId || !shouldRender) return;
 
     setIsLoading(true);
     const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
     
-    const unsubscribe = onValue(chatRef, (snapshot) => {
+    const unsubscribe = subscribeToRTDB(chatRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
         const now = Date.now();
@@ -282,7 +295,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     });
 
     return () => unsubscribe();
-  }, [isVisible, venueId]);
+  }, [isVisible, venueId, shouldRender]);
 
   const handleSend = async () => {
     const textToSend = inputText.trim();
@@ -809,11 +822,16 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
       onRequestClose={onClose}
       statusBarTranslucent={true}
     >
-      <KeyboardAvoidingView 
-        style={styles.modalOverlay} 
-        behavior="padding"
-      >
-        <View style={[styles.chatContainer, { paddingTop: insets.top }]}>
+      {!shouldRender ? (
+        <View style={[styles.modalOverlay, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#121212' }]}>
+          <ActivityIndicator color="#00FFCC" size="large" />
+        </View>
+      ) : (
+        <KeyboardAvoidingView 
+          style={styles.modalOverlay} 
+          behavior="padding"
+        >
+          <View style={[styles.chatContainer, { paddingTop: insets.top }]}>
           <View style={styles.header}>
             <View>
               <Text style={styles.venueName}>{venueName}</Text>
@@ -1065,6 +1083,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
         </Modal>
 
       </KeyboardAvoidingView>
+      )}
     </Modal>
   );
 };

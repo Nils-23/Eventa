@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useMemo } from 'react';
 import * as Location from 'expo-location';
 import { collection, onSnapshot, query, doc, getDoc } from 'firebase/firestore';
-import { ref, onValue } from 'firebase/database';
+import { ref } from 'firebase/database';
+import { subscribeToRTDB } from '../utils/firebaseUtils';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, firestore, realtimeDB } from '../services/firebase';
 import { resolveVenueImages } from '../utils/venueImageUtils';
@@ -625,7 +626,7 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
 
       // 3. Real locations listener
-      const unsubLocs = onValue(
+      const unsubLocs = subscribeToRTDB(
         ref(realtimeDB, 'locations'),
         (snap) => {
           locationsRef.current = snap.exists() ? snap.val() : {};
@@ -635,7 +636,7 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
 
       // 4. Simulated locations listener
-      const unsubSimLocs = onValue(
+      const unsubSimLocs = subscribeToRTDB(
         ref(realtimeDB, 'simulated_locations'),
         (snap) => {
           simLocationsRef.current = snap.exists() ? snap.val() : {};

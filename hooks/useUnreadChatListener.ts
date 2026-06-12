@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { ref, onValue, query, limitToLast } from 'firebase/database';
+import { ref, query, limitToLast } from 'firebase/database';
+import { subscribeToRTDB } from '../utils/firebaseUtils';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { realtimeDB } from '../services/firebase';
 import { useAppStore } from './useAppStore';
@@ -109,7 +110,7 @@ export const useUnreadChatListener = () => {
           limitToLast(1)
         );
 
-        const unsub = onValue(chatQuery, (snapshot) => {
+        const unsub = subscribeToRTDB(chatQuery, (snapshot) => {
           if (snapshot.exists()) {
             const data = snapshot.val();
             const keys = Object.keys(data);

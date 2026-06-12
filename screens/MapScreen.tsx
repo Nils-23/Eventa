@@ -709,6 +709,7 @@ export const MapScreen = () => {
         const venueStories = stories.filter(s => s.venue_id === venue.id);
         const hasStories = venueStories.length > 0;
         const pinColor = hasStories ? "#FF00CC" : "#00FFCC";
+        const tracksViewChanges = Platform.OS === 'android' ? true : trackMarkerChanges;
 
         return (
           <Marker
@@ -718,13 +719,13 @@ export const MapScreen = () => {
               e.stopPropagation();
               handleMarkerPress(venue);
             }}
-            tracksViewChanges={trackMarkerChanges}
+            tracksViewChanges={tracksViewChanges}
             zIndex={hasStories ? 200 : 100}
             anchor={{ x: 0.5, y: 1 }}
           >
             <View style={styles.markerContainer}>
               <View style={[styles.pinBubble, { backgroundColor: pinColor }]}>
-                <MapPin color="#000" size={14} fill="#000" />
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#000' }} />
               </View>
               <View style={[styles.pinArrow, { borderTopColor: pinColor }]} />
             </View>
@@ -756,7 +757,6 @@ export const MapScreen = () => {
         customMapStyle={DARK_MAP_STYLE}
         initialCamera={camera}
         showsUserLocation={true}
-        onUserLocationChange={() => { }}
         showsMyLocationButton={false}
         showsCompass={false}
         showsScale={false}
