@@ -122,11 +122,41 @@ function getDynamicTargetCount(venue, allVenues) {
     }
   }
 
-  // Retrieve slow-drifting simPopularityScore (default to 0.5)
-  const score = venue.simPopularityScore !== undefined ? venue.simPopularityScore : 0.5;
+  if (!allVenues || allVenues.length === 0) {
+    const defaultCap = getDefaultCapacity(venue.type);
+    const maxCapacity = Math.min(defaultCap, venue.maxCapacity !== undefined ? venue.maxCapacity : defaultCap);
+    return Math.max(0, Math.min(baseCapacity, maxCapacity));
+  }
 
-  // Apply Pareto Power-Law distribution (exponent 6.2 guarantees top 20% of venues get 80% of simulated users)
-  let count = Math.round(baseCapacity * Math.pow(score, 6.2));
+  // Sort all venues globally by their simPopularityScore to find this venue's rank
+  const sortedVenues = [...allVenues].sort((a, b) => {
+    const scoreA = a.simPopularityScore !== undefined ? a.simPopularityScore : 0.5;
+    const scoreB = b.simPopularityScore !== undefined ? b.simPopularityScore : 0.5;
+    return scoreA - scoreB;
+  });
+
+  const venueIndex = sortedVenues.findIndex(v => v.id === venue.id);
+  const totalVenues = sortedVenues.length;
+  const rank = totalVenues > 1 ? venueIndex / (totalVenues - 1) : 1.0;
+
+  // Determine tierFactor based on rank
+  let tierFactor = 0.0;
+  if (rank >= 0.85) {
+    // Hotspot (Top 15%): 0.75 to 0.95
+    tierFactor = 0.75 + Math.random() * 0.20;
+  } else if (rank >= 0.60) {
+    // Popular (Next 25%): 0.40 to 0.65
+    tierFactor = 0.40 + Math.random() * 0.25;
+  } else if (rank >= 0.20) {
+    // Average (Next 40%): 0.15 to 0.35
+    tierFactor = 0.15 + Math.random() * 0.20;
+  } else {
+    // Quiet (Bottom 20%): 0.00 to 0.10
+    tierFactor = 0.00 + Math.random() * 0.10;
+  }
+
+  // Calculate base target
+  let count = baseCapacity * tierFactor;
 
   const defaultCap = getDefaultCapacity(venue.type);
   const maxCapacity = Math.min(defaultCap, venue.maxCapacity !== undefined ? venue.maxCapacity : defaultCap);
@@ -177,8 +207,14 @@ function getTargetForVenue(venue, currentCount, realUserCount, allVenues) {
 
   const isOverride = venue.isOverride === true;
   const baseTarget = getDynamicTargetCount(venue, allVenues);
-  const variation = (Math.random() * 0.16 - 0.08); // -8% to +8%
-  let variableTarget = Math.round(baseTarget * (1 + variation));
+  
+  // Apply dynamic noise: ±15% independent random fluctuation
+  const dynamicNoise = 0.85 + Math.random() * 0.30;
+  
+  // Apply venueIdentityFactor
+  const identityFactor = venue.venueIdentityFactor !== undefined ? venue.venueIdentityFactor : 1.0;
+  
+  let variableTarget = baseTarget * dynamicNoise * identityFactor;
 
   if (!isOverride) {
     if (venue.type === 'Activity' && (hour >= 19 || hour < 6)) {
@@ -194,8 +230,8 @@ function getTargetForVenue(venue, currentCount, realUserCount, allVenues) {
   const finalTarget = Math.max(0, Math.min(variableTarget, maxCapacity));
 
   // Subtract real user counts from target count to prioritize real user activity
-  const rawTargetCount = Math.round(currentCount * 0.7 + finalTarget * 0.3);
-  let targetCount = Math.max(0, rawTargetCount - realUserCount);
+  const rawTargetCount = currentCount * 0.7 + finalTarget * 0.3;
+  let targetCount = Math.max(0, Math.round(rawTargetCount) - realUserCount);
   if (venue.startDate && Date.now() < venue.startDate) {
     targetCount = 0;
   }
@@ -226,23 +262,38 @@ async function syncAllVenueUsers(isTick = false) {
 
   const updates = {};
   let needsUpdate = false;
+  const venueContexts = {};
+  const proposedCounts = {};
 
   activeVenues.forEach(venue => {
     const isOverride = venue.isOverride === true;
-    // Drift & Initialize popularity scores
+    
+    // Drift & Initialize popularity scores and identity factor
     if (!isOverride && isTick) {
+      const updateObj = {};
+      let needsDbUpdate = false;
+
       if (venue.simPopularityScore === undefined) {
-        const initialScore = Math.random();
-        db.collection('venues').doc(venue.id).update({
-          simPopularityScore: initialScore
-        }).catch(err => console.error(`Failed to initialize score for ${venue.name}:`, err));
+        venue.simPopularityScore = Math.random();
+        updateObj.simPopularityScore = venue.simPopularityScore;
+        needsDbUpdate = true;
       } else if (Math.random() < 0.01) {
         const currentScore = venue.simPopularityScore;
         const drift = (Math.random() - 0.5) * 0.1;
-        const newScore = Math.max(0.0, Math.min(1.0, currentScore + drift));
-        db.collection('venues').doc(venue.id).update({
-          simPopularityScore: newScore
-        }).catch(err => console.error(`Failed to drift score for ${venue.name}:`, err));
+        venue.simPopularityScore = Math.max(0.0, Math.min(1.0, currentScore + drift));
+        updateObj.simPopularityScore = venue.simPopularityScore;
+        needsDbUpdate = true;
+      }
+
+      if (venue.venueIdentityFactor === undefined) {
+        venue.venueIdentityFactor = 0.90 + Math.random() * 0.20; // 0.90 to 1.10
+        updateObj.venueIdentityFactor = venue.venueIdentityFactor;
+        needsDbUpdate = true;
+      }
+
+      if (needsDbUpdate) {
+        db.collection('venues').doc(venue.id).update(updateObj)
+          .catch(err => console.error(`Failed to update stats for ${venue.name}:`, err));
       }
     }
 
@@ -282,19 +333,105 @@ async function syncAllVenueUsers(isTick = false) {
       state.startDate !== venue.startDate ||
       state.expirationDate !== venue.expirationDate;
 
-    if (shouldRecalculate || hasConfigChanged) {
-      const targetCount = getTargetForVenue(venue, currentCount, realUserCount, activeVenues);
-      let diff = targetCount - currentCount;
+    let targetCount = currentCount;
+    let shouldRecalcVenue = shouldRecalculate || hasConfigChanged;
 
-      // Enforce maximum change of 10 users per 5-minute interval
-      const MAX_CHANGE_PER_INTERVAL = 10;
-      if (diff > MAX_CHANGE_PER_INTERVAL) {
-        diff = MAX_CHANGE_PER_INTERVAL;
-      } else if (diff < -MAX_CHANGE_PER_INTERVAL) {
-        diff = -MAX_CHANGE_PER_INTERVAL;
+    if (shouldRecalcVenue) {
+      targetCount = getTargetForVenue(venue, currentCount, realUserCount, activeVenues);
+    } else if (state) {
+      targetCount = state.ultimateTarget;
+    }
+
+    let diff = targetCount - currentCount;
+
+    // Enforce maximum change of 10 users per 5-minute interval
+    const MAX_CHANGE_PER_INTERVAL = 10;
+    if (diff > MAX_CHANGE_PER_INTERVAL) {
+      diff = MAX_CHANGE_PER_INTERVAL;
+    } else if (diff < -MAX_CHANGE_PER_INTERVAL) {
+      diff = -MAX_CHANGE_PER_INTERVAL;
+    }
+
+    const cappedTargetCount = currentCount + diff;
+    proposedCounts[venue.id] = cappedTargetCount;
+
+    venueContexts[venue.id] = {
+      realUserCount,
+      currentCount,
+      maxCapacity,
+      currentUsers,
+      shouldRecalcVenue,
+      hasConfigChanged,
+      state
+    };
+  });
+
+  // Collision Safeguard Step
+  const venueTypes = ['CLUB', 'BAR', 'ACTIVITY', 'EVENT'];
+  for (const vType of venueTypes) {
+    const typeVenues = activeVenues.filter(v => (v.type || 'Club').toUpperCase() === vType);
+    
+    // Find proposed counts in this category
+    const counts = typeVenues.map(v => proposedCounts[v.id]).filter(c => c !== undefined);
+    
+    // Check if a collision group (3 or more venues with values within 1 user of each other) exists
+    let hasCollision = false;
+    for (let i = 0; i < counts.length; i++) {
+      let matchCount = 0;
+      for (let j = 0; j < counts.length; j++) {
+        if (Math.abs(counts[i] - counts[j]) <= 1) {
+          matchCount++;
+        }
       }
+      if (matchCount >= 3) {
+        hasCollision = true;
+        break;
+      }
+    }
 
-      const cappedTargetCount = currentCount + diff;
+    // Apply shuffled-adjustments collision resolver to ensure uniqueness and diversity within same category
+    if (hasCollision) {
+      const assignedCounts = new Set();
+      
+      // Shuffle venues to avoid systematic bias in adjustments
+      const shuffledVenues = [...typeVenues].sort(() => Math.random() - 0.5);
+      
+      shuffledVenues.forEach(venue => {
+        let count = proposedCounts[venue.id];
+        if (count === undefined) return;
+        
+        const cap = venueContexts[venue.id].maxCapacity;
+        
+        if (assignedCounts.has(count)) {
+          // Generate and shuffle candidate adjustments to scramble the resolved values
+          const adjustments = [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7, -8, 8, -9, 9, -10, 10];
+          const shuffledAdjustments = adjustments.sort(() => Math.random() - 0.5);
+          
+          for (const adj of shuffledAdjustments) {
+            let nextVal = count + adj;
+            nextVal = Math.max(0, Math.min(cap, nextVal));
+            if (!assignedCounts.has(nextVal)) {
+              count = nextVal;
+              break;
+            }
+          }
+        }
+        
+        proposedCounts[venue.id] = count;
+        assignedCounts.add(count);
+      });
+    }
+  }
+
+  activeVenues.forEach(venue => {
+    const ctx = venueContexts[venue.id];
+    let state = ctx.state;
+    
+    const finalCappedTargetCount = proposedCounts[venue.id];
+    
+    if (ctx.shouldRecalcVenue) {
+      let diff = finalCappedTargetCount - ctx.currentCount;
+      
       const steps = 5;
       const changeQueue = [];
       let remaining = diff;
@@ -305,12 +442,12 @@ async function syncAllVenueUsers(isTick = false) {
       }
 
       state = {
-        ultimateTarget: cappedTargetCount,
+        ultimateTarget: finalCappedTargetCount,
         changeQueue,
-        currentCount,
+        currentCount: ctx.currentCount,
         isOverride: venue.isOverride,
         simulatedUsersCount: venue.simulatedUsersCount,
-        maxCapacity: maxCapacity,
+        maxCapacity: ctx.maxCapacity,
         startDate: venue.startDate,
         expirationDate: venue.expirationDate
       };
@@ -341,16 +478,16 @@ async function syncAllVenueUsers(isTick = false) {
         };
         needsUpdate = true;
       }
-      console.log(`[+] Spawned ${stepChange} new users for venue ${venue.name}. Step Target: ${currentCount + stepChange}`);
+      console.log(`[+] Spawned ${stepChange} new users for venue ${venue.name}. Step Target: ${ctx.currentCount + stepChange}`);
     } else if (stepChange < 0) {
       const toRemove = Math.abs(stepChange);
-      const despawnList = currentUsers.slice(0, toRemove).map(u => u.user_id);
+      const despawnList = ctx.currentUsers.slice(0, toRemove).map(u => u.user_id);
       simulatedUsers = simulatedUsers.filter(u => !despawnList.includes(u.user_id));
       despawnList.forEach(uid => {
         updates[uid] = null;
       });
       needsUpdate = true;
-      console.log(`[-] Despawned ${toRemove} users from venue ${venue.name}. Step Target: ${currentCount - toRemove}`);
+      console.log(`[-] Despawned ${toRemove} users from venue ${venue.name}. Step Target: ${ctx.currentCount - toRemove}`);
     }
   });
 

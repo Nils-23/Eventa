@@ -372,16 +372,31 @@ export const useSimulationEngine = () => {
       };
     });
 
-    // 4. Popularity Distribution (Rank^5.5 Power-Law Exponent)
+    // 4. Popularity Distribution (Tier-Based Popularity Clustering relative to time)
     computedVenues.sort((a, b) => a.resultingPopularity - b.resultingPopularity);
     const totalVenues = computedVenues.length;
 
     const venuesWithFactors = computedVenues.map((v, index) => {
       const rank = totalVenues > 1 ? index / (totalVenues - 1) : 1.0;
-      const popularityFactor = Math.pow(rank, 5.5);
+      
+      let tierFactor = 0.0;
+      if (rank >= 0.85) {
+        // Hotspot (Top 15%): 0.75 to 0.95
+        tierFactor = 0.75 + Math.random() * 0.20;
+      } else if (rank >= 0.60) {
+        // Popular (Next 25%): 0.40 to 0.65
+        tierFactor = 0.40 + Math.random() * 0.25;
+      } else if (rank >= 0.20) {
+        // Average (Next 40%): 0.15 to 0.35
+        tierFactor = 0.15 + Math.random() * 0.20;
+      } else {
+        // Quiet (Bottom 20%): 0.00 to 0.10
+        tierFactor = 0.00 + Math.random() * 0.10;
+      }
+
       return {
         ...v,
-        popularityFactor
+        popularityFactor: tierFactor
       };
     });
 
@@ -437,10 +452,12 @@ export const useSimulationEngine = () => {
                                  eventStrengthMultiplier * 
                                  momentumScore;
 
-        targetAttendance = Math.max(0, Math.min(cap, Math.round(calculatedTarget)));
+        // Apply independent dynamic target noise (±15%) to break monotonicity
+        const dynamicNoise = 0.85 + Math.random() * 0.30;
+        targetAttendance = calculatedTarget * dynamicNoise;
       }
 
-      // Apply venueIdentityFactor
+      // Apply venueIdentityFactor directly to the decimal calculatedTarget before rounding once
       const identityFactor = venue.venueIdentityFactor !== undefined ? venue.venueIdentityFactor : 1.0;
       const adjustedTargetAttendance = Math.max(0, Math.min(cap, Math.round(targetAttendance * identityFactor)));
       calculatedTargets[venue.id] = adjustedTargetAttendance;
@@ -470,18 +487,23 @@ export const useSimulationEngine = () => {
         state.momentumScore = momentum;
       }
 
-      let simulatedTarget = Math.max(0, adjustedTargetAttendance - realUserCount);
-
-      // Random Noise: Apply tiny randomness of ±2% to ±5%
-      const noisePercentage = 0.02 + Math.random() * 0.03;
-      const noiseSign = Math.random() > 0.5 ? 1 : -1;
-      const noiseFactor = 1.0 + (noiseSign * noisePercentage);
-      simulatedTarget = Math.max(0, Math.round(simulatedTarget * noiseFactor));
+      const simulatedTarget = Math.max(0, adjustedTargetAttendance - realUserCount);
 
       // Smooth Transitions: Move only 5-15% toward target
       const diff = simulatedTarget - currentCount;
       const transitionFactor = 0.05 + Math.random() * 0.10;
-      let newCount = Math.round(currentCount + diff * transitionFactor);
+      const rawStep = diff * transitionFactor;
+      let step = 0;
+      if (diff > 0 && rawStep < 1) {
+        // Stochastic rounding for small positive steps
+        step = Math.random() < rawStep ? 1 : 0;
+      } else if (diff < 0 && rawStep > -1) {
+        // Stochastic rounding for small negative steps
+        step = Math.random() < Math.abs(rawStep) ? -1 : 0;
+      } else {
+        step = Math.round(rawStep);
+      }
+      let newCount = currentCount + step;
 
       // Spike Protection: Cap max change per cycle (±3, ±8, ±15)
       let delta = newCount - currentCount;
@@ -519,40 +541,54 @@ export const useSimulationEngine = () => {
     for (const vType of venueTypes) {
       const typeVenues = venuesWithFactors.filter(v => (v.type || 'Club').toUpperCase() === vType);
       
-      // Find collision groups: venues of same type with identical or near-identical values (difference <= 1)
-      const inCollision = new Set<string>();
-      for (const v1 of typeVenues) {
-        const count1 = proposedCounts[v1.id];
-        if (count1 === undefined) continue;
-        
-        const matched = typeVenues.filter(v2 => {
-          const count2 = proposedCounts[v2.id];
-          return count2 !== undefined && Math.abs(count1 - count2) <= 1;
-        });
-        
-        // If 3 or more venues end up with near-identical values
-        if (matched.length >= 3) {
-          matched.forEach(v => inCollision.add(v.id));
+      // Find proposed counts in this category
+      const counts = typeVenues.map(v => proposedCounts[v.id]).filter(c => c !== undefined);
+      
+      // Check if a collision group (3 or more venues with values within 1 user of each other) exists
+      let hasCollision = false;
+      for (let i = 0; i < counts.length; i++) {
+        let matchCount = 0;
+        for (let j = 0; j < counts.length; j++) {
+          if (Math.abs(counts[i] - counts[j]) <= 1) {
+            matchCount++;
+          }
+        }
+        if (matchCount >= 3) {
+          hasCollision = true;
+          break;
         }
       }
 
-      // Apply micro-adjustments
-      if (inCollision.size >= 3) {
-        const affectedIds = Array.from(inCollision);
-        affectedIds.forEach(vid => {
-          const venue = typeVenues.find(v => v.id === vid);
-          if (!venue) return;
-          const cap = venueContexts[vid].cap;
+      // Apply shuffled-adjustments collision resolver to ensure uniqueness and diversity within same category
+      if (hasCollision) {
+        const assignedCounts = new Set<number>();
+        
+        // Shuffle venues to avoid systematic bias in adjustments
+        const shuffledVenues = [...typeVenues].sort(() => Math.random() - 0.5);
+        
+        shuffledVenues.forEach(venue => {
+          let count = proposedCounts[venue.id];
+          if (count === undefined) return;
           
-          const correction = Math.random() > 0.5 ? 1 : -1;
-          const current = proposedCounts[vid];
-          let nextVal = current + correction;
+          const cap = venueContexts[venue.id].cap;
           
-          // Ensure capacity constraints are not violated
-          if (nextVal < 0) nextVal = current + 1;
-          if (nextVal > cap) nextVal = current - 1;
+          if (assignedCounts.has(count)) {
+            // Generate and shuffle candidate adjustments to scramble the resolved values
+            const adjustments = [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7, -8, 8, -9, 9, -10, 10];
+            const shuffledAdjustments = adjustments.sort(() => Math.random() - 0.5);
+            
+            for (const adj of shuffledAdjustments) {
+              let nextVal = count + adj;
+              nextVal = Math.max(0, Math.min(cap, nextVal));
+              if (!assignedCounts.has(nextVal)) {
+                count = nextVal;
+                break;
+              }
+            }
+          }
           
-          proposedCounts[vid] = Math.max(0, Math.min(cap, nextVal));
+          proposedCounts[venue.id] = count;
+          assignedCounts.add(count);
         });
       }
     }
