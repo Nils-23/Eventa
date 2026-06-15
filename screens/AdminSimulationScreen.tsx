@@ -236,8 +236,8 @@ export const AdminSimulationScreen = () => {
       return;
     }
 
-    if ((newVenueType === 'Activity' || newVenueType === 'Event') && !newVenueExpiration) {
-      Toast.show({ type: 'error', text1: 'Missing Expiration', text2: `${newVenueType}s must have an expiration date.` });
+    if (newVenueType === 'Event' && !newVenueExpiration) {
+      Toast.show({ type: 'error', text1: 'Missing Expiration', text2: 'Events must have an expiration date.' });
       return;
     }
 
@@ -920,7 +920,9 @@ export const AdminSimulationScreen = () => {
                   </View>
 
                   <View style={styles.formGroup}>
-                    <Text style={styles.label}>Expiration Date (Mandatory for {newVenueType}s)</Text>
+                    <Text style={styles.label}>
+                      Expiration Date {newVenueType === 'Event' ? '(Mandatory for Events)' : '(Optional for Activities)'}
+                    </Text>
                     <TextInput
                       style={styles.input}
                       placeholder="YYYY-MM-DD"
