@@ -405,7 +405,7 @@ function computeLiveData(
   // from reaching the density required for a red core.
   if (heatPoints.length > 0) {
     heatPoints.push({
-      latitude: 0,
+      latitude: -85,
       longitude: 0,
       weight: 120
     });
