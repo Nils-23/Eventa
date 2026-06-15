@@ -1166,3 +1166,78 @@ exports.checkRecurringStories = functions.pubsub.schedule("every 5 minutes").onR
   return null;
 });
 
+// Scheduled Engagement Notification (runs 1st, 10th, and 20th of every month at 9:00 AM Nairobi time)
+exports.monthlyEngagementNotification = functions.pubsub
+  .schedule("0 9 1,10,20 * *")
+  .timeZone("Africa/Nairobi")
+  .onRun(async (context) => {
+    console.log("Running scheduled monthly engagement notification...");
+    try {
+      const now = new Date();
+      // Get current day, month, and year in Africa/Nairobi timezone
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Nairobi',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+      });
+      const formatted = formatter.format(now);
+      const [yearStr, monthStr, dayStr] = formatted.split('-');
+      const year = parseInt(yearStr, 10);
+      const month = parseInt(monthStr, 10);
+      const day = parseInt(dayStr, 10);
+
+      console.log(`Date in Nairobi: ${year}-${month}-${day}`);
+
+      // Double check that we are running on the 1st, 10th, or 20th
+      if (day !== 1 && day !== 10 && day !== 20) {
+        console.log(`Today is day ${day}. Monthly engagement notification only runs on 1st, 10th, and 20th. Skipping.`);
+        return null;
+      }
+
+      let title = "";
+      let body = "";
+
+      if (day === 1) {
+        title = "🏁 A New Month Begins!";
+        body = "The slate has been cleaned! 🌟 Everyone starts fresh today. Time to get out there, check in, and start your journey to the top! 🚀";
+      } else {
+        const daysInMonth = new Date(year, month, 0).getDate();
+        const daysLeft = daysInMonth - day;
+
+        title = "🏆 Legend Prize Countdown!";
+        body = `Only ${daysLeft} days left to climb the leaderboard this month! Keep active, visit venues, and secure that Legend Prize! ✨`;
+      }
+
+      // Load all users with push tokens
+      const usersSnap = await db.collection('users').where('expoPushToken', '!=', null).get();
+      if (usersSnap.empty) {
+        console.log('No users with push tokens found.');
+        return null;
+      }
+
+      console.log(`Sending monthly engagement notification to ${usersSnap.size} users.`);
+
+      let successCount = 0;
+      for (const doc of usersSnap.docs) {
+        const sent = await sendRateLimitedPushNotification(
+          doc.id,
+          title,
+          body,
+          { type: 'monthly_engagement', day: day },
+          null,
+          0,
+          true // bypassLimits - critical engagement alerts should bypass standard daily rate limits
+        );
+        if (sent) {
+          successCount++;
+        }
+      }
+
+      console.log(`Successfully dispatched monthly engagement notification to ${successCount} users.`);
+    } catch (error) {
+      console.error("Error in monthlyEngagementNotification scheduled function:", error);
+    }
+    return null;
+  });
+
