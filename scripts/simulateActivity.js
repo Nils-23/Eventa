@@ -254,6 +254,13 @@ async function syncAllVenueUsers(isTick = false) {
   }
 
   const nowMs = Date.now();
+  const currentlyActiveVenues = activeVenues.filter(venue => {
+    if (venue.hidden === true) return false;
+    if (venue.expirationDate && venue.expirationDate < nowMs) return false;
+    if (venue.startDate && venue.startDate > nowMs) return false;
+    return true;
+  });
+
   const shouldRecalculate = lastRecalculateTime === 0 || (nowMs - lastRecalculateTime >= 5 * 60 * 1000);
 
   if (shouldRecalculate && isTick) {
@@ -262,10 +269,24 @@ async function syncAllVenueUsers(isTick = false) {
 
   const updates = {};
   let needsUpdate = false;
+
+  // Prune simulated users for inactive/expired/deleted/hidden venues
+  const currentlyActiveVenueIds = new Set(currentlyActiveVenues.map(v => v.id));
+  const usersToPrune = simulatedUsers.filter(u => !currentlyActiveVenueIds.has(u.venueId));
+  if (usersToPrune.length > 0) {
+    const pruneIds = usersToPrune.map(u => u.user_id);
+    simulatedUsers = simulatedUsers.filter(u => !pruneIds.includes(u.user_id));
+    pruneIds.forEach(uid => {
+      updates[uid] = null;
+    });
+    needsUpdate = true;
+    console.log(`[Clean] Pruned ${pruneIds.length} simulated users for inactive/expired/deleted/hidden venues.`);
+  }
+
   const venueContexts = {};
   const proposedCounts = {};
 
-  activeVenues.forEach(venue => {
+  currentlyActiveVenues.forEach(venue => {
     const isOverride = venue.isOverride === true;
     
     // Drift & Initialize popularity scores and identity factor
@@ -337,7 +358,7 @@ async function syncAllVenueUsers(isTick = false) {
     let shouldRecalcVenue = shouldRecalculate || hasConfigChanged;
 
     if (shouldRecalcVenue) {
-      targetCount = getTargetForVenue(venue, currentCount, realUserCount, activeVenues);
+      targetCount = getTargetForVenue(venue, currentCount, realUserCount, currentlyActiveVenues);
     } else if (state) {
       targetCount = state.ultimateTarget;
     }
@@ -369,7 +390,7 @@ async function syncAllVenueUsers(isTick = false) {
   // Collision Safeguard Step
   const venueTypes = ['CLUB', 'BAR', 'ACTIVITY', 'EVENT'];
   for (const vType of venueTypes) {
-    const typeVenues = activeVenues.filter(v => (v.type || 'Club').toUpperCase() === vType);
+    const typeVenues = currentlyActiveVenues.filter(v => (v.type || 'Club').toUpperCase() === vType);
     
     // Find proposed counts in this category
     const counts = typeVenues.map(v => proposedCounts[v.id]).filter(c => c !== undefined);
@@ -423,7 +444,7 @@ async function syncAllVenueUsers(isTick = false) {
     }
   }
 
-  activeVenues.forEach(venue => {
+  currentlyActiveVenues.forEach(venue => {
     const ctx = venueContexts[venue.id];
     let state = ctx.state;
     

@@ -538,6 +538,12 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
       continue;
     }
 
+    // If the venue has an expiration date in the past, skip notifications for it
+    if (venue.expirationDate && now > venue.expirationDate) {
+      console.log(`Venue/Event ${venue.name} has already expired (expired at ${new Date(venue.expirationDate).toISOString()}). Skipping.`);
+      continue;
+    }
+
     const isUnrealistic = isUnrealisticVenueTime(venue, weekday, hour);
     const includeSimulatedForVenue = includeSimulated && !isUnrealistic;
 

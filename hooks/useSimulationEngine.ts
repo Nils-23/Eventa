@@ -232,9 +232,14 @@ export const useSimulationEngine = () => {
     if (venuesRef.current.length === 0) return;
 
     console.log('[useSimulationEngine] Executing Eventas Simulation Cycle...');
-    const rawVenues = [...venuesRef.current];
-    const now = new Date();
     const nowMs = Date.now();
+    const rawVenues = [...venuesRef.current].filter(venue => {
+      if (venue.hidden === true) return false;
+      if (venue.expirationDate && venue.expirationDate < nowMs) return false;
+      if (venue.startDate && venue.startDate > nowMs) return false;
+      return true;
+    });
+    const now = new Date();
     
     // Get current Nairobi weekday and hour
     const nairobiParts = new Intl.DateTimeFormat('en-US', {
@@ -597,6 +602,19 @@ export const useSimulationEngine = () => {
     let currentSims = [...simulatedUsersRef.current];
     let updates: any = {};
     let needsUpdate = false;
+
+    // Prune simulated users for inactive/expired/deleted/hidden venues
+    const activeVenueIds = new Set(rawVenues.map(v => v.id));
+    const usersToPrune = currentSims.filter(u => !activeVenueIds.has(u.venueId));
+    if (usersToPrune.length > 0) {
+      const pruneIds = usersToPrune.map(u => u.user_id);
+      currentSims = currentSims.filter(u => !pruneIds.includes(u.user_id));
+      pruneIds.forEach(uid => {
+        updates[uid] = null;
+      });
+      needsUpdate = true;
+      console.log(`[Clean] Pruned ${pruneIds.length} simulated users for inactive/expired/deleted/hidden venues.`);
+    }
 
     venuesWithFactors.forEach(venue => {
       const { cap, currentUsers } = venueContexts[venue.id];

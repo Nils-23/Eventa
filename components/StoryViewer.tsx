@@ -103,6 +103,68 @@ const StoryMediaItem: React.FC<StoryMediaItemProps> = ({
   }
 };
 
+interface FloatingReaction {
+  id: number;
+  emoji: string;
+  x: number;
+}
+
+const FloatingReactionItem: React.FC<{
+  emoji: string;
+  startX: number;
+  onAnimationEnd: () => void;
+}> = ({ emoji, startX, onAnimationEnd }) => {
+  const animValue = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(animValue, {
+      toValue: 1,
+      duration: 2000,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        onAnimationEnd();
+      }
+    });
+  }, [animValue, onAnimationEnd]);
+
+  const translateY = animValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -320],
+  });
+
+  const translateX = animValue.interpolate({
+    inputRange: [0, 0.25, 0.5, 0.75, 1],
+    outputRange: [0, 15, -15, 10, 0],
+  });
+
+  const opacity = animValue.interpolate({
+    inputRange: [0, 0.8, 1],
+    outputRange: [1, 1, 0],
+  });
+
+  const scale = animValue.interpolate({
+    inputRange: [0, 0.1, 0.8, 1],
+    outputRange: [0.6, 1.3, 1.1, 0.6],
+  });
+
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        bottom: 90,
+        left: startX,
+        opacity,
+        transform: [{ translateY }, { translateX }, { scale }],
+        zIndex: 99,
+      }}
+      pointerEvents="none"
+    >
+      <Text style={{ fontSize: 32 }}>{emoji}</Text>
+    </Animated.View>
+  );
+};
+
 const { width, height } = Dimensions.get('window');
 const IMAGE_DURATION_MS = 5000;
 
@@ -122,6 +184,8 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
+  const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
+  const nextUniqueId = useRef(0);
 
   // Username cache per-session (avoids re-fetching same uid)
   const [usernameMap, setUsernameMap] = useState<Record<string, string>>({});
@@ -245,6 +309,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
       setIsMediaLoading(true);
       progressAnim.setValue(0);
       progressValue.current = 0;
+      setFloatingReactions([]);
     } else {
       if (imageTimerRef.current) {
         imageTimerRef.current.stop();
@@ -460,8 +525,16 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     );
   }, [currentStory, onRemoveStory, stories.length, currentIndex, onClose]);
 
-  const handleReactToStory = async (emoji: string) => {
+  const handleReactToStory = async (emoji: string, index: number) => {
     if (!user || !currentStory?.venue_id) return;
+
+    // Add floating reaction instantly for immediate feedback!
+    const containerWidth = width - 40 - (canAddStory ? 56 : 0);
+    const buttonWidth = containerWidth / 6;
+    const startX = 20 + (canAddStory ? 56 : 0) + index * buttonWidth + buttonWidth / 2 - 16;
+    
+    const reactionId = nextUniqueId.current++;
+    setFloatingReactions(prev => [...prev, { id: reactionId, emoji, x: startX }]);
 
     // Temporarily pause the story while sending reaction
     setIsPaused(true);
@@ -712,6 +785,18 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                 )}
               </Animated.View>
 
+              {/* Floating Reactions Overlay */}
+              {floatingReactions.map(reaction => (
+                <FloatingReactionItem
+                  key={reaction.id}
+                  emoji={reaction.emoji}
+                  startX={reaction.x}
+                  onAnimationEnd={() => {
+                    setFloatingReactions(prev => prev.filter(r => r.id !== reaction.id));
+                  }}
+                />
+              ))}
+
               {/* ── Loading spinner (shown while media buffers or cache resolves) ── */}
               {(isMediaLoading || !currentStoryUri) && transitioningIndex === null && (
                 <View style={styles.loadingOverlay}>
@@ -835,11 +920,11 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                   )
                 ) : (
                   <View style={[styles.reactionContainer, { marginLeft: canAddStory ? 12 : 0 }]}>
-                    {['❤️', '🔥', '😂', '👍', '😮', '🍻'].map(emoji => (
+                    {['❤️', '🔥', '😂', '👍', '😮', '🍻'].map((emoji, index) => (
                       <TouchableOpacity
                         key={emoji}
                         style={styles.reactionButton}
-                        onPress={() => handleReactToStory(emoji)}
+                        onPress={() => handleReactToStory(emoji, index)}
                         activeOpacity={0.6}
                       >
                         <Text style={styles.reactionEmojiText}>{emoji}</Text>
