@@ -50,5 +50,17 @@
     "sharp": "^0.34.5",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "install": {
+      "exclude": [
+        "babel-preset-expo",
+        "react-native-maps",
+        "expo",
+        "expo-crypto",
+        "expo-dev-client",
+        "expo-image-picker"
+      ]
+    }
+  }
 }

@@ -45,11 +45,6 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "config": {
-        "googleMaps": {
-          "apiKey": "REDACTED_GOOGLE_MAPS_KEY"
-        }
-      },
       "usesAppleSignIn": true
     },
     "android": {
