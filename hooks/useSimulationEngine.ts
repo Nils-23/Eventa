@@ -49,6 +49,14 @@ function getDefaultCapacity(type?: 'Club' | 'Bar' | 'Activity' | 'Event'): numbe
   }
 }
 
+function getVenueHash(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash);
+}
+
 // Weekday Multipliers
 function getWeekdayMultiplier(venueType: string, day: string): number {
   const type = (venueType || '').toUpperCase();
@@ -361,11 +369,15 @@ export const useSimulationEngine = () => {
         ? 1 + 99 * (rawScore - minHP) / (maxHP - minHP) 
         : 50;
 
+      // Calculate a time-based rotation (cycle repeats every 8 hours)
+      const cycleTime = (nowMs / (8 * 60 * 60 * 1000)) * 2 * Math.PI;
+      const rotation = Math.sin(cycleTime + getVenueHash(v.id)) * 30; // Shift range: -30 to +30
+
       const recentStoriesCount = rawStories.filter(s => s.venue_id === v.id).length;
       const recentChatsCount = Math.floor(Math.random() * 10);
       const recentActivity = (recentStoriesCount * 15) + (recentChatsCount * 5);
 
-      const popularityBase = historicalPopularity + recentActivity;
+      const popularityBase = Math.max(1, historicalPopularity + rotation + recentActivity);
       const popularityDrift = v.popularityDrift || 1.0;
       const trendFactor = 0.85 + Math.random() * 0.3; // random(0.85 - 1.15)
 
@@ -377,33 +389,45 @@ export const useSimulationEngine = () => {
       };
     });
 
-    // 4. Popularity Distribution (Tier-Based Popularity Clustering relative to time)
-    computedVenues.sort((a, b) => a.resultingPopularity - b.resultingPopularity);
-    const totalVenues = computedVenues.length;
-
-    const venuesWithFactors = computedVenues.map((v, index) => {
-      const rank = totalVenues > 1 ? index / (totalVenues - 1) : 1.0;
-      
-      let tierFactor = 0.0;
-      if (rank >= 0.85) {
-        // Hotspot (Top 15%): 0.75 to 0.95
-        tierFactor = 0.75 + Math.random() * 0.20;
-      } else if (rank >= 0.60) {
-        // Popular (Next 25%): 0.40 to 0.65
-        tierFactor = 0.40 + Math.random() * 0.25;
-      } else if (rank >= 0.20) {
-        // Average (Next 40%): 0.15 to 0.35
-        tierFactor = 0.15 + Math.random() * 0.20;
-      } else {
-        // Quiet (Bottom 20%): 0.00 to 0.10
-        tierFactor = 0.00 + Math.random() * 0.10;
+    // 4. Popularity Distribution (Tier-Based Popularity Clustering category-wise, relative to time)
+    const venuesByType: Record<string, typeof computedVenues> = {};
+    computedVenues.forEach(v => {
+      if (!venuesByType[v.type]) {
+        venuesByType[v.type] = [];
       }
-
-      return {
-        ...v,
-        popularityFactor: tierFactor
-      };
+      venuesByType[v.type].push(v);
     });
+
+    const venuesWithFactors: typeof computedVenues = [];
+    for (const type in venuesByType) {
+      const list = venuesByType[type];
+      list.sort((a, b) => a.resultingPopularity - b.resultingPopularity);
+      const totalInType = list.length;
+      
+      list.forEach((v, index) => {
+        const rank = totalInType > 1 ? index / (totalInType - 1) : 1.0;
+        
+        let tierFactor = 0.0;
+        if (rank >= 0.85) {
+          // Hotspot (Top 15%): 0.75 to 0.95
+          tierFactor = 0.75 + Math.random() * 0.20;
+        } else if (rank >= 0.60) {
+          // Popular (Next 25%): 0.40 to 0.65
+          tierFactor = 0.40 + Math.random() * 0.25;
+        } else if (rank >= 0.20) {
+          // Average (Next 40%): 0.15 to 0.35
+          tierFactor = 0.15 + Math.random() * 0.20;
+        } else {
+          // Quiet (Bottom 20%): 0.00 to 0.10
+          tierFactor = 0.00 + Math.random() * 0.10;
+        }
+
+        venuesWithFactors.push({
+          ...v,
+          popularityFactor: tierFactor
+        });
+      });
+    }
 
     // 5. Fetch presence to count real users
     let allPresence: Record<string, Record<string, number>> = {};

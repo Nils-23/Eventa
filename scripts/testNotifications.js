@@ -961,6 +961,14 @@ function getDefaultCapacity(type) {
   }
 }
 
+function getVenueHash(id) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash);
+}
+
 function getDynamicTargetCount(venue, allVenues) {
   const now = new Date();
   const nairobiParts = new Intl.DateTimeFormat('en-US', {
@@ -991,7 +999,17 @@ function getDynamicTargetCount(venue, allVenues) {
       const sorted = [...categoryVenues].sort((a, b) => {
         const scoreA = a.simPopularityScore !== undefined ? a.simPopularityScore : 0.5;
         const scoreB = b.simPopularityScore !== undefined ? b.simPopularityScore : 0.5;
-        return scoreB - scoreA;
+        
+        const nowMs = Date.now();
+        const cycleTime = (nowMs / (8 * 60 * 60 * 1000)) * 2 * Math.PI;
+        
+        const rotA = Math.sin(cycleTime + getVenueHash(a.id)) * 0.3; // range: -0.3 to +0.3
+        const rotB = Math.sin(cycleTime + getVenueHash(b.id)) * 0.3;
+        
+        const finalA = Math.max(0.0, Math.min(1.0, scoreA + rotA));
+        const finalB = Math.max(0.0, Math.min(1.0, scoreB + rotB));
+        
+        return finalB - finalA;
       });
       const rankIndex = sorted.findIndex(v => v.id === venue.id);
       if (rankIndex !== -1) {

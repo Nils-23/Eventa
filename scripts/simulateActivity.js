@@ -64,6 +64,14 @@ function getDefaultCapacity(type) {
   }
 }
 
+function getVenueHash(id) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash);
+}
+
 function getDynamicTargetCount(venue, allVenues) {
   const now = new Date();
   const nairobiParts = new Intl.DateTimeFormat('en-US', {
@@ -128,11 +136,26 @@ function getDynamicTargetCount(venue, allVenues) {
     return Math.max(0, Math.min(baseCapacity, maxCapacity));
   }
 
-  // Sort all venues globally by their simPopularityScore to find this venue's rank
-  const sortedVenues = [...allVenues].sort((a, b) => {
+  // Sort within category by their simPopularityScore to find this venue's rank
+  const categoryVenues = allVenues.filter(v => v.type === venue.type);
+  if (categoryVenues.length === 0) {
+    return 0;
+  }
+
+  const sortedVenues = [...categoryVenues].sort((a, b) => {
     const scoreA = a.simPopularityScore !== undefined ? a.simPopularityScore : 0.5;
     const scoreB = b.simPopularityScore !== undefined ? b.simPopularityScore : 0.5;
-    return scoreA - scoreB;
+    
+    const nowMs = Date.now();
+    const cycleTime = (nowMs / (8 * 60 * 60 * 1000)) * 2 * Math.PI;
+    
+    const rotA = Math.sin(cycleTime + getVenueHash(a.id)) * 0.3; // range: -0.3 to +0.3
+    const rotB = Math.sin(cycleTime + getVenueHash(b.id)) * 0.3;
+    
+    const finalA = Math.max(0.0, Math.min(1.0, scoreA + rotA));
+    const finalB = Math.max(0.0, Math.min(1.0, scoreB + rotB));
+    
+    return finalA - finalB;
   });
 
   const venueIndex = sortedVenues.findIndex(v => v.id === venue.id);
