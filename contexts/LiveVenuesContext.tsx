@@ -33,6 +33,7 @@ export interface LiveVenue {
   activityColor: string;
   distanceKm: number | null;
   hidden?: boolean;
+  overrideDate?: string;
 }
 
 export interface HeatPoint {
@@ -67,6 +68,7 @@ interface RawVenue {
   expirationDate?: number;
   startDate?: number;
   hidden?: boolean;
+  overrideDate?: string;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -160,7 +162,8 @@ export function getDynamicTargetCount(venue: RawVenue, allVenues?: RawVenue[]): 
     if (p.type === 'hour') hour = parseInt(p.value, 10);
   });
 
-  const isOverride = venue.isOverride === true;
+  const nairobiDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(now);
+  const isOverride = venue.isOverride === true && venue.overrideDate === nairobiDateStr;
   if (isOverride) {
     return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
   }
@@ -235,13 +238,13 @@ export function getDynamicTargetCount(venue: RawVenue, allVenues?: RawVenue[]): 
     const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
     if (isOngoing) {
       if (hour >= 9 && hour < 22) {
-        if (tier === 'hot') count = 100;
-        else if (tier === 'medium') count = 50;
-        else count = 15;
+        if (tier === 'hot') count = 150;
+        else if (tier === 'medium') count = 80;
+        else count = 30;
       } else {
-        if (tier === 'hot') count = 15;
-        else if (tier === 'medium') count = 8;
-        else count = 0;
+        if (tier === 'hot') count = 40;
+        else if (tier === 'medium') count = 20;
+        else count = 5;
       }
     } else {
       count = 0;

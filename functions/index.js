@@ -344,7 +344,8 @@ function getDynamicTargetCount(venue, allVenues) {
     if (p.type === 'hour') hour = parseInt(p.value, 10);
   });
 
-  const isOverride = venue.isOverride === true;
+  const nairobiDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(now);
+  const isOverride = venue.isOverride === true && venue.overrideDate === nairobiDateStr;
   if (isOverride) {
     return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
   }
@@ -393,19 +394,60 @@ function getDynamicTargetCount(venue, allVenues) {
   };
 
   let count = 0;
-  if (venue.type === 'Club' || venue.type === 'Bar') {
-    if (isNightlifePeak(weekday, hour)) {
-      if (tier === 'hot') count = 90;
-      else if (tier === 'medium') count = 40;
-      else count = 20;
-    } else if (hour >= 21 || hour < 4) {
-      if (tier === 'hot') count = 50;
-      else if (tier === 'medium') count = 25;
-      else count = 10;
-    } else {
+  if (venue.type === 'Club') {
+    if (['Mon', 'Tue'].includes(weekday)) {
       if (tier === 'hot') count = 10;
-      else if (tier === 'medium') count = 4;
-      else count = 0;
+      else if (tier === 'medium') count = 5;
+      else count = 2;
+    } else if (weekday === 'Wed') {
+      if (tier === 'hot') count = 15;
+      else if (tier === 'medium') count = 8;
+      else count = 3;
+    } else {
+      // Thu - Sun
+      const isClubPeak = (day, hr) => {
+        if (hr >= 21) return ['Thu', 'Fri', 'Sat', 'Sun'].includes(day);
+        if (hr < 4) return ['Fri', 'Sat', 'Sun', 'Mon'].includes(day);
+        return false;
+      };
+      if (isClubPeak(weekday, hour)) {
+        if (tier === 'hot') count = 98;
+        else if (tier === 'medium') count = 60;
+        else count = 25;
+      } else if (hour >= 21 || hour < 4) {
+        if (tier === 'hot') count = 45;
+        else if (tier === 'medium') count = 20;
+        else count = 8;
+      } else {
+        if (tier === 'hot') count = 10;
+        else if (tier === 'medium') count = 4;
+        else count = 0;
+      }
+    }
+  } else if (venue.type === 'Bar') {
+    if (['Mon', 'Tue'].includes(weekday)) {
+      if (tier === 'hot') count = 15;
+      else if (tier === 'medium') count = 8;
+      else count = 3;
+    } else if (['Wed', 'Thu'].includes(weekday)) {
+      if (tier === 'hot') count = 20;
+      else if (tier === 'medium') count = 10;
+      else count = 4;
+    } else {
+      // Fri - Sun
+      if (isNightlifePeak(weekday, hour)) {
+        if (tier === 'hot') count = 50;
+        else if (tier === 'medium') count = 35;
+        else count = 15;
+      } else if (hour >= 21 || hour < 4) {
+        if (tier === 'hot') count = 25;
+        else if (tier === 'medium') count = 12;
+        else count = 5;
+      } else {
+        if (tier === 'hot') count = 5;
+        else if (tier === 'medium') count = 2;
+        else count = 0;
+      }
     }
   } else if (venue.type === 'Activity') {
     if (hour >= 19 || hour < 6) {
@@ -429,13 +471,13 @@ function getDynamicTargetCount(venue, allVenues) {
     const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
     if (isOngoing) {
       if (hour >= 9 && hour < 22) {
-        if (tier === 'hot') count = 100;
-        else if (tier === 'medium') count = 50;
-        else count = 15;
+        if (tier === 'hot') count = 150;
+        else if (tier === 'medium') count = 80;
+        else count = 30;
       } else {
-        if (tier === 'hot') count = 15;
-        else if (tier === 'medium') count = 8;
-        else count = 0;
+        if (tier === 'hot') count = 40;
+        else if (tier === 'medium') count = 20;
+        else count = 5;
       }
     } else {
       count = 0;
@@ -476,6 +518,7 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
   const notifiedUserIds = new Set();
   
   const currentDate = new Date();
+  const nairobiDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(currentDate);
   const nairobiParts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Nairobi',
     weekday: 'short',
@@ -550,6 +593,15 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
   const allUsersWithToken = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   for (const venue of venues) {
+    let isOverride = venue.isOverride === true;
+    if (isOverride && venue.overrideDate !== nairobiDateStr) {
+      db.collection('venues').doc(venue.id).update({
+        isOverride: false
+      }).catch(err => console.error(`[notifyHotVenues] Failed to reset override for ${venue.name}:`, err));
+      isOverride = false;
+      venue.isOverride = false;
+    }
+
     // If the venue has a start date in the future, skip notifications for it
     if (venue.startDate && now < venue.startDate) {
       console.log(`Venue/Event ${venue.name} has not started yet (starts at ${new Date(venue.startDate).toISOString()}). Skipping.`);

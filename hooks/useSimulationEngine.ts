@@ -62,23 +62,23 @@ function getWeekdayMultiplier(venueType: string, day: string): number {
   const type = (venueType || '').toUpperCase();
   if (type === 'CLUB') {
     switch (day) {
-      case 'Mon': return 0.2;
-      case 'Tue': return 0.2;
-      case 'Wed': return 0.4;
-      case 'Thu': return 0.7;
-      case 'Fri': return 1.0;
-      case 'Sat': return 1.0;
-      case 'Sun': return 0.5;
+      case 'Mon': return 0.07;
+      case 'Tue': return 0.07;
+      case 'Wed': return 0.10;
+      case 'Thu': return 0.68;
+      case 'Fri': return 0.68;
+      case 'Sat': return 0.68;
+      case 'Sun': return 0.68;
     }
   } else if (type === 'BAR') {
     switch (day) {
-      case 'Mon': return 0.4;
-      case 'Tue': return 0.5;
-      case 'Wed': return 0.6;
-      case 'Thu': return 0.8;
+      case 'Mon': return 0.20;
+      case 'Tue': return 0.20;
+      case 'Wed': return 0.28;
+      case 'Thu': return 0.28;
       case 'Fri': return 1.0;
       case 'Sat': return 1.0;
-      case 'Sun': return 0.7;
+      case 'Sun': return 1.0;
     }
   } else if (type === 'ACTIVITY') {
     switch (day) {
@@ -133,7 +133,11 @@ function getHourMultiplier(
     return 0.05;
   } else if (type === 'EVENT' && eventStart && eventEnd) {
     if (nowMs < eventStart - 2 * 3600 * 1000) return 0.0;
-    if (nowMs >= eventStart && nowMs <= eventEnd) return 1.0;
+    if (nowMs >= eventStart && nowMs <= eventEnd) {
+      // Night attendance should be lower than daytime by default
+      const isNight = hour >= 22 || hour < 9;
+      return isNight ? 0.26 : 1.0;
+    }
     
     if (nowMs < eventStart) {
       const timeDiff = nowMs - (eventStart - 2 * 3600 * 1000);
@@ -248,6 +252,7 @@ export const useSimulationEngine = () => {
       return true;
     });
     const now = new Date();
+    const nairobiDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(now);
     
     // Get current Nairobi weekday and hour
     const nairobiParts = new Intl.DateTimeFormat('en-US', {
@@ -451,7 +456,15 @@ export const useSimulationEngine = () => {
     }> = {};
 
     venuesWithFactors.forEach(venue => {
-      const isOverride = venue.isOverride === true;
+      let isOverride = venue.isOverride === true;
+      if (isOverride && venue.overrideDate !== nairobiDateStr) {
+        // Reset override in Firestore
+        updateDoc(doc(firestore, 'venues', venue.id), {
+          isOverride: false
+        }).catch(err => console.error(`[useSimulationEngine] Failed to reset override for ${venue.name}:`, err));
+        isOverride = false;
+        venue.isOverride = false;
+      }
       const cap = venue.maxCapacity !== undefined ? venue.maxCapacity : getDefaultCapacity(venue.type);
 
       let targetAttendance = 0;

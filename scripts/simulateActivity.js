@@ -89,7 +89,8 @@ function getDynamicTargetCount(venue, allVenues) {
     if (p.type === 'hour') hour = parseInt(p.value, 10);
   });
 
-  const isOverride = venue.isOverride === true;
+  const nairobiDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(now);
+  const isOverride = venue.isOverride === true && venue.overrideDate === nairobiDateStr;
   if (isOverride) {
     return venue.simulatedUsersCount !== undefined ? venue.simulatedUsersCount : 20;
   }
@@ -105,13 +106,40 @@ function getDynamicTargetCount(venue, allVenues) {
 
   // Determine baseCapacity depending on category and time-window
   let baseCapacity = 50;
-  if (venue.type === 'Club' || venue.type === 'Bar') {
-    if (isNightlifePeak(weekday, hour)) {
-      baseCapacity = venue.type === 'Club' ? 100 : 50;
-    } else if (hour >= 21 || hour < 4) {
-      baseCapacity = venue.type === 'Club' ? 60 : 30;
+  if (venue.type === 'Club') {
+    if (['Mon', 'Tue'].includes(weekday)) {
+      baseCapacity = 11;
+    } else if (weekday === 'Wed') {
+      baseCapacity = 16;
     } else {
-      baseCapacity = venue.type === 'Club' ? 10 : 5;
+      // Thu - Sun
+      const isClubPeak = (day, hr) => {
+        if (hr >= 21) return ['Thu', 'Fri', 'Sat', 'Sun'].includes(day);
+        if (hr < 4) return ['Fri', 'Sat', 'Sun', 'Mon'].includes(day);
+        return false;
+      };
+      if (isClubPeak(weekday, hour)) {
+        baseCapacity = 103;
+      } else if (hour >= 21 || hour < 4) {
+        baseCapacity = 45;
+      } else {
+        baseCapacity = 10;
+      }
+    }
+  } else if (venue.type === 'Bar') {
+    if (['Mon', 'Tue'].includes(weekday)) {
+      baseCapacity = 16;
+    } else if (['Wed', 'Thu'].includes(weekday)) {
+      baseCapacity = 21;
+    } else {
+      // Fri - Sun
+      if (isNightlifePeak(weekday, hour)) {
+        baseCapacity = 53;
+      } else if (hour >= 21 || hour < 4) {
+        baseCapacity = 25;
+      } else {
+        baseCapacity = 5;
+      }
     }
   } else if (venue.type === 'Activity') {
     if (hour >= 19 || hour < 6) {
@@ -124,7 +152,7 @@ function getDynamicTargetCount(venue, allVenues) {
     const nowMs = Date.now();
     const isOngoing = venue.startDate && venue.expirationDate && (nowMs >= venue.startDate && nowMs <= venue.expirationDate);
     if (isOngoing) {
-      baseCapacity = (hour >= 9 && hour < 22) ? 150 : 20;
+      baseCapacity = (hour >= 9 && hour < 22) ? 150 : 40;
     } else {
       baseCapacity = 0;
     }
@@ -309,8 +337,17 @@ async function syncAllVenueUsers(isTick = false) {
   const venueContexts = {};
   const proposedCounts = {};
 
+  const nairobiDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date());
+
   currentlyActiveVenues.forEach(venue => {
-    const isOverride = venue.isOverride === true;
+    let isOverride = venue.isOverride === true;
+    if (isOverride && venue.overrideDate !== nairobiDateStr) {
+      db.collection('venues').doc(venue.id).update({
+        isOverride: false
+      }).catch(err => console.error(`Failed to reset override for ${venue.name}:`, err));
+      isOverride = false;
+      venue.isOverride = false;
+    }
     
     // Drift & Initialize popularity scores and identity factor
     if (!isOverride && isTick) {

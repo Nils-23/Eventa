@@ -55,6 +55,28 @@ export const AdminSimulationScreen = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  // Scanner to automatically reset expired daily overrides in Firestore
+  useEffect(() => {
+    if (venues.length === 0) return;
+    
+    const now = new Date();
+    const nairobiDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(now);
+    
+    venues.forEach(async (venue) => {
+      if (venue.isOverride && venue.overrideDate !== nairobiDateStr) {
+        try {
+          const venueRef = doc(firestore, 'venues', venue.id);
+          await updateDoc(venueRef, {
+            isOverride: false
+          });
+          console.log(`[Admin Dashboard] Reset override for expired venue: ${venue.name}`);
+        } catch (err) {
+          console.warn(`[Admin Dashboard] Failed to reset override for ${venue.name}:`, err);
+        }
+      }
+    });
+  }, [venues]);
   
   // New Venue State
   const [newVenueName, setNewVenueName] = useState('');
@@ -131,9 +153,12 @@ export const AdminSimulationScreen = () => {
 
     try {
       const venueRef = doc(firestore, 'venues', venueId);
+      const now = new Date();
+      const nairobiDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(now);
       await updateDoc(venueRef, {
         simulatedUsersCount: count,
-        isOverride: true
+        isOverride: true,
+        overrideDate: nairobiDateStr
       });
       Toast.show({ type: 'success', text1: 'Updated!', text2: `Simulated users count updated.` });
     } catch (error) {
