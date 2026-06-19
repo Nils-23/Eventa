@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, Plus, Save, X, UploadCloud, Trash2, Calendar, Clock, Play, Pause, Film } from 'lucide-react-native';
+import { ArrowLeft, Users, Plus, Save, X, UploadCloud, Trash2, Calendar, Clock, Play, Pause, Film, Key, Sparkles, Check } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useLiveVenues, LiveVenue as Venue } from '../hooks/useLiveVenues';
-import { firestore, storage } from '../services/firebase';
+import { firestore, storage, functions } from '../services/firebase';
 import { doc, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { httpsCallable } from 'firebase/functions';
 import Toast from 'react-native-toast-message';
 import * as ImagePicker from 'expo-image-picker';
 import { uploadStoryMedia, createSimulatedStory } from '../services/storyService';
@@ -20,6 +21,92 @@ export const AdminSimulationScreen = () => {
   const [editingCapacities, setEditingCapacities] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [newVenueMaxCapacity, setNewVenueMaxCapacity] = useState('');
+
+  // Anthropic API Key & Chat Seeding States
+  const [anthropicApiKey, setAnthropicApiKey] = useState('');
+  const [isAnthropicKeySaved, setIsAnthropicKeySaved] = useState(false);
+  const [isTriggeringSeeding, setIsTriggeringSeeding] = useState(false);
+
+  useEffect(() => {
+    const docRef = doc(firestore, 'settings', 'simulation');
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.anthropicApiKey) {
+          setAnthropicApiKey(data.anthropicApiKey);
+          setIsAnthropicKeySaved(true);
+        } else {
+          setAnthropicApiKey('');
+          setIsAnthropicKeySaved(false);
+        }
+      }
+    }, (error) => {
+      console.warn("Failed to listen to simulation settings:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSaveAnthropicKey = async () => {
+    if (!anthropicApiKey.trim()) {
+      Toast.show({ type: 'error', text1: 'Empty Key', text2: 'Please enter a valid Anthropic API key.' });
+      return;
+    }
+    try {
+      await setDoc(doc(firestore, 'settings', 'simulation'), {
+        anthropicApiKey: anthropicApiKey.trim()
+      }, { merge: true });
+      setIsAnthropicKeySaved(true);
+      Toast.show({ type: 'success', text1: 'Key Saved', text2: 'Anthropic API key has been stored.' });
+    } catch (err) {
+      console.error(err);
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to save API key.' });
+    }
+  };
+
+  const handleClearAnthropicKey = async () => {
+    try {
+      await updateDoc(doc(firestore, 'settings', 'simulation'), {
+        anthropicApiKey: null
+      });
+      setAnthropicApiKey('');
+      setIsAnthropicKeySaved(false);
+      Toast.show({ type: 'success', text1: 'Key Removed', text2: 'Anthropic API key was cleared.' });
+    } catch (err) {
+      console.error(err);
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to clear API key.' });
+    }
+  };
+
+  const handleTriggerChatSeeding = async () => {
+    setIsTriggeringSeeding(true);
+    try {
+      const triggerSeeding = httpsCallable(functions, 'triggerChatSeeding');
+      const response = await triggerSeeding();
+      const data: any = response.data;
+      if (data && data.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Seeding Triggered!',
+          text2: data.message || 'Conversations seeded successfully.'
+        });
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Seeding Failed',
+          text2: data.message || 'No active venues met the criteria.'
+        });
+      }
+    } catch (error: any) {
+      console.error('[AdminSimulationScreen] Seeding trigger error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Trigger Failed',
+        text2: error.message || 'An error occurred during seeding.'
+      });
+    } finally {
+      setIsTriggeringSeeding(false);
+    }
+  };
 
 
   const filteredVenues = venues.filter(venue =>
@@ -588,6 +675,57 @@ export const AdminSimulationScreen = () => {
         <Text style={styles.sectionSubtitle}>
           Adjust the number of simulated users for each venue. Changes will reflect in real-time.
         </Text>
+
+        {/* Gen Z Chat Seeding System Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Sparkles color="#00FFCC" size={18} />
+            <Text style={styles.cardTitle}>Gen Z Chat Seeding System</Text>
+          </View>
+          <Text style={styles.cardDesc}>
+            Configure the Anthropic API Key to dynamically seed realistic, progressive Sheng/English conversations in the top 10% active venues during weekend peak hours.
+          </Text>
+
+          <View style={styles.keyInputRow}>
+            <TextInput
+              style={[styles.input, { flex: 1, marginBottom: 0 }]}
+              placeholder="Paste Anthropic API Key (sk-ant-)..."
+              placeholderTextColor="#666"
+              secureTextEntry={isAnthropicKeySaved}
+              value={anthropicApiKey}
+              onChangeText={setAnthropicApiKey}
+              editable={!isAnthropicKeySaved}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {isAnthropicKeySaved ? (
+              <TouchableOpacity style={styles.clearKeyBtn} onPress={handleClearAnthropicKey}>
+                <Text style={styles.clearKeyBtnText}>Clear</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={styles.saveKeyBtn} onPress={handleSaveAnthropicKey}>
+                <Text style={styles.saveKeyBtnText}>Save</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {isAnthropicKeySaved && (
+            <TouchableOpacity 
+              style={[styles.triggerSeedingBtn, isTriggeringSeeding && styles.actionBtnDisabled]}
+              onPress={handleTriggerChatSeeding}
+              disabled={isTriggeringSeeding}
+            >
+              {isTriggeringSeeding ? (
+                <ActivityIndicator size="small" color="#000" />
+              ) : (
+                <>
+                  <Sparkles color="#000" size={14} />
+                  <Text style={styles.triggerSeedingBtnText}>Trigger Seeding Now</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* Search Bar */}
         <View style={styles.searchContainer}>
@@ -1733,5 +1871,91 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     marginVertical: 24,
+  },
+  card: {
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+    marginBottom: 20,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  cardTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  cardDesc: {
+    color: '#888',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  keyInputRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  input: {
+    backgroundColor: '#2A2A2A',
+    borderColor: '#444',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#FFF',
+    fontSize: 14,
+  },
+  saveKeyBtn: {
+    backgroundColor: '#00FFCC',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  saveKeyBtnText: {
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  clearKeyBtn: {
+    backgroundColor: '#333',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  clearKeyBtnText: {
+    color: '#FF3366',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  triggerSeedingBtn: {
+    backgroundColor: '#00FFCC',
+    borderRadius: 8,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  triggerSeedingBtnText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  actionBtnDisabled: {
+    backgroundColor: '#2A2A2A',
+    opacity: 0.5,
   },
 });
