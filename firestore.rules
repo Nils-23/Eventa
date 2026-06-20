@@ -68,5 +68,10 @@ service cloud.firestore {
     match /recurring_stories/{scheduleId} {
       allow read, write: if isAdmin();
     }
+
+    // Pending Events (Claude Event Curator staging area)
+    match /pendingEvents/{eventId} {
+      allow read, write: if isAdmin();
+    }
   }
 }
