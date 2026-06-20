@@ -22,10 +22,9 @@ export const AdminSimulationScreen = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [newVenueMaxCapacity, setNewVenueMaxCapacity] = useState('');
 
-  // Anthropic API Key & Chat Seeding States
+  // Anthropic API Key States
   const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [isAnthropicKeySaved, setIsAnthropicKeySaved] = useState(false);
-  const [isTriggeringSeeding, setIsTriggeringSeeding] = useState(false);
 
   useEffect(() => {
     const docRef = doc(firestore, 'settings', 'simulation');
@@ -74,37 +73,6 @@ export const AdminSimulationScreen = () => {
     } catch (err) {
       console.error(err);
       Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to clear API key.' });
-    }
-  };
-
-  const handleTriggerChatSeeding = async () => {
-    setIsTriggeringSeeding(true);
-    try {
-      const triggerSeeding = httpsCallable(functions, 'triggerChatSeeding');
-      const response = await triggerSeeding();
-      const data: any = response.data;
-      if (data && data.success) {
-        Toast.show({
-          type: 'success',
-          text1: 'Seeding Triggered!',
-          text2: data.message || 'Conversations seeded successfully.'
-        });
-      } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Seeding Failed',
-          text2: data.message || 'No active venues met the criteria.'
-        });
-      }
-    } catch (error: any) {
-      console.error('[AdminSimulationScreen] Seeding trigger error:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Trigger Failed',
-        text2: error.message || 'An error occurred during seeding.'
-      });
-    } finally {
-      setIsTriggeringSeeding(false);
     }
   };
 
@@ -676,14 +644,14 @@ export const AdminSimulationScreen = () => {
           Adjust the number of simulated users for each venue. Changes will reflect in real-time.
         </Text>
 
-        {/* Gen Z Chat Seeding System Card */}
+        {/* Anthropic API Key Card */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <Sparkles color="#00FFCC" size={18} />
-            <Text style={styles.cardTitle}>Gen Z Chat Seeding System</Text>
+            <Key color="#00FFCC" size={18} />
+            <Text style={styles.cardTitle}>Anthropic API Key</Text>
           </View>
           <Text style={styles.cardDesc}>
-            Configure the Anthropic API Key to dynamically seed realistic, progressive Sheng/English conversations in the top 10% active venues during weekend peak hours.
+            Configure the Anthropic API Key used for automatic persona interactions and curator cleaning jobs.
           </Text>
 
           <View style={styles.keyInputRow}>
@@ -708,23 +676,6 @@ export const AdminSimulationScreen = () => {
               </TouchableOpacity>
             )}
           </View>
-
-          {isAnthropicKeySaved && (
-            <TouchableOpacity 
-              style={[styles.triggerSeedingBtn, isTriggeringSeeding && styles.actionBtnDisabled]}
-              onPress={handleTriggerChatSeeding}
-              disabled={isTriggeringSeeding}
-            >
-              {isTriggeringSeeding ? (
-                <ActivityIndicator size="small" color="#000" />
-              ) : (
-                <>
-                  <Sparkles color="#000" size={14} />
-                  <Text style={styles.triggerSeedingBtnText}>Trigger Seeding Now</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* Search Bar */}
@@ -1938,21 +1889,6 @@ const styles = StyleSheet.create({
     color: '#FF3366',
     fontWeight: '700',
     fontSize: 13,
-  },
-  triggerSeedingBtn: {
-    backgroundColor: '#00FFCC',
-    borderRadius: 8,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  triggerSeedingBtnText: {
-    color: '#000',
-    fontSize: 14,
-    fontWeight: '800',
   },
   actionBtnDisabled: {
     backgroundColor: '#2A2A2A',

@@ -16,6 +16,45 @@ if (admin.apps.length === 0) {
 
 const db = admin.firestore();
 
+/**
+ * Converts date string (DD/MM/YYYY) and time string (HH:MM or equivalent) into EAT timestamps.
+ */
+function parseDateTime(dateStr, timeStr) {
+  if (!dateStr) {
+    throw new Error('Date string is required.');
+  }
+  const parts = dateStr.split('/');
+  if (parts.length !== 3) {
+    throw new Error(`Invalid date format: ${dateStr}`);
+  }
+  const day = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const year = parseInt(parts[2], 10);
+
+  let hour = 18;
+  let minute = 0;
+
+  if (timeStr) {
+    const timeMatch = timeStr.match(/(\d+):(\d+)\s*(pm|am)?/i);
+    if (timeMatch) {
+      hour = parseInt(timeMatch[1], 10);
+      minute = parseInt(timeMatch[2], 10);
+      const ampm = timeMatch[3];
+      if (ampm) {
+        if (ampm.toLowerCase() === 'pm' && hour < 12) hour += 12;
+        if (ampm.toLowerCase() === 'am' && hour === 12) hour = 0;
+      }
+    }
+  }
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const isoString = `${year}-${pad(month + 1)}-${pad(day)}T${pad(hour)}:${pad(minute)}:00+03:00`;
+  const startDate = new Date(isoString).getTime();
+  const expirationDate = startDate + (6 * 60 * 60 * 1000); // 6 hours duration fallback
+
+  return { startDate, expirationDate };
+}
+
 async function runCleanupJob() {
   console.log('🔄 Initializing Live Events Cleanup...');
 
@@ -85,7 +124,11 @@ async function runCleanupJob() {
   const existingEventsJSON = JSON.stringify(existingEvents, null, 2);
 
   // Exact prompt from spec
-  const prompt = `Today is ${currentDate}. Below is a list of events currently live on Eventas, a Nairobi nightlife app. Your job is to clean this list. For each event: mark it as REMOVE if the date has already passed as of today, mark it as REMOVE if the event details are vague, incomplete, or unverifiable, mark it as KEEP if it is a valid upcoming event with a confirmed date and venue, mark it as NEEDS EDIT if the event is upcoming but has incomplete or poorly written details — and provide a corrected version. Return ONLY a valid JSON array where each object has: originalId (the Firestore document ID), action (KEEP / REMOVE / NEEDS EDIT), and updatedEvent (null if KEEP or REMOVE, or the full corrected event object if NEEDS EDIT). Here are the current events: ${existingEventsJSON}`;
+  const prompt = `Today is ${currentDate}. Below is a list of events currently live on Eventas, a Nairobi nightlife app. Your job is to clean this list. You MUST use Google Maps to verify the coordinates and event location definition of these events, and verify their dates using reliable web sources.
+
+CRITICAL SEARCH EFFICIENCY RULE: Do NOT perform individual search queries for every single event. Instead, batch your searches by category or grouping (e.g., search for "upcoming Nairobi concerts this month", "Nairobi club nights June 2026", "Nairobi art events 2026", etc.) and cross-reference multiple events per search. You should target verifying all events in a total of 5–8 batched searches maximum to keep API search costs low.
+
+For each event: mark it as REMOVE if the date has already passed as of today, mark it as REMOVE if the event details are vague, incomplete, or unverifiable, mark it as KEEP if it is a valid upcoming event with a confirmed date and venue, mark it as NEEDS EDIT if the event is upcoming but has incomplete or poorly written details — and provide a corrected version. Return ONLY a valid JSON array where each object has: originalId (the Firestore document ID), action (KEEP / REMOVE / NEEDS EDIT), and updatedEvent (null if KEEP or REMOVE, or the full corrected event object if NEEDS EDIT). The corrected event object inside updatedEvent must have category as one of: Club / Bar / Activity / Event, and a valid, non-null sourceLink. Here are the current events: ${existingEventsJSON}`;
 
   console.log('🤖 Sending live events to Claude Sonnet (web search enabled)...');
 
@@ -173,12 +216,22 @@ async function runCleanupJob() {
 
     const displayEvent = item.action === 'NEEDS EDIT' && item.updatedEvent ? item.updatedEvent : origEvent;
 
+    let startDate = null;
+    let expirationDate = null;
+    try {
+      const parsed = parseDateTime(displayEvent.date || origEvent.date, displayEvent.time || origEvent.time || '18:00');
+      startDate = parsed.startDate;
+      expirationDate = parsed.expirationDate;
+    } catch (e) {
+      console.warn(`[Cleanup] Error pre-calculating timestamps for cleanup event ${displayEvent.name}:`, e.message);
+    }
+
     await db.collection('pendingEvents').add({
       name: displayEvent.name || origEvent.name || '',
       venue: displayEvent.venue || origEvent.venue || '',
       date: displayEvent.date || origEvent.date || '',
       time: displayEvent.time || origEvent.time || '',
-      category: displayEvent.category || origEvent.category || 'Other',
+      category: displayEvent.category || origEvent.category || 'Event',
       description: displayEvent.description || origEvent.description || '',
       ticketLink: displayEvent.ticketLink || origEvent.ticketLink || null,
       sourceLink: displayEvent.sourceLink || origEvent.sourceLink || null,
@@ -187,7 +240,9 @@ async function runCleanupJob() {
       curatedBy: 'claude_cleanup',
       originalId: item.originalId,
       action: item.action || 'KEEP',
-      updatedEvent: item.updatedEvent || null
+      updatedEvent: item.updatedEvent || null,
+      startDate: startDate,
+      expirationDate: expirationDate
     });
     countAdded++;
     console.log(`  📝 Saved cleanup recommendation for: "${displayEvent.name}" -> Action: ${item.action}`);

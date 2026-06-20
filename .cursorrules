@@ -1,0 +1,3 @@
+# Assistant Rules & Constraints
+
+- **API Keys & External Services:** NEVER run any script, command, or cloud function call that utilizes the user's external API keys (e.g., Anthropic API, Gemini API, or Google Maps billing integrations) without asking for explicit permission in the chat first.

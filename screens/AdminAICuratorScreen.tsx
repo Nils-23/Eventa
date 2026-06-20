@@ -54,18 +54,20 @@ interface PendingEvent {
   address?: string;
   latitude?: number;
   longitude?: number;
+  startDate?: number;
+  expirationDate?: number;
+  googleImageUrl?: string;
 }
 
 const CATEGORY_IMAGES: Record<string, string> = {
-  Music: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&q=80&w=600',
-  Food: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&q=80&w=600',
-  Art: 'https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?auto=format&fit=crop&q=80&w=600',
-  Sports: 'https://images.unsplash.com/photo-1502224562085-639556652f33?auto=format&fit=crop&q=80&w=600',
-  Conference: 'https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&q=80&w=600',
-  General: 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80&w=600',
+  Club: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&q=80&w=600',
+  Bar: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&q=80&w=600',
+  Activity: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&q=80&w=600',
+  Event: 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80&w=600',
+  Default: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&q=80&w=600',
 };
 
-const CATEGORIES = ['Nightlife', 'Concert', 'Art', 'Food & Market', 'Comedy', 'Festival', 'Other'];
+const CATEGORIES = ['Bar', 'Club', 'Activity', 'Event'];
 
 export const AdminAICuratorScreen = () => {
   const navigation = useNavigation();
@@ -83,12 +85,63 @@ export const AdminAICuratorScreen = () => {
   const [editVenue, setEditVenue] = useState('');
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
-  const [editCategory, setEditCategory] = useState('Other');
+  const [editCategory, setEditCategory] = useState('General');
   const [editTicketLink, setEditTicketLink] = useState('');
   const [editSourceLink, setEditSourceLink] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editLat, setEditLat] = useState('');
   const [editLng, setEditLng] = useState('');
+  const [editGoogleImageUrl, setEditGoogleImageUrl] = useState('');
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+
+  const fetchSuggestions = async (input: string) => {
+    if (input.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    try {
+      const apiKey = 'REDACTED_GOOGLE_MAPS_KEY';
+      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&location=-1.286389,36.817223&radius=50000&key=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status === 'OK') {
+        setSuggestions(data.predictions);
+      } else {
+        setSuggestions([]);
+      }
+    } catch (error) {
+      console.warn('Error fetching place suggestions:', error);
+      setSuggestions([]);
+    }
+  };
+
+  const handleSelectSuggestion = async (placeId: string) => {
+    try {
+      const apiKey = 'REDACTED_GOOGLE_MAPS_KEY';
+      const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=geometry,formatted_address,name,photos&key=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status === 'OK' && data.result) {
+        const { geometry, formatted_address, name, photos } = data.result;
+        setEditVenue(name || '');
+        setEditLat(geometry?.location?.lat ? String(geometry.location.lat) : '');
+        setEditLng(geometry?.location?.lng ? String(geometry.location.lng) : '');
+        setEditAddress(formatted_address || '');
+        
+        if (photos && photos.length > 0) {
+          const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${photos[0].photo_reference}&key=${apiKey}`;
+          setEditGoogleImageUrl(photoUrl);
+        } else {
+          setEditGoogleImageUrl('');
+        }
+        
+        setSuggestions([]);
+      }
+    } catch (error) {
+      console.warn('Error getting place details:', error);
+      Toast.show({ type: 'error', text1: 'Lookup Failed', text2: 'Could not fetch details from Google Maps.' });
+    }
+  };
 
   // Subscribe to pendingEvents where status == "pending"
   useEffect(() => {
@@ -107,7 +160,7 @@ export const AdminAICuratorScreen = () => {
           venue: data.venue || '',
           date: data.date || '',
           time: data.time || '',
-          category: data.category || 'Other',
+          category: data.category || 'General',
           description: data.description || '',
           ticketLink: data.ticketLink || null,
           sourceLink: data.sourceLink || null,
@@ -119,7 +172,10 @@ export const AdminAICuratorScreen = () => {
           updatedEvent: data.updatedEvent,
           address: data.address,
           latitude: data.latitude,
-          longitude: data.longitude
+          longitude: data.longitude,
+          startDate: data.startDate,
+          expirationDate: data.expirationDate,
+          googleImageUrl: data.googleImageUrl
         });
       });
       setPendingEvents(list);
@@ -236,7 +292,10 @@ export const AdminAICuratorScreen = () => {
         }
       });
 
-      const { startDate, expirationDate } = parseDateTime(event.date, event.time);
+      const parsed = parseDateTime(event.date, event.time);
+      const startDate = event.startDate !== undefined && event.startDate !== null ? event.startDate : parsed.startDate;
+      const expirationDate = event.expirationDate !== undefined && event.expirationDate !== null ? event.expirationDate : parsed.expirationDate;
+
       const venueId = `event_ai_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       const docRef = doc(firestore, 'venues', venueId);
 
@@ -244,17 +303,7 @@ export const AdminAICuratorScreen = () => {
       const latitude = event.latitude !== undefined && event.latitude !== null ? event.latitude : (matchedVenue ? matchedVenue.latitude : -1.286389);
       const longitude = event.longitude !== undefined && event.longitude !== null ? event.longitude : (matchedVenue ? matchedVenue.longitude : 36.817223);
 
-      const categoryMapping: Record<string, string> = {
-        Nightlife: 'Music',
-        Concert: 'Music',
-        Art: 'Art',
-        'Food & Market': 'Food',
-        Comedy: 'General',
-        Festival: 'General',
-        Other: 'General',
-      };
-      const mappedCategory = categoryMapping[event.category] || 'General';
-      const imageUrl = CATEGORY_IMAGES[mappedCategory] || CATEGORY_IMAGES.General;
+      const imageUrl = event.googleImageUrl || CATEGORY_IMAGES[event.category] || CATEGORY_IMAGES.Default;
 
       const venueData = {
         id: venueId,
@@ -263,10 +312,11 @@ export const AdminAICuratorScreen = () => {
         address,
         latitude,
         longitude,
-        type: 'Event',
+        type: event.category || 'Event',
         startDate,
         expirationDate,
         imageUrl,
+        googleImageUrl: event.googleImageUrl || null,
         simulatedUsersCount: 30,
         ticketLink: event.ticketLink || null,
         sourceLink: event.sourceLink || null
@@ -302,53 +352,41 @@ export const AdminAICuratorScreen = () => {
 
   const handleConfirmCleanup = async (event: PendingEvent) => {
     setIsLoading(true);
-    setLoadingStatus('Applying cleanup action...');
+    setLoadingStatus('Confirming event status...');
     try {
-      if (event.action === 'REMOVE') {
-        if (event.originalId) {
-          await deleteDoc(doc(firestore, 'venues', event.originalId));
-          Toast.show({ type: 'success', text1: 'Event Removed', text2: 'Event was deleted from live database.' });
-        }
-      } else if (event.action === 'NEEDS EDIT') {
-        if (event.originalId) {
-          const { startDate, expirationDate } = parseDateTime(event.date, event.time);
-          const categoryMapping: Record<string, string> = {
-            Nightlife: 'Music',
-            Concert: 'Music',
-            Art: 'Art',
-            'Food & Market': 'Food',
-            Comedy: 'General',
-            Festival: 'General',
-            Other: 'General',
-          };
-          const mappedCategory = categoryMapping[event.category] || 'General';
-          const imageUrl = CATEGORY_IMAGES[mappedCategory] || CATEGORY_IMAGES.General;
+      if (event.originalId) {
+        const parsed = parseDateTime(event.date, event.time);
+        const startDate = event.startDate !== undefined && event.startDate !== null ? event.startDate : parsed.startDate;
+        const expirationDate = event.expirationDate !== undefined && event.expirationDate !== null ? event.expirationDate : parsed.expirationDate;
 
-          const updateData: any = {
-            name: event.name,
-            description: event.description,
-            address: event.venue,
-            startDate,
-            expirationDate,
-            imageUrl,
-            ticketLink: event.ticketLink || null,
-            sourceLink: event.sourceLink || null
-          };
+        const imageUrl = event.googleImageUrl || CATEGORY_IMAGES[event.category] || CATEGORY_IMAGES.Default;
 
-          if (event.latitude !== undefined && event.latitude !== null) updateData.latitude = event.latitude;
-          if (event.longitude !== undefined && event.longitude !== null) updateData.longitude = event.longitude;
+        const updateData: any = {
+          name: event.name,
+          description: event.description,
+          address: event.venue,
+          type: event.category || 'Event',
+          startDate,
+          expirationDate,
+          imageUrl,
+          googleImageUrl: event.googleImageUrl || null,
+          ticketLink: event.ticketLink || null,
+          sourceLink: event.sourceLink || null
+        };
 
-          await updateDoc(doc(firestore, 'venues', event.originalId), updateData);
-          Toast.show({ type: 'success', text1: 'Event Corrected', text2: 'Live event updated successfully.' });
-        }
+        if (event.latitude !== undefined && event.latitude !== null) updateData.latitude = event.latitude;
+        if (event.longitude !== undefined && event.longitude !== null) updateData.longitude = event.longitude;
+
+        await updateDoc(doc(firestore, 'venues', event.originalId), updateData);
+        Toast.show({ type: 'success', text1: 'Confirmed & Synced', text2: 'Live event updated with clean details.' });
       } else {
-        Toast.show({ type: 'success', text1: 'Event Kept', text2: 'Confirmed as valid upcoming event.' });
+        Toast.show({ type: 'success', text1: 'Confirmed', text2: 'Event status confirmed.' });
       }
 
       await updateDoc(doc(firestore, 'pendingEvents', event.id), { status: 'approved' });
     } catch (err: any) {
       console.error(err);
-      Alert.alert('Action Failed', err.message || 'Could not apply cleanup recommendation.');
+      Alert.alert('Action Failed', err.message || 'Could not confirm event.');
     } finally {
       setIsLoading(false);
       setLoadingStatus('');
@@ -357,13 +395,16 @@ export const AdminAICuratorScreen = () => {
 
   const handleRejectCleanup = async (event: PendingEvent) => {
     setIsLoading(true);
-    setLoadingStatus('Overriding recommendation...');
+    setLoadingStatus('Removing live event...');
     try {
+      if (event.originalId) {
+        await deleteDoc(doc(firestore, 'venues', event.originalId));
+        Toast.show({ type: 'success', text1: 'Event Deleted', text2: 'Event was removed from live database.' });
+      }
       await updateDoc(doc(firestore, 'pendingEvents', event.id), { status: 'rejected' });
-      Toast.show({ type: 'info', text1: 'Cleanup Overridden', text2: 'Claude decision bypassed.' });
     } catch (err: any) {
       console.error(err);
-      Alert.alert('Override Failed', err.message || 'Could not override recommendation.');
+      Alert.alert('Removal Failed', err.message || 'Could not delete live event.');
     } finally {
       setIsLoading(false);
       setLoadingStatus('');
@@ -383,6 +424,8 @@ export const AdminAICuratorScreen = () => {
     setEditAddress(item.address || '');
     setEditLat(item.latitude !== undefined && item.latitude !== null ? String(item.latitude) : '');
     setEditLng(item.longitude !== undefined && item.longitude !== null ? String(item.longitude) : '');
+    setEditGoogleImageUrl(item.googleImageUrl || '');
+    setSuggestions([]);
     setIsEditModalVisible(true);
   };
 
@@ -394,6 +437,10 @@ export const AdminAICuratorScreen = () => {
     setIsLoading(true);
     setLoadingStatus('Saving event details...');
     try {
+      const parsed = parseDateTime(editDate, editTime);
+      const startDate = parsed.startDate;
+      const expirationDate = parsed.expirationDate;
+
       const updateData: any = {
         name: editName,
         description: editDesc,
@@ -406,6 +453,9 @@ export const AdminAICuratorScreen = () => {
         address: editAddress || null,
         latitude: latNum !== null && !isNaN(latNum) ? latNum : null,
         longitude: lngNum !== null && !isNaN(lngNum) ? lngNum : null,
+        googleImageUrl: editGoogleImageUrl || null,
+        startDate,
+        expirationDate
       };
 
       const item = pendingEvents.find(e => e.id === editId);
@@ -418,7 +468,8 @@ export const AdminAICuratorScreen = () => {
           time: editTime,
           category: editCategory,
           ticketLink: editTicketLink || null,
-          sourceLink: editSourceLink || null
+          sourceLink: editSourceLink || null,
+          googleImageUrl: editGoogleImageUrl || null
         };
       }
 
@@ -599,11 +650,11 @@ export const AdminAICuratorScreen = () => {
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleOpenEditModal(item)}>
                         <Edit color="#00FFCC" size={14} />
-                        <Text style={styles.actionPillTextEdit}>Edit Details</Text>
+                        <Text style={styles.actionPillTextEdit}>Edit</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.actionPillReject} onPress={() => handleRejectCleanup(item)}>
-                        <X color="#FF3366" size={14} />
-                        <Text style={styles.actionPillTextReject}>Override</Text>
+                        <Trash2 color="#FF3366" size={14} />
+                        <Text style={styles.actionPillTextReject}>Remove</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -658,7 +709,31 @@ export const AdminAICuratorScreen = () => {
 
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Venue / Address Name</Text>
-                <TextInput style={styles.modalInput} value={editVenue} onChangeText={setEditVenue} />
+                <TextInput 
+                  style={styles.modalInput} 
+                  value={editVenue} 
+                  placeholder="Search venue on Google Maps..."
+                  placeholderTextColor="#555"
+                  onChangeText={(text) => {
+                    setEditVenue(text);
+                    fetchSuggestions(text);
+                  }}
+                />
+                {suggestions.length > 0 && (
+                  <View style={styles.suggestionsContainer}>
+                    {suggestions.map((item) => (
+                      <TouchableOpacity
+                        key={item.place_id}
+                        style={styles.suggestionItem}
+                        onPress={() => handleSelectSuggestion(item.place_id)}
+                      >
+                        <Text style={styles.suggestionText} numberOfLines={1}>
+                          {item.description}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
               </View>
 
               <View style={styles.formRow}>
@@ -1146,5 +1221,23 @@ const styles = StyleSheet.create({
     color: '#000',
     fontWeight: '800',
     fontSize: 15,
+  },
+  suggestionsContainer: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    maxHeight: 150,
+    marginTop: 4,
+    overflow: 'hidden',
+  },
+  suggestionItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  suggestionText: {
+    color: '#FFF',
+    fontSize: 14,
   }
 });
