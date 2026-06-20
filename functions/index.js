@@ -245,6 +245,10 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
     const messageData = snapshot.val();
     if (!messageData) return;
 
+    // Persona messages handle their own targeted notifications in runPersonaActivity.
+    // Skip the global broadcast to avoid spamming all users with simulated activity.
+    if (messageData.isPersona === true) return;
+
     const venueId = context.params.venueId;
     const senderId = messageData.user_id;
 
@@ -275,6 +279,7 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
     const body = `${messageData.username}: ${messageText}`;
 
     console.log(`Processing message from ${messageData.username} at ${venueName}. Notifying users...`);
+
 
     for (const user of allUsersWithToken) {
       if (user.id === senderId) continue;
@@ -1311,80 +1316,64 @@ exports.monthlyEngagementNotification = functions.pubsub
     return null;
   });
 
-// 🤖 Anthropic Chat Seeding Helper Functions
-async function callAnthropicAPI(apiKey, systemPrompt, prompt) {
-  const url = 'https://api.anthropic.com/v1/messages';
-  const response = await fetch(url, {
+// ─────────────────────────────────────────────────────────────────────────────
+// 🤖 AI PERSONA CHAT SYSTEM
+// 25 fixed fictional Nairobi user personas post to venue group chats during
+// peak hours. Messages are generated via Claude Haiku (claude-3-5-haiku-20241022).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Calls the Anthropic Claude Haiku API and returns the raw text response.
+ * @param {string} apiKey
+ * @param {string} userPrompt - Full prompt text (no separate system prompt needed for simple messages)
+ * @return {Promise<string>}
+ */
+async function callAnthropicHaiku(apiKey, userPrompt) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
-      'content-type': 'application/json'
+      'content-type': 'application/json',
     },
     body: JSON.stringify({
       model: 'claude-3-5-haiku-20241022',
-      max_tokens: 1500,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
-    })
+      max_tokens: 150,
+      messages: [{ role: 'user', content: userPrompt }],
+    }),
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+    const errText = await response.text();
+    throw new Error(`Anthropic API error: ${response.status} - ${errText}`);
   }
 
   const data = await response.json();
   if (data && data.content && data.content[0] && data.content[0].text) {
-    return data.content[0].text;
+    return data.content[0].text.trim();
   }
-  throw new Error(`Anthropic API returned unexpected response format: ${JSON.stringify(data)}`);
+  throw new Error(`Unexpected Anthropic response: ${JSON.stringify(data)}`);
 }
 
-function extractJSON(text) {
-  try {
-    return JSON.parse(text.trim());
-  } catch (e) {
-    const match = text.match(/```json\s*([\s\S]*?)\s*```/);
-    if (match && match[1]) {
-      try {
-        return JSON.parse(match[1].trim());
-      } catch (innerError) {
-        // ignore
-      }
-    }
-    const matchGeneric = text.match(/```\s*([\s\S]*?)\s*```/);
-    if (matchGeneric && matchGeneric[1]) {
-      try {
-        return JSON.parse(matchGeneric[1].trim());
-      } catch (innerError) {
-        // ignore
-      }
-    }
-    throw new Error(`Failed to parse JSON from response: ${text}`);
-  }
-}
-
-function getNairobiTimeParts() {
+/**
+ * Returns current Nairobi time parts.
+ * @return {{ weekday: string, hour: number, minute: number }}
+ */
+function getPersonaNairobiTime() {
   const now = new Date();
-  const nairobiParts = new Intl.DateTimeFormat('en-US', {
+  const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Nairobi',
-    weekday: 'short', // 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'
+    weekday: 'short',
     hour: 'numeric',
     minute: 'numeric',
-    hour12: false
+    hour12: false,
   }).formatToParts(now);
 
-  let weekday = '';
+  let weekday = 'Mon';
   let hour = 12;
   let minute = 0;
 
-  nairobiParts.forEach(p => {
+  parts.forEach((p) => {
     if (p.type === 'weekday') weekday = p.value;
     if (p.type === 'hour') hour = parseInt(p.value, 10);
     if (p.type === 'minute') minute = parseInt(p.value, 10);
@@ -1394,421 +1383,342 @@ function getNairobiTimeParts() {
   return { weekday, hour, minute };
 }
 
-function isNairobiPeakTime(venueType, weekday, hour) {
-  const isWeekend = ['Thu', 'Fri', 'Sat', 'Sun', 'Mon'].includes(weekday);
-  if (!isWeekend) return false;
-
-  const type = (venueType || '').toUpperCase();
-
-  // Clubs and Bars (Nightlife peak times)
-  if (type === 'CLUB' || type === 'BAR') {
-    if (weekday === 'Thu' && hour >= 20) return true;
-    if (weekday === 'Fri' && hour < 3) return true;
-    if (weekday === 'Fri' && hour >= 20) return true;
-    if (weekday === 'Sat' && hour < 4) return true;
-    if (weekday === 'Sat' && hour >= 20) return true;
-    if (weekday === 'Sun' && hour < 4) return true;
-    if (weekday === 'Sun' && hour >= 19) return true;
-    if (weekday === 'Mon' && hour < 1) return true;
-    return false;
+/**
+ * Determines the activity window for personas given current Nairobi time.
+ * Returns null if this is a dead-silent period.
+ * @param {string} weekday
+ * @param {number} hour
+ * @return {{ window: string, personaSampleSize: number } | null}
+ */
+function getPersonaActivityWindow(weekday, hour) {
+  // Fri & Sat: 7pm–2am  → full activity, 3–5 personas
+  if (['Fri', 'Sat'].includes(weekday) && (hour >= 19 || hour < 2)) {
+    return { window: 'peak_night', personaSampleSize: Math.floor(Math.random() * 3) + 3 }; // 3–5
   }
-
-  // Activities (Daytime weekend peak times)
-  if (type === 'ACTIVITY') {
-    if (['Sat', 'Sun'].includes(weekday) && hour >= 11 && hour <= 18) {
-      return true;
-    }
-    return false;
+  // Sat/Sun early morning (carries over from Fri/Sat nights)
+  if (weekday === 'Sun' && hour < 2) {
+    return { window: 'peak_night', personaSampleSize: Math.floor(Math.random() * 3) + 3 };
   }
-
-  // Events (either daytime or evening peaks on weekends)
-  if (type === 'EVENT') {
-    if (['Sat', 'Sun'].includes(weekday) && hour >= 11 && hour <= 18) return true;
-    if (weekday === 'Thu' && hour >= 20) return true;
-    if (weekday === 'Fri' && (hour >= 20 || hour < 2)) return true;
-    if (weekday === 'Sat' && (hour >= 20 || hour < 2)) return true;
-    if (weekday === 'Sun' && (hour >= 19 || hour < 1)) return true;
-    if (weekday === 'Mon' && hour < 1) return true;
-    return false;
+  // Wed & Thu: 8pm–midnight → full activity, 3–5 personas
+  if (['Wed', 'Thu'].includes(weekday) && hour >= 20 && hour < 24) {
+    return { window: 'mid_week_night', personaSampleSize: Math.floor(Math.random() * 3) + 3 };
   }
-
-  return false;
+  // Mon–Fri 3pm–6pm → light afternoon, ~30% of 25 = 8 personas
+  if (['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday) && hour >= 15 && hour < 18) {
+    return { window: 'afternoon', personaSampleSize: 8 };
+  }
+  // Dead silent: Mon & Tue mornings (all other times)
+  if (['Mon', 'Tue'].includes(weekday) && (hour < 15 || hour >= 18)) {
+    return null; // silent
+  }
+  // All other unlisted times: also silent
+  return null;
 }
 
-// 🗓️ 4. Scheduled Chat Seeding Cron (runs every 15 minutes)
-exports.seedVenueChats = functions.pubsub.schedule("every 15 minutes").onRun(async (context) => {
-  console.log("Running scheduled chat seeding check...");
-  
-  const { weekday, hour } = getNairobiTimeParts();
-  console.log(`Nairobi local time: ${weekday} ${hour}:00`);
+/**
+ * Fetches the last 5 messages from a venue chat in RTDB.
+ * Returns a formatted string for use in the Haiku prompt.
+ * @param {string} venueId
+ * @return {Promise<string>}
+ */
+async function fetchLast5ChatMessages(venueId) {
+  try {
+    const { limitToLast, query: rtdbQuery, ref: rtdbRef } = require('firebase-admin/database');
+    // Use standard RTDB admin SDK query
+    const snap = await rtdb.ref(`venue_chats/${venueId}`).orderByChild('timestamp').limitToLast(5).once('value');
+    if (!snap.exists()) return 'No recent messages.';
 
-  const isWeekend = ['Thu', 'Fri', 'Sat', 'Sun', 'Mon'].includes(weekday);
-  if (!isWeekend) {
-    console.log(`Today is ${weekday}. Chat seeding only triggers on weekends (Thu-Sun). Skipping.`);
+    const messages = [];
+    snap.forEach((child) => {
+      const msg = child.val();
+      if (msg && msg.username && msg.message && msg.type === 'text') {
+        messages.push(`${msg.username}: ${msg.message}`);
+      }
+    });
+    return messages.length > 0 ? messages.join('\n') : 'No recent messages.';
+  } catch (err) {
+    console.warn(`[Persona] Could not fetch last messages for venue ${venueId}:`, err.message);
+    return 'No recent messages.';
+  }
+}
+
+/**
+ * Checks whether a real (non-persona) user has posted in the last N minutes.
+ * @param {string} venueId
+ * @param {number} withinMinutes
+ * @return {Promise<boolean>}
+ */
+async function hasRecentRealUserActivity(venueId, withinMinutes) {
+  try {
+    const cutoff = Date.now() - withinMinutes * 60 * 1000;
+    const snap = await rtdb.ref(`venue_chats/${venueId}`).orderByChild('timestamp').startAt(cutoff).once('value');
+    if (!snap.exists()) return false;
+
+    let found = false;
+    snap.forEach((child) => {
+      const msg = child.val();
+      // isPersona field marks persona messages; absence = real user
+      if (msg && !msg.isPersona && msg.user_id && !msg.user_id.startsWith('sim_')) {
+        found = true;
+      }
+    });
+    return found;
+  } catch (err) {
+    console.warn(`[Persona] Could not check real user activity for ${venueId}:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Shuffles an array in place (Fisher-Yates).
+ */
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🕑 Scheduled Persona Activity Runner (every 30 minutes)
+// ─────────────────────────────────────────────────────────────────────────────
+exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun(async (context) => {
+  console.log('[Persona] Starting persona activity cycle...');
+
+  // ── 1. Check current Nairobi time ────────────────────────────────────────
+  const { weekday, hour, minute } = getPersonaNairobiTime();
+  console.log(`[Persona] Nairobi time: ${weekday} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`);
+
+  const activityWindow = getPersonaActivityWindow(weekday, hour);
+  if (!activityWindow) {
+    console.log(`[Persona] Dead-silent period (${weekday} ${hour}:00). No persona activity.`);
+    return null;
+  }
+  console.log(`[Persona] Active window: ${activityWindow.window} — selecting ${activityWindow.personaSampleSize} personas.`);
+
+  // ── 2. Load Anthropic API key ────────────────────────────────────────────
+  let apiKey = null;
+  try {
+    const simSettingsDoc = await db.collection('settings').doc('simulation').get();
+    if (simSettingsDoc.exists) {
+      const settingsData = simSettingsDoc.data();
+      apiKey = settingsData.anthropicApiKey;
+      if (settingsData.enabled === false) {
+        console.log('[Persona] Simulation globally disabled. Skipping.');
+        return null;
+      }
+    }
+  } catch (err) {
+    console.error('[Persona] Failed to load simulation settings:', err);
     return null;
   }
 
-  try {
-    // 1. Fetch simulation settings & check if enabled
-    const simSettingsDoc = await db.collection('settings').doc('simulation').get();
-    let apiKey = null;
-    let isSimRunning = true;
-    if (simSettingsDoc.exists) {
-      const data = simSettingsDoc.data();
-      apiKey = data.anthropicApiKey;
-      if (data.enabled !== undefined) {
-        isSimRunning = data.enabled;
-      }
-    }
+  if (!apiKey) {
+    console.warn('[Persona] anthropicApiKey not set in settings/simulation. Skipping.');
+    return null;
+  }
 
-    if (!isSimRunning) {
-      console.log("Simulation engine is globally disabled. Skipping seeding.");
-      return null;
-    }
+  // ── 3. Load personas & venues ────────────────────────────────────────────
+  const [personasSnap, venuesSnap] = await Promise.all([
+    db.collection('personas').get(),
+    db.collection('venues').get(),
+  ]);
 
-    if (!apiKey) {
-      console.warn("Anthropic API key is not configured in settings/simulation. Skipping seeding.");
-      return null;
-    }
+  if (personasSnap.empty) {
+    console.warn('[Persona] No personas found. Run scripts/seedPersonas.js first.');
+    return null;
+  }
+  if (venuesSnap.empty) {
+    console.warn('[Persona] No venues found.');
+    return null;
+  }
 
-    // 2. Fetch all venues
-    const venuesSnap = await db.collection('venues').get();
-    if (venuesSnap.empty) {
-      console.log("No venues found in Firestore.");
-      return null;
-    }
-    const venues = venuesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-    // 3. Fetch user counts to find the top 10% active venues
-    const realLocsSnap = await rtdb.ref('locations').once('value');
-    const realLocs = realLocsSnap.exists() ? realLocsSnap.val() : {};
-
-    const simLocsSnap = await rtdb.ref('simulated_locations').once('value');
-    const simLocs = simLocsSnap.exists() ? simLocsSnap.val() : {};
-
-    const nowMs = Date.now();
-    const activeRealLocs = Object.values(realLocs).filter(
-      (loc) => loc.latitude && loc.longitude && (nowMs - loc.timestamp < STALE_MS)
-    );
-    const activeSimLocs = Object.values(simLocs).filter(
-      (loc) => loc.latitude && loc.longitude && (nowMs - loc.timestamp < STALE_MS)
-    );
-    const activeLocations = [...activeRealLocs, ...activeSimLocs];
-
-    // Filter venues that are currently peak-time and calculate their attendance
-    const eligibleVenues = [];
-    venues.forEach(venue => {
-      if (venue.hidden === true) return;
-      if (venue.expirationDate && venue.expirationDate < nowMs) return;
-      if (venue.startDate && venue.startDate > nowMs) return;
-
-      // Check if it's peak time for this venue type
-      if (!isNairobiPeakTime(venue.type, weekday, hour)) {
-        return;
-      }
-
-      // Count attendees
-      const attendees = activeLocations.filter(loc => {
-        if (loc.venueId) return loc.venueId === venue.id;
-        return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
-      });
-
-      eligibleVenues.push({
-        venue,
-        count: attendees.length
-      });
+  const allPersonas = personasSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const allVenues = venuesSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((v) => {
+      const nowMs = Date.now();
+      if (v.hidden === true) return false;
+      if (v.expirationDate && v.expirationDate < nowMs) return false;
+      if (v.startDate && v.startDate > nowMs) return false;
+      return true;
     });
 
-    // We only seed active venues (attendance > 0)
-    const activeVenues = eligibleVenues.filter(item => item.count > 0);
-    if (activeVenues.length === 0) {
-      console.log("No peak-time venues have active attendance. Skipping seeding.");
-      return null;
-    }
-
-    // Sort by attendance count descending
-    activeVenues.sort((a, b) => b.count - a.count);
-
-    // Calculate top 10%
-    const top10PercentCount = Math.max(1, Math.ceil(activeVenues.length * 0.10));
-    const topVenues = activeVenues.slice(0, top10PercentCount).map(item => item.venue);
-
-    console.log(`Top 10% peak active venues count: ${topVenues.length} (out of ${activeVenues.length} active peak venues).`);
-
-    let triggerCount = 0;
-
-    for (const venue of topVenues) {
-      // Avoid spamming the same venue too frequently (2-hour spacing)
-      if (venue.lastChatSeededAt) {
-        const lastSeedTime = typeof venue.lastChatSeededAt === 'number' ? venue.lastChatSeededAt : venue.lastChatSeededAt.toMillis ? venue.lastChatSeededAt.toMillis() : 0;
-        if (nowMs - lastSeedTime < 2 * 60 * 60 * 1000) {
-          console.log(`Skipping venue ${venue.name} because it was seeded within the last 2 hours.`);
-          continue;
-        }
-      }
-
-      const attendees = activeLocations.filter(loc => {
-        if (loc.venueId) return loc.venueId === venue.id;
-        return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
-      });
-      const userCount = attendees.length;
-
-      const formattedDayAndTime = `${weekday} at ${hour > 12 ? hour - 12 : hour} ${hour >= 12 ? 'PM' : 'AM'}`;
-      const systemPrompt = `You are seeding a venue group chat for Eventas, a Nairobi nightlife app. Generate exactly 4 short chat messages for the ${venue.name} venue chat. It is ${formattedDayAndTime}. Venue type: ${venue.type}. Rules: write in natural Nairobi English mixed with Sheng/Swahili (use words like: sawa, buda, fiti, mtu, vibes, ama, noma, waah, leo usiku). Messages must be short (1-2 sentences), casual and punchy.`;
-
-      const prompt = `Generate the messages. For each message, return:
-1. username: a realistic Kenyan Gen Z style username (e.g. brian_ke, shaz.m, mwangi_jr)
-2. text: the message content
-3. delayMinutes: progressive delay in minutes from now (e.g. 2, 5, 8, 12) for when this message should be posted. Delays must be between 1 and 20 minutes and strictly ascending.
-
-Return the result strictly as a JSON object of this format (no other text, markdown, or explanation):
-{
-  "messages": [
-    {
-      "username": "...",
-      "text": "...",
-      "delayMinutes": 2
-    },
-    ...
-  ]
-}`;
-
-      console.log(`Generating seed chat for venue: ${venue.name}`);
-      const rawResponse = await callAnthropicAPI(apiKey, systemPrompt, prompt);
-      const responseData = extractJSON(rawResponse);
-
-      if (responseData && Array.isArray(responseData.messages)) {
-        const batch = db.batch();
-        for (const msg of responseData.messages) {
-          const scheduledTime = nowMs + (msg.delayMinutes * 60 * 1000);
-          const simUserId = `sim_chat_${msg.username.toLowerCase().replace(/[^a-z0-9_]/g, '')}_${Math.floor(Math.random() * 10000)}`;
-          const docRef = db.collection('scheduled_seed_messages').doc();
-          
-          batch.set(docRef, {
-            venueId: venue.id,
-            venueName: venue.name,
-            username: msg.username,
-            userId: simUserId,
-            message: msg.text,
-            scheduledTime: scheduledTime,
-            status: 'pending',
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
-          });
-        }
-
-        // Update the venue's lastChatSeededAt timestamp
-        const venueRef = db.collection('venues').doc(venue.id);
-        batch.update(venueRef, {
-          lastChatSeededAt: nowMs
-        });
-
-        await batch.commit();
-        triggerCount++;
-        console.log(`Seeded ${responseData.messages.length} progressive messages in queue for ${venue.name}.`);
-      }
-    }
-
-    console.log(`Completed scheduled chat seeding run. Seeded ${triggerCount} venues.`);
-  } catch (error) {
-    console.error("Error executing seedVenueChats scheduled function:", error);
+  if (allVenues.length === 0) {
+    console.log('[Persona] No active venues. Skipping.');
+    return null;
   }
-  return null;
-});
 
-// 📬 5. Scheduled Message Queue Dispatcher (runs every 1 minute)
-exports.dispatchScheduledSeedMessages = functions.pubsub.schedule("every 1 minutes").onRun(async (context) => {
-  console.log("Checking for scheduled seed messages to dispatch...");
-  const now = Date.now();
+  // ── 4. Sample personas for this cycle ───────────────────────────────────
+  const shuffledPersonas = shuffleArray([...allPersonas]);
+  const selectedPersonas = shuffledPersonas.slice(0, activityWindow.personaSampleSize);
+  console.log(`[Persona] Selected personas: ${selectedPersonas.map((p) => p.username).join(', ')}`);
 
+  const nowMs = Date.now();
+  const COOLDOWN_MS = 45 * 60 * 1000;        // 45 minutes cooldown per persona×venue
+  const VENUE_HOUR_CAP = 3;                   // max 3 persona messages per venue per hour
+  const REAL_USER_WINDOW_MIN = 10;            // "active" real user = posted in last 10 min
+  let totalMessagesPosted = 0;
+
+  // ── 5. Clean up stale cooldown docs (older than 24h) ────────────────────
   try {
-    const pendingMessagesSnap = await db.collection('scheduled_seed_messages')
-      .where('status', '==', 'pending')
-      .where('scheduledTime', '<=', now)
+    const staleCutoff = new Date(nowMs - 24 * 60 * 60 * 1000);
+    const staleSnap = await db.collection('persona_cooldowns')
+      .where('lastPostAt', '<', staleCutoff.getTime())
       .get();
+    if (!staleSnap.empty) {
+      const cleanupBatch = db.batch();
+      staleSnap.docs.forEach((d) => cleanupBatch.delete(d.ref));
+      await cleanupBatch.commit();
+      console.log(`[Persona] Cleaned up ${staleSnap.size} stale cooldown docs.`);
+    }
+  } catch (err) {
+    console.warn('[Persona] Cooldown cleanup failed (non-fatal):', err.message);
+  }
 
-    if (pendingMessagesSnap.empty) {
-      console.log("No pending scheduled seed messages to send.");
-      return null;
+  // ── 6. Process each selected persona ────────────────────────────────────
+  for (const persona of selectedPersonas) {
+    // Pick a venue this persona would visit (prefer their preferred types)
+    const preferredVenues = allVenues.filter(
+      (v) => persona.preferredVenueTypes && persona.preferredVenueTypes.includes(v.type)
+    );
+    const venuePool = preferredVenues.length > 0 ? preferredVenues : allVenues;
+    const targetVenue = venuePool[Math.floor(Math.random() * venuePool.length)];
+
+    // ── a. Cooldown check ──────────────────────────────────────────────────
+    const cooldownId = `${persona.id}_${targetVenue.id}`;
+    let cooldownData = null;
+    try {
+      const cooldownDoc = await db.collection('persona_cooldowns').doc(cooldownId).get();
+      if (cooldownDoc.exists) cooldownData = cooldownDoc.data();
+    } catch (err) {
+      console.warn(`[Persona] Cooldown read failed for ${cooldownId}:`, err.message);
     }
 
-    console.log(`Found ${pendingMessagesSnap.size} pending seed messages to dispatch.`);
+    if (cooldownData && cooldownData.lastPostAt && (nowMs - cooldownData.lastPostAt < COOLDOWN_MS)) {
+      const remainMin = Math.round((COOLDOWN_MS - (nowMs - cooldownData.lastPostAt)) / 60000);
+      console.log(`[Persona] @${persona.username} cooldown for ${targetVenue.name} (${remainMin}m left). Skipping.`);
+      continue;
+    }
 
-    for (const docSnap of pendingMessagesSnap.docs) {
-      const msg = docSnap.data();
-      const messageId = docSnap.id;
+    // ── b. Venue hourly cap check ──────────────────────────────────────────
+    const oneHourAgo = nowMs - 60 * 60 * 1000;
+    const windowStart = cooldownData && cooldownData.countWindowStart && cooldownData.countWindowStart > oneHourAgo
+      ? cooldownData.countWindowStart
+      : nowMs;
+    const currentCount = cooldownData && cooldownData.countWindowStart && cooldownData.countWindowStart > oneHourAgo
+      ? (cooldownData.venueMessageCount || 0)
+      : 0;
 
-      // 1. Write the message to Realtime Database venue_chats
-      const chatRef = rtdb.ref(`venue_chats/${msg.venueId}`).child(messageId);
-      await chatRef.set({
-        user_id: msg.userId,
-        username: msg.username,
-        message: msg.message,
+    if (currentCount >= VENUE_HOUR_CAP) {
+      console.log(`[Persona] Venue ${targetVenue.name} hit hourly cap (${VENUE_HOUR_CAP} persona msgs/hr). Skipping @${persona.username}.`);
+      continue;
+    }
+
+    // ── c. Real user activity — adjust reply probability ──────────────────
+    const realUserActive = await hasRecentRealUserActivity(targetVenue.id, REAL_USER_WINDOW_MIN);
+    const replyChance = realUserActive ? 0.70 : 0.30;
+    if (Math.random() > replyChance) {
+      console.log(`[Persona] @${persona.username} rolled below ${replyChance * 100}% chance for ${targetVenue.name}. Skipping.`);
+      continue;
+    }
+
+    // ── d. Build Claude Haiku prompt ──────────────────────────────────────
+    const last5Messages = await fetchLast5ChatMessages(targetVenue.id);
+    const hourLabel = hour > 12 ? `${hour - 12}PM` : hour === 12 ? '12PM' : `${hour}AM`;
+    const dayAndTime = `${weekday} at ${hourLabel}`;
+
+    const prompt =
+      `You are ${persona.name}, a young Nairobi socialite. Your personality is ${persona.personalityType.replace(/_/g, ' ')}. ` +
+      `You are currently in the ${targetVenue.name} group chat on a Nairobi nightlife app called Eventas. ` +
+      `It is ${dayAndTime}. The last few messages in this chat were:\n${last5Messages}\n` +
+      `Write ONE short chat message in natural Nairobi English mixed with Sheng. ` +
+      `Vary randomly between full English, full Sheng, and mixed. Keep it under 2 sentences, casual, never formal. ` +
+      `Do not use hashtags. Return only the message text, nothing else.`;
+
+    // ── e. Call Haiku API ─────────────────────────────────────────────────
+    let messageText = null;
+    try {
+      messageText = await callAnthropicHaiku(apiKey, prompt);
+      console.log(`[Persona] @${persona.username} → "${messageText}"`);
+    } catch (err) {
+      console.error(`[Persona] Haiku API error for @${persona.username}:`, err.message);
+      continue;
+    }
+
+    if (!messageText || messageText.length === 0) continue;
+
+    // ── f. Write message to RTDB with staggered timestamp ────────────────
+    // Stagger 2–6 minutes ahead so messages don't all appear at once
+    const staggerMs = (Math.floor(Math.random() * 5) + 2) * 60 * 1000; // 2–6 minutes
+    const messageTimestamp = nowMs + staggerMs;
+
+    try {
+      const chatRef = rtdb.ref(`venue_chats/${targetVenue.id}`);
+      const newMsgRef = chatRef.push();
+      await newMsgRef.set({
+        user_id: persona.id,
+        username: persona.username,
+        message: messageText,
         type: 'text',
-        timestamp: now
+        timestamp: messageTimestamp,
+        isPersona: true, // internal flag — never exposed to frontend
       });
+      console.log(`[Persona] ✓ Posted @${persona.username} to ${targetVenue.name} (visible in ~${Math.round(staggerMs / 60000)}min)`);
+      totalMessagesPosted++;
+    } catch (err) {
+      console.error(`[Persona] RTDB write failed for @${persona.username}:`, err.message);
+      continue;
+    }
 
-      // 2. Mark the status as 'sent' in Firestore
-      await docSnap.ref.update({
-        status: 'sent',
-        sentTime: now
+    // ── g. Update cooldown in Firestore ──────────────────────────────────
+    try {
+      const newCount = currentCount + 1;
+      await db.collection('persona_cooldowns').doc(cooldownId).set({
+        personaId: persona.id,
+        venueId: targetVenue.id,
+        lastPostAt: nowMs,
+        venueMessageCount: newCount,
+        countWindowStart: currentCount === 0 ? nowMs : windowStart,
       });
-
-      console.log(`Dispatched seed message from ${msg.username} to venue ${msg.venueName} (${msg.venueId})`);
-    }
-  } catch (error) {
-    console.error("Error in dispatchScheduledSeedMessages scheduled function:", error);
-  }
-  return null;
-});
-
-// ⚡ 6. HTTPS Callable Manual Trigger Function (Admin Only)
-exports.triggerChatSeeding = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
-  }
-
-  const callerId = context.auth.uid;
-  const userDoc = await db.collection('users').doc(callerId).get();
-  if (!userDoc.exists || userDoc.data().isAdmin !== true) {
-    throw new functions.https.HttpsError('permission-denied', 'Only administrators can trigger chat seeding.');
-  }
-
-  console.log(`Manual chat seeding trigger requested by admin: ${callerId}`);
-
-  try {
-    // 1. Fetch simulation settings
-    const simSettingsDoc = await db.collection('settings').doc('simulation').get();
-    let apiKey = null;
-    if (simSettingsDoc.exists) {
-      apiKey = simSettingsDoc.data().anthropicApiKey;
+    } catch (err) {
+      console.warn(`[Persona] Cooldown write failed for ${cooldownId} (non-fatal):`, err.message);
     }
 
-    if (!apiKey) {
-      return { success: false, message: 'Anthropic API key is not configured in settings.' };
-    }
+    // ── h. Push notification to engaged venue chat members ────────────────
+    // Only notify users who interacted with this venue chat in the last hour.
+    // This mimics a real user message arriving in a chat they're part of.
+    try {
+      const membersSnap = await rtdb.ref(`venue_members/${targetVenue.id}`).once('value');
+      if (membersSnap.exists()) {
+        const members = membersSnap.val();
+        const oneHourMs = 60 * 60 * 1000;
 
-    // 2. Fetch venues
-    const venuesSnap = await db.collection('venues').get();
-    if (venuesSnap.empty) {
-      return { success: false, message: 'No venues found in the database.' };
-    }
-    const venues = venuesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        for (const [memberId, memberData] of Object.entries(members)) {
+          // Skip non-human IDs
+          if (memberId.startsWith('sim_') || memberId.startsWith('persona_')) continue;
 
-    // 3. Fetch active locations from RTDB
-    const realLocsSnap = await rtdb.ref('locations').once('value');
-    const realLocs = realLocsSnap.exists() ? realLocsSnap.val() : {};
+          const isEngaged = memberData.lastInteractionTime && (nowMs - memberData.lastInteractionTime < oneHourMs);
+          if (!isEngaged) continue;
 
-    const simLocsSnap = await rtdb.ref('simulated_locations').once('value');
-    const simLocs = simLocsSnap.exists() ? simLocsSnap.val() : {};
-
-    const nowMs = Date.now();
-    const STALE_MS = 2 * 60 * 60 * 1000;
-    const activeRealLocs = Object.values(realLocs).filter(
-      (loc) => loc.latitude && loc.longitude && (nowMs - loc.timestamp < STALE_MS)
-    );
-    const activeSimLocs = Object.values(simLocs).filter(
-      (loc) => loc.latitude && loc.longitude && (nowMs - loc.timestamp < STALE_MS)
-    );
-    const activeLocations = [...activeRealLocs, ...activeSimLocs];
-
-    // 4. Calculate attendance
-    const venueAttendance = [];
-    venues.forEach(venue => {
-      if (venue.hidden === true) return;
-      if (venue.expirationDate && venue.expirationDate < nowMs) return;
-      if (venue.startDate && venue.startDate > nowMs) return;
-
-      const attendees = activeLocations.filter(loc => {
-        if (loc.venueId) return loc.venueId === venue.id;
-        return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
-      });
-
-      venueAttendance.push({ venue, count: attendees.length });
-    });
-
-    // 5. Filter active and sort
-    const activeVenues = venueAttendance.filter(item => item.count > 0);
-    if (activeVenues.length === 0) {
-      return { success: false, message: 'No venues currently have active users (real or simulated).' };
-    }
-
-    activeVenues.sort((a, b) => b.count - a.count);
-    const top10PercentCount = Math.max(1, Math.ceil(activeVenues.length * 0.10));
-    const topVenues = activeVenues.slice(0, top10PercentCount).map(item => item.venue);
-
-    let seededCount = 0;
-    const seededVenueNames = [];
-
-    // 6. Generate conversations for top venues (bypassing recently-seeded checks for manual trigger)
-    for (const venue of topVenues) {
-      const attendees = activeLocations.filter(loc => {
-        if (loc.venueId) return loc.venueId === venue.id;
-        return getDistanceInMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS;
-      });
-      const userCount = attendees.length;
-
-      const { weekday: localWeekday, hour: localHour } = getNairobiTimeParts();
-      const formattedDayAndTime = `${localWeekday} at ${localHour > 12 ? localHour - 12 : localHour} ${localHour >= 12 ? 'PM' : 'AM'}`;
-      const systemPrompt = `You are seeding a venue group chat for Eventas, a Nairobi nightlife app. Generate exactly 4 short chat messages for the ${venue.name} venue chat. It is ${formattedDayAndTime}. Venue type: ${venue.type}. Rules: write in natural Nairobi English mixed with Sheng/Swahili (use words like: sawa, buda, fiti, mtu, vibes, ama, noma, waah, leo usiku). Messages must be short (1-2 sentences), casual and punchy.`;
-
-      const prompt = `Generate the messages. For each message, return:
-1. username: a realistic Kenyan Gen Z style username (e.g. brian_ke, shaz.m, mwangi_jr)
-2. text: the message content
-3. delayMinutes: progressive delay in minutes from now (e.g. 2, 5, 8, 12) for when this message should be posted. Delays must be between 1 and 20 minutes and strictly ascending.
-
-Return the result strictly as a JSON object of this format (no other text, markdown, or explanation):
-{
-  "messages": [
-    {
-      "username": "...",
-      "text": "...",
-      "delayMinutes": 2
-    },
-    ...
-  ]
-}`;
-
-      console.log(`Calling Anthropic API for manual seeding at: ${venue.name}`);
-      const rawResponse = await callAnthropicAPI(apiKey, systemPrompt, prompt);
-      const responseData = extractJSON(rawResponse);
-
-      if (responseData && Array.isArray(responseData.messages)) {
-        const batch = db.batch();
-        for (const msg of responseData.messages) {
-          const scheduledTime = nowMs + (msg.delayMinutes * 60 * 1000);
-          const simUserId = `sim_chat_${msg.username.toLowerCase().replace(/[^a-z0-9_]/g, '')}_${Math.floor(Math.random() * 10000)}`;
-          const docRef = db.collection('scheduled_seed_messages').doc();
-          
-          batch.set(docRef, {
-            venueId: venue.id,
-            venueName: venue.name,
-            username: msg.username,
-            userId: simUserId,
-            message: msg.text,
-            scheduledTime: scheduledTime,
-            status: 'pending',
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
-          });
+          await sendRateLimitedPushNotification(
+            memberId,
+            targetVenue.name,
+            `${persona.username}: ${messageText}`,
+            { venueId: targetVenue.id, type: 'chat' },
+            null,
+            0,
+            true // bypassLimits — engaged users get chat pings without throttle
+          );
         }
-
-        const venueRef = db.collection('venues').doc(venue.id);
-        batch.update(venueRef, {
-          lastChatSeededAt: nowMs
-        });
-
-        await batch.commit();
-        seededCount++;
-        seededVenueNames.push(venue.name);
       }
+    } catch (err) {
+      console.warn(`[Persona] Push notification dispatch failed for ${targetVenue.name} (non-fatal):`, err.message);
     }
-
-    return {
-      success: true,
-      message: `Successfully seeded conversations for ${seededCount} venue(s): ${seededVenueNames.join(', ')}.`
-    };
-  } catch (error) {
-    console.error("Error in triggerChatSeeding:", error);
-    return { success: false, message: error.message || 'An error occurred during seeding.' };
   }
+
+  console.log(`[Persona] Cycle complete. ${totalMessagesPosted} persona message(s) posted.`);
+  return null;
 });
 
