@@ -1723,3 +1723,429 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
   return null;
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 🤖 CLAUDE EVENT CURATOR SYSTEM
+// Scheduled run on 1st of month at 9am Nairobi time, + callable manual curators
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Calls the Anthropic Claude Sonnet API with web search enabled and returns the response content.
+ * @param {string} apiKey
+ * @param {string} userPrompt
+ * @return {Promise<string>}
+ */
+async function callClaudeSonnetWithSearch(apiKey, userPrompt) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+      'anthropic-beta': 'web-search-2025-03-05',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 8000,
+      tools: [
+        {
+          type: 'web_search_20250305',
+          name: 'web_search',
+        },
+      ],
+      messages: [{ role: 'user', content: userPrompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Claude Sonnet API error: ${response.status} - ${errText}`);
+  }
+
+  const data = await response.json();
+  if (data && data.content) {
+    const textBlock = data.content.find((block) => block.type === 'text');
+    if (textBlock && textBlock.text) {
+      return textBlock.text.trim();
+    }
+  }
+  throw new Error(`Unexpected Claude Sonnet response: ${JSON.stringify(data)}`);
+}
+
+/**
+ * Extracts a JSON array from the response string.
+ * @param {string} text
+ * @return {Array|null}
+ */
+function extractJSONArray(text) {
+  try {
+    return JSON.parse(text.trim());
+  } catch (err) {
+    const match = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch (e) {
+        console.error('[Curator] Failed to parse regex-extracted JSON array:', e);
+      }
+    }
+    return null;
+  }
+}
+
+/**
+ * Determines whether a date in format DD/MM/YYYY is before today (Nairobi timezone).
+ * @param {string} dateStr
+ * @return {boolean}
+ */
+function isPastEvent(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return true;
+  const parts = dateStr.split('/');
+  if (parts.length !== 3) return true;
+  const day = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const year = parseInt(parts[2], 10);
+
+  if (isNaN(day) || isNaN(month) || isNaN(year)) return true;
+
+  // Event date constructed in EAT (UTC+3)
+  const eventDate = new Date(Date.UTC(year, month, day, 0, 0, 0) - (3 * 60 * 60 * 1000));
+
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Nairobi',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  });
+  const nairobiParts = formatter.formatToParts(now);
+  const nMap = {};
+  nairobiParts.forEach((p) => {
+    nMap[p.type] = p.value;
+  });
+  const todayStart = new Date(Date.UTC(
+      parseInt(nMap.year, 10),
+      parseInt(nMap.month, 10) - 1,
+      parseInt(nMap.day, 10),
+      0, 0, 0,
+  ) - (3 * 60 * 60 * 1000));
+
+  return eventDate.getTime() < todayStart.getTime();
+}
+
+/**
+ * Converts date string (DD/MM/YYYY) and time string (HH:MM or equivalent) into EAT timestamps.
+ * @param {string} dateStr
+ * @param {string} timeStr
+ * @return {{ startDate: number, expirationDate: number }}
+ */
+function parseDateTime(dateStr, timeStr) {
+  if (!dateStr) {
+    throw new Error('Date string is required.');
+  }
+  const parts = dateStr.split('/');
+  if (parts.length !== 3) {
+    throw new Error(`Invalid date format: ${dateStr}`);
+  }
+  const day = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const year = parseInt(parts[2], 10);
+
+  let hour = 18;
+  let minute = 0;
+
+  if (timeStr) {
+    const timeMatch = timeStr.match(/(\d+):(\d+)\s*(pm|am)?/i);
+    if (timeMatch) {
+      hour = parseInt(timeMatch[1], 10);
+      minute = parseInt(timeMatch[2], 10);
+      const ampm = timeMatch[3];
+      if (ampm) {
+        if (ampm.toLowerCase() === 'pm' && hour < 12) hour += 12;
+        if (ampm.toLowerCase() === 'am' && hour === 12) hour = 0;
+      }
+    }
+  }
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const isoString = `${year}-${pad(month + 1)}-${pad(day)}T${pad(hour)}:${pad(minute)}:00+03:00`;
+  const startDate = new Date(isoString).getTime();
+  const expirationDate = startDate + (6 * 60 * 60 * 1000); // 6 hours duration fallback
+
+  return { startDate, expirationDate };
+}
+
+/**
+ * Researches events using Claude Sonnet with web search, checks duplicates, saves.
+ * @param {string|null} apiKeyInput
+ * @return {Promise<{ success: boolean, count: number }>}
+ */
+async function curateNairobiEvents(apiKeyInput = null) {
+  let apiKey = apiKeyInput;
+  if (!apiKey) {
+    const settingsSnap = await db.collection('settings').doc('simulation').get();
+    if (settingsSnap.exists) {
+      apiKey = settingsSnap.data().anthropicApiKey;
+    }
+  }
+
+  if (!apiKey) {
+    throw new Error('Anthropic API key is not configured in settings/simulation.');
+  }
+
+  const now = new Date();
+  const options = { timeZone: 'Africa/Nairobi' };
+  const currentMonth = new Intl.DateTimeFormat('en-GB', { ...options, month: 'long' }).format(now);
+  const currentYear = new Intl.DateTimeFormat('en-GB', { ...options, year: 'numeric' }).format(now);
+  const currentDate = new Intl.DateTimeFormat('en-GB', { ...options, day: 'numeric', month: 'long', year: 'numeric' }).format(now);
+
+  const prompt = `Today is ${currentDate}. You are an event research assistant for Eventas, a Nairobi nightlife and events app. Search the web thoroughly for upcoming events happening in Nairobi, Kenya this month (${currentMonth} ${currentYear}). Search for: club nights, concerts, live music, art exhibitions, food festivals, pop-up markets, comedy nights, rooftop events, and outdoor festivals. Rules: only include events that have not happened yet as of today's date — strictly no past events. Only include events with a confirmed date, venue, and location in Nairobi. Ignore vague or unconfirmed events. For each event return a JSON object with these exact fields: name, venue, date (DD/MM/YYYY), time, category (one of: Nightlife / Concert / Art / Food & Market / Comedy / Festival / Other), description (2 sentences max, written in a fun engaging tone for a young Nairobi audience), ticketLink (URL or null if not found), sourceLink (where you found this). Return ONLY a valid JSON array of event objects, no markdown, no explanation, no preamble.`;
+
+  console.log(`[Curator] Starting Claude Curator run for ${currentMonth} ${currentYear}.`);
+  const rawResponse = await callClaudeSonnetWithSearch(apiKey, prompt);
+
+  const jsonArray = extractJSONArray(rawResponse);
+  if (!jsonArray || !Array.isArray(jsonArray)) {
+    throw new Error(`Failed to parse valid JSON array from Claude response: ${rawResponse}`);
+  }
+
+  console.log(`[Curator] Claude returned ${jsonArray.length} raw events.`);
+
+  let newEventsCount = 0;
+  for (const event of jsonArray) {
+    if (!event.date || isPastEvent(event.date)) {
+      console.log(`[Curator] Discarding past or invalid event: ${event.name} (${event.date})`);
+      continue;
+    }
+
+    // Duplicate Check: name + date + venue in pendingEvents
+    const pendingSnap = await db.collection('pendingEvents')
+      .where('name', '==', event.name || '')
+      .where('date', '==', event.date || '')
+      .where('venue', '==', event.venue || '')
+      .get();
+
+    if (!pendingSnap.empty) {
+      console.log(`[Curator] Duplicate event in pendingEvents: ${event.name}`);
+      continue;
+    }
+
+    // Duplicate Check in live venues
+    let isLiveDuplicate = false;
+    try {
+      const { startDate } = parseDateTime(event.date, event.time || '18:00');
+      const liveSnap = await db.collection('venues')
+        .where('type', '==', 'Event')
+        .where('name', '==', event.name || '')
+        .where('startDate', '==', startDate)
+        .get();
+
+      if (!liveSnap.empty) {
+        console.log(`[Curator] Duplicate event in live venues: ${event.name}`);
+        isLiveDuplicate = true;
+      }
+    } catch (e) {
+      console.warn(`[Curator] Error parsing event date for duplicate check:`, e.message);
+    }
+
+    if (isLiveDuplicate) continue;
+
+    await db.collection('pendingEvents').add({
+      name: event.name || '',
+      venue: event.venue || '',
+      date: event.date || '',
+      time: event.time || '',
+      category: event.category || 'Other',
+      description: event.description || '',
+      ticketLink: event.ticketLink || null,
+      sourceLink: event.sourceLink || null,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      curatedBy: 'claude',
+    });
+
+    newEventsCount++;
+  }
+
+  console.log(`[Curator] Curator run finished. Added ${newEventsCount} new events.`);
+
+  if (newEventsCount > 0) {
+    try {
+      const usersSnap = await db.collection('users').where('isAdmin', '==', true).get();
+      const adminTokens = [];
+      usersSnap.forEach((docSnap) => {
+        const uData = docSnap.data();
+        if (uData.expoPushToken) {
+          adminTokens.push({ token: uData.expoPushToken, userId: docSnap.id });
+        }
+      });
+
+      for (const adminUser of adminTokens) {
+        await sendPushNotification(
+            adminUser.token,
+            'Event Curator',
+            `Claude found ${newEventsCount} new events for ${currentMonth} — review them in the dashboard.`,
+            { type: 'admin_curator' },
+        );
+      }
+    } catch (err) {
+      console.warn(`[Curator] Failed to send admin push notification (non-fatal):`, err.message);
+    }
+  }
+
+  return { success: true, count: newEventsCount };
+}
+
+exports.curateEventsWithClaudeScheduled = functions.pubsub
+  .schedule('0 9 1 * *')
+  .timeZone('Africa/Nairobi')
+  .onRun(async (context) => {
+    try {
+      await curateNairobiEvents();
+    } catch (err) {
+      console.error('[Curator] Scheduled curate failed:', err);
+    }
+    return null;
+  });
+
+exports.curateEventsWithClaudeCallable = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
+  }
+
+  const callerSnap = await db.collection('users').doc(context.auth.uid).get();
+  if (!callerSnap.exists || callerSnap.data().isAdmin !== true) {
+    throw new functions.https.HttpsError('permission-denied', 'Only administrators can run the event curator.');
+  }
+
+  try {
+    const result = await curateNairobiEvents();
+    return result;
+  } catch (err) {
+    throw new functions.https.HttpsError('internal', err.message);
+  }
+});
+
+exports.runEventCleanup = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
+  }
+
+  const callerSnap = await db.collection('users').doc(context.auth.uid).get();
+  if (!callerSnap.exists || callerSnap.data().isAdmin !== true) {
+    throw new functions.https.HttpsError('permission-denied', 'Only administrators can run the event cleanup job.');
+  }
+
+  let apiKey = null;
+  const settingsSnap = await db.collection('settings').doc('simulation').get();
+  if (settingsSnap.exists) {
+    apiKey = settingsSnap.data().anthropicApiKey;
+  }
+
+  if (!apiKey) {
+    throw new functions.https.HttpsError('failed-precondition', 'Anthropic API key is not configured in settings/simulation.');
+  }
+
+  const liveEventsSnap = await db.collection('venues')
+    .where('type', '==', 'Event')
+    .get();
+
+  const existingEvents = [];
+  liveEventsSnap.forEach((docSnap) => {
+    const vData = docSnap.data();
+    let EATDateStr = '';
+    let EATTimeStr = '';
+    if (vData.startDate) {
+      try {
+        const d = new Date(vData.startDate);
+        const options = { timeZone: 'Africa/Nairobi' };
+        const dayStr = new Intl.DateTimeFormat('en-GB', { ...options, day: '2-digit' }).format(d);
+        const monthStr = new Intl.DateTimeFormat('en-GB', { ...options, month: '2-digit' }).format(d);
+        const yearStr = new Intl.DateTimeFormat('en-GB', { ...options, year: 'numeric' }).format(d);
+        EATDateStr = `${dayStr}/${monthStr}/${yearStr}`;
+
+        const hourStr = new Intl.DateTimeFormat('en-GB', { ...options, hour: '2-digit', hour12: false }).format(d);
+        const minStr = new Intl.DateTimeFormat('en-GB', { ...options, minute: '2-digit' }).format(d);
+        EATTimeStr = `${hourStr}:${minStr}`;
+      } catch (e) {
+        console.warn(`[Cleanup] Date conversion error for ${docSnap.id}:`, e.message);
+      }
+    }
+
+    existingEvents.push({
+      id: docSnap.id,
+      name: vData.name || '',
+      description: vData.description || '',
+      venue: vData.address || '',
+      date: EATDateStr,
+      time: EATTimeStr,
+      category: vData.category || 'Other',
+      ticketLink: vData.ticketLink || null,
+      sourceLink: vData.sourceLink || null,
+    });
+  });
+
+  if (existingEvents.length === 0) {
+    return { success: true, count: 0, message: 'No live events found to clean up.' };
+  }
+
+  const now = new Date();
+  const options = { timeZone: 'Africa/Nairobi' };
+  const currentDate = new Intl.DateTimeFormat('en-GB', { ...options, day: 'numeric', month: 'long', year: 'numeric' }).format(now);
+
+  const existingEventsJSON = JSON.stringify(existingEvents, null, 2);
+
+  const prompt = `Today is ${currentDate}. Below is a list of events currently live on Eventas, a Nairobi nightlife app. Your job is to clean this list. For each event: mark it as REMOVE if the date has already passed as of today, mark it as REMOVE if the event details are vague, incomplete, or unverifiable, mark it as KEEP if it is a valid upcoming event with a confirmed date and venue, mark it as NEEDS EDIT if the event is upcoming but has incomplete or poorly written details — and provide a corrected version. Return ONLY a valid JSON array where each object has: originalId (the Firestore document ID), action (KEEP / REMOVE / NEEDS EDIT), and updatedEvent (null if KEEP or REMOVE, or the full corrected event object if NEEDS EDIT). Here are the current events: ${existingEventsJSON}`;
+
+  console.log(`[Cleanup] Triggering Claude cleanup with prompt for ${existingEvents.length} events.`);
+  const rawResponse = await callClaudeSonnetWithSearch(apiKey, prompt);
+
+  const jsonArray = extractJSONArray(rawResponse);
+  if (!jsonArray || !Array.isArray(jsonArray)) {
+    throw new functions.https.HttpsError('internal', `Failed to parse valid JSON array from Claude response: ${rawResponse}`);
+  }
+
+  console.log(`[Cleanup] Claude returned ${jsonArray.length} items.`);
+
+  const existingCleanupsSnap = await db.collection('pendingEvents')
+    .where('curatedBy', '==', 'claude_cleanup')
+    .where('status', '==', 'pending')
+    .get();
+
+  const batch = db.batch();
+  existingCleanupsSnap.forEach((docSnap) => {
+    batch.delete(docSnap.ref);
+  });
+  await batch.commit();
+  console.log(`[Cleanup] Cleared ${existingCleanupsSnap.size} existing pending cleanup docs.`);
+
+  let countAdded = 0;
+  for (const item of jsonArray) {
+    const origEvent = existingEvents.find((e) => e.id === item.originalId);
+    if (!origEvent) continue;
+
+    const displayEvent = item.action === 'NEEDS EDIT' && item.updatedEvent ? item.updatedEvent : origEvent;
+
+    await db.collection('pendingEvents').add({
+      name: displayEvent.name || origEvent.name || '',
+      venue: displayEvent.venue || origEvent.venue || '',
+      date: displayEvent.date || origEvent.date || '',
+      time: displayEvent.time || origEvent.time || '',
+      category: displayEvent.category || origEvent.category || 'Other',
+      description: displayEvent.description || origEvent.description || '',
+      ticketLink: displayEvent.ticketLink || origEvent.ticketLink || null,
+      sourceLink: displayEvent.sourceLink || origEvent.sourceLink || null,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      curatedBy: 'claude_cleanup',
+      originalId: item.originalId,
+      action: item.action || 'KEEP',
+      updatedEvent: item.updatedEvent || null,
+    });
+    countAdded++;
+  }
+
+  console.log(`[Cleanup] Saved ${countAdded} cleanup recommendations.`);
+  return { success: true, count: countAdded };
+});
+
+

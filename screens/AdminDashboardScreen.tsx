@@ -204,7 +204,7 @@ export const AdminDashboardScreen = () => {
               <Sparkles color="#00FFCC" size={28} />
             </View>
             <Text style={styles.cardTitle}>AI Event Curator</Text>
-            <Text style={styles.cardDesc}>Use Gemini to search the web for upcoming public events in Nairobi and seed them into the app automatically.</Text>
+            <Text style={styles.cardDesc}>Use Claude to search the web for upcoming public events in Nairobi and seed them into the app automatically.</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

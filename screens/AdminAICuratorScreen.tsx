@@ -22,27 +22,38 @@ import {
   Calendar,
   MapPin,
   Save,
-  Key,
   Check,
   ExternalLink,
   AlertTriangle,
-  Info
+  Info,
+  X,
+  Link
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { firestore } from '../services/firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { firestore, functions } from '../services/firebase';
+import { doc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import Toast from 'react-native-toast-message';
 
-interface DraftEvent {
+interface PendingEvent {
+  id: string;
   name: string;
+  venue: string;
+  date: string;
+  time: string;
+  category: string;
   description: string;
-  address: string;
-  latitude: number;
-  longitude: number;
-  startDate: string; // ISO string
-  expirationDate: string; // ISO string
-  category: 'Music' | 'Food' | 'Art' | 'Sports' | 'Conference' | 'General';
+  ticketLink: string | null;
+  sourceLink: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: any;
+  curatedBy: 'claude' | 'claude_cleanup';
+  originalId?: string;
+  action?: 'KEEP' | 'REMOVE' | 'NEEDS EDIT';
+  updatedEvent?: any;
+  address?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 const CATEGORY_IMAGES: Record<string, string> = {
@@ -54,267 +65,379 @@ const CATEGORY_IMAGES: Record<string, string> = {
   General: 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80&w=600',
 };
 
+const CATEGORIES = ['Nightlife', 'Concert', 'Art', 'Food & Market', 'Comedy', 'Festival', 'Other'];
+
 export const AdminAICuratorScreen = () => {
   const navigation = useNavigation();
-  const [apiKey, setApiKey] = useState('');
-  const [isKeySaved, setIsKeySaved] = useState(false);
+  const [activeTab, setActiveTab] = useState<'curated' | 'cleanup'>('curated');
+  const [pendingEvents, setPendingEvents] = useState<PendingEvent[]>([]);
   
-  const [prompt, setPrompt] = useState('Research popular public events scheduled to happen in Nairobi in July 2026.');
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState('');
-  const [draftEvents, setDraftEvents] = useState<DraftEvent[]>([]);
   
-  // Editing Event Modal State
+  // Edit Event Modal State
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
-  const [editIndex, setEditIndex] = useState<number | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
+  const [editVenue, setEditVenue] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
+  const [editCategory, setEditCategory] = useState('Other');
+  const [editTicketLink, setEditTicketLink] = useState('');
+  const [editSourceLink, setEditSourceLink] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editLat, setEditLat] = useState('');
   const [editLng, setEditLng] = useState('');
-  const [editStart, setEditStart] = useState('');
-  const [editEnd, setEditEnd] = useState('');
-  const [editCategory, setEditCategory] = useState<'Music' | 'Food' | 'Art' | 'Sports' | 'Conference' | 'General'>('General');
 
+  // Subscribe to pendingEvents where status == "pending"
   useEffect(() => {
-    const loadSavedKey = async () => {
-      try {
-        const savedKey = await AsyncStorage.getItem('admin_gemini_api_key');
-        if (savedKey) {
-          setApiKey(savedKey);
-          setIsKeySaved(true);
-        }
-      } catch (err) {
-        console.warn('Failed to load saved Gemini API key:', err);
-      }
-    };
-    loadSavedKey();
+    const q = query(
+      collection(firestore, 'pendingEvents'),
+      where('status', '==', 'pending')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: PendingEvent[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          name: data.name || '',
+          venue: data.venue || '',
+          date: data.date || '',
+          time: data.time || '',
+          category: data.category || 'Other',
+          description: data.description || '',
+          ticketLink: data.ticketLink || null,
+          sourceLink: data.sourceLink || null,
+          status: data.status || 'pending',
+          createdAt: data.createdAt,
+          curatedBy: data.curatedBy || 'claude',
+          originalId: data.originalId,
+          action: data.action,
+          updatedEvent: data.updatedEvent,
+          address: data.address,
+          latitude: data.latitude,
+          longitude: data.longitude
+        });
+      });
+      setPendingEvents(list);
+    }, (err) => {
+      console.warn('Failed to listen to pendingEvents:', err);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const handleSaveKey = async () => {
-    if (!apiKey.trim()) {
-      Toast.show({ type: 'error', text1: 'Empty Key', text2: 'Please enter a valid API key.' });
-      return;
-    }
-    try {
-      await AsyncStorage.setItem('admin_gemini_api_key', apiKey.trim());
-      setIsKeySaved(true);
-      Toast.show({ type: 'success', text1: 'Key Saved', text2: 'Gemini API key has been stored securely.' });
-    } catch (err) {
-      console.error(err);
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to save API key.' });
-    }
-  };
-
-  const handleClearKey = async () => {
-    try {
-      await AsyncStorage.removeItem('admin_gemini_api_key');
-      setApiKey('');
-      setIsKeySaved(false);
-      Toast.show({ type: 'success', text1: 'Key Removed', text2: 'Gemini API key was cleared.' });
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleResearchEvents = async () => {
-    if (!apiKey) {
-      Toast.show({ type: 'error', text1: 'Missing API Key', text2: 'Please configure your Gemini API key first.' });
-      return;
-    }
-
+  const handleRunCurator = async () => {
     setIsLoading(true);
-    setLoadingStatus('Initializing web search tools...');
-    setDraftEvents([]);
-
+    setLoadingStatus('Running Claude Curator (web searching)...');
     try {
-      // Step 1: Query Gemini 2.5 Flash with search tools
-      setLoadingStatus('Searching Google for Nairobi events...');
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  {
-                    text: `Search the web for upcoming public events scheduled to happen in Nairobi, Kenya according to this instruction: "${prompt}". 
-For each event found, you must extract/provide:
-1. Event Name
-2. Clear description of the event (2-3 sentences)
-3. Physical address or venue name (e.g. Sarit Expo Centre, Ngong Racecourse, Alchemist Bar)
-4. Precise latitude and longitude coordinates (very important to get reasonable coordinates within Nairobi)
-5. Start date & time as an ISO-8601 string (e.g. '2026-07-26T11:00:00+03:00')
-6. End/Expiration date & time as an ISO-8601 string (e.g. '2026-07-26T22:00:00+03:00')
-7. A category classification for visual decoration: 'Music', 'Food', 'Art', 'Sports', 'Conference', or 'General'.
-
-Return the data STRICTLY as a JSON array under the key "events" using the schema:
-{
-  "events": [
-    {
-      "name": "...",
-      "description": "...",
-      "address": "...",
-      "latitude": -1.2882,
-      "longitude": 36.8231,
-      "startDate": "2026-07-26T11:00:00+03:00",
-      "expirationDate": "2026-07-26T22:00:00+03:00",
-      "category": "Music"
-    }
-  ]
-}
-No other text, explanations, markdown formatting, or HTML should be returned. Just the raw JSON.`,
-                  },
-                ],
-              },
-            ],
-            // Request structured JSON response
-            generationConfig: {
-              responseMimeType: 'application/json',
-            },
-            // Enable search grounding to get real-time info from the web
-            tools: [{ googleSearch: {} }],
-          }),
-        }
-      );
-
-      setLoadingStatus('Processing and parsing response...');
-      const resData = await response.json();
-
-      if (response.status !== 200) {
-        throw new Error(resData?.error?.message || `API error (${response.status})`);
-      }
-
-      const rawText = resData?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) {
-        throw new Error('No content returned from Gemini.');
-      }
-
-      const parsed = JSON.parse(rawText.trim());
-      const events: DraftEvent[] = parsed.events || [];
-
-      if (events.length === 0) {
-        Toast.show({ type: 'info', text1: 'No Events Found', text2: 'Gemini did not return any events for this query.' });
+      const curateEvents = httpsCallable(functions, 'curateEventsWithClaudeCallable');
+      const result = await curateEvents();
+      const data: any = result.data;
+      if (data && data.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Curator Finished',
+          text2: `Claude found and added ${data.count} new events!`,
+        });
       } else {
-        setDraftEvents(events);
-        Toast.show({ type: 'success', text1: 'Research Complete', text2: `Found ${events.length} draft events.` });
+        Toast.show({
+          type: 'info',
+          text1: 'No New Events',
+          text2: 'No new events were discovered.',
+        });
       }
     } catch (err: any) {
       console.error(err);
-      Alert.alert(
-        'Research Failed',
-        err.message || 'An unknown error occurred while calling the Gemini API.'
-      );
+      Alert.alert('Curator Failed', err.message || 'An error occurred during event curation.');
     } finally {
       setIsLoading(false);
       setLoadingStatus('');
     }
   };
 
-  const handleDeleteDraft = (index: number) => {
-    setDraftEvents((prev) => prev.filter((_, i) => i !== index));
+  const handleRunCleanup = async () => {
+    setIsLoading(true);
+    setLoadingStatus('Running Live Events Cleanup...');
+    try {
+      const runCleanup = httpsCallable(functions, 'runEventCleanup');
+      const result = await runCleanup();
+      const data: any = result.data;
+      if (data && data.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Cleanup Finished',
+          text2: `Claude analyzed live events and generated ${data.count} recommendations!`,
+        });
+        setActiveTab('cleanup');
+      } else {
+        Toast.show({
+          type: 'info',
+          text1: 'No Live Events',
+          text2: 'No live events found to clean up.',
+        });
+      }
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert('Cleanup Failed', err.message || 'An error occurred during cleanup processing.');
+    } finally {
+      setIsLoading(false);
+      setLoadingStatus('');
+    }
   };
 
-  const handleOpenEditModal = (index: number) => {
-    const item = draftEvents[index];
-    setEditIndex(index);
+  const parseDateTime = (dateStr: string, timeStr: string) => {
+    if (!dateStr) return { startDate: Date.now(), expirationDate: Date.now() + 6 * 3600000 };
+    const parts = dateStr.split('/');
+    if (parts.length !== 3) return { startDate: Date.now(), expirationDate: Date.now() + 6 * 3600000 };
+    const day = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const year = parseInt(parts[2], 10);
+
+    let hour = 18;
+    let minute = 0;
+
+    if (timeStr) {
+      const timeMatch = timeStr.match(/(\d+):(\d+)\s*(pm|am)?/i);
+      if (timeMatch) {
+        hour = parseInt(timeMatch[1], 10);
+        minute = parseInt(timeMatch[2], 10);
+        const ampm = timeMatch[3];
+        if (ampm) {
+          if (ampm.toLowerCase() === 'pm' && hour < 12) hour += 12;
+          if (ampm.toLowerCase() === 'am' && hour === 12) hour = 0;
+        }
+      }
+    }
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const isoString = `${year}-${pad(month + 1)}-${pad(day)}T${pad(hour)}:${pad(minute)}:00+03:00`;
+    const startDate = new Date(isoString).getTime();
+    const expirationDate = startDate + (6 * 60 * 60 * 1000); // 6 hours default
+
+    return { startDate, expirationDate };
+  };
+
+  const handleApproveCurated = async (event: PendingEvent) => {
+    setIsLoading(true);
+    setLoadingStatus('Approving event...');
+    try {
+      const venuesRef = collection(firestore, 'venues');
+      const q = query(venuesRef);
+      const snap = await getDocs(q);
+      let matchedVenue: any = null;
+      snap.forEach((docSnap) => {
+        const v = docSnap.data();
+        if (v.name && v.name.toLowerCase() === event.venue.toLowerCase()) {
+          matchedVenue = v;
+        }
+      });
+
+      const { startDate, expirationDate } = parseDateTime(event.date, event.time);
+      const venueId = `event_ai_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const docRef = doc(firestore, 'venues', venueId);
+
+      const address = event.address || (matchedVenue ? matchedVenue.address : event.venue);
+      const latitude = event.latitude !== undefined && event.latitude !== null ? event.latitude : (matchedVenue ? matchedVenue.latitude : -1.286389);
+      const longitude = event.longitude !== undefined && event.longitude !== null ? event.longitude : (matchedVenue ? matchedVenue.longitude : 36.817223);
+
+      const categoryMapping: Record<string, string> = {
+        Nightlife: 'Music',
+        Concert: 'Music',
+        Art: 'Art',
+        'Food & Market': 'Food',
+        Comedy: 'General',
+        Festival: 'General',
+        Other: 'General',
+      };
+      const mappedCategory = categoryMapping[event.category] || 'General';
+      const imageUrl = CATEGORY_IMAGES[mappedCategory] || CATEGORY_IMAGES.General;
+
+      const venueData = {
+        id: venueId,
+        name: event.name,
+        description: event.description,
+        address,
+        latitude,
+        longitude,
+        type: 'Event',
+        startDate,
+        expirationDate,
+        imageUrl,
+        simulatedUsersCount: 30,
+        ticketLink: event.ticketLink || null,
+        sourceLink: event.sourceLink || null
+      };
+
+      await setDoc(docRef, venueData);
+      await updateDoc(doc(firestore, 'pendingEvents', event.id), { status: 'approved' });
+
+      Toast.show({ type: 'success', text1: 'Event Approved', text2: `"${event.name}" is now live!` });
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert('Approve Failed', err.message || 'Could not approve and publish event.');
+    } finally {
+      setIsLoading(false);
+      setLoadingStatus('');
+    }
+  };
+
+  const handleRejectCurated = async (event: PendingEvent) => {
+    setIsLoading(true);
+    setLoadingStatus('Rejecting event...');
+    try {
+      await updateDoc(doc(firestore, 'pendingEvents', event.id), { status: 'rejected' });
+      Toast.show({ type: 'info', text1: 'Event Rejected', text2: `"${event.name}" has been removed.` });
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert('Operation Failed', err.message || 'Could not reject event.');
+    } finally {
+      setIsLoading(false);
+      setLoadingStatus('');
+    }
+  };
+
+  const handleConfirmCleanup = async (event: PendingEvent) => {
+    setIsLoading(true);
+    setLoadingStatus('Applying cleanup action...');
+    try {
+      if (event.action === 'REMOVE') {
+        if (event.originalId) {
+          await deleteDoc(doc(firestore, 'venues', event.originalId));
+          Toast.show({ type: 'success', text1: 'Event Removed', text2: 'Event was deleted from live database.' });
+        }
+      } else if (event.action === 'NEEDS EDIT') {
+        if (event.originalId) {
+          const { startDate, expirationDate } = parseDateTime(event.date, event.time);
+          const categoryMapping: Record<string, string> = {
+            Nightlife: 'Music',
+            Concert: 'Music',
+            Art: 'Art',
+            'Food & Market': 'Food',
+            Comedy: 'General',
+            Festival: 'General',
+            Other: 'General',
+          };
+          const mappedCategory = categoryMapping[event.category] || 'General';
+          const imageUrl = CATEGORY_IMAGES[mappedCategory] || CATEGORY_IMAGES.General;
+
+          const updateData: any = {
+            name: event.name,
+            description: event.description,
+            address: event.venue,
+            startDate,
+            expirationDate,
+            imageUrl,
+            ticketLink: event.ticketLink || null,
+            sourceLink: event.sourceLink || null
+          };
+
+          if (event.latitude !== undefined && event.latitude !== null) updateData.latitude = event.latitude;
+          if (event.longitude !== undefined && event.longitude !== null) updateData.longitude = event.longitude;
+
+          await updateDoc(doc(firestore, 'venues', event.originalId), updateData);
+          Toast.show({ type: 'success', text1: 'Event Corrected', text2: 'Live event updated successfully.' });
+        }
+      } else {
+        Toast.show({ type: 'success', text1: 'Event Kept', text2: 'Confirmed as valid upcoming event.' });
+      }
+
+      await updateDoc(doc(firestore, 'pendingEvents', event.id), { status: 'approved' });
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert('Action Failed', err.message || 'Could not apply cleanup recommendation.');
+    } finally {
+      setIsLoading(false);
+      setLoadingStatus('');
+    }
+  };
+
+  const handleRejectCleanup = async (event: PendingEvent) => {
+    setIsLoading(true);
+    setLoadingStatus('Overriding recommendation...');
+    try {
+      await updateDoc(doc(firestore, 'pendingEvents', event.id), { status: 'rejected' });
+      Toast.show({ type: 'info', text1: 'Cleanup Overridden', text2: 'Claude decision bypassed.' });
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert('Override Failed', err.message || 'Could not override recommendation.');
+    } finally {
+      setIsLoading(false);
+      setLoadingStatus('');
+    }
+  };
+
+  const handleOpenEditModal = (item: PendingEvent) => {
+    setEditId(item.id);
     setEditName(item.name);
     setEditDesc(item.description);
-    setEditAddress(item.address);
-    setEditLat(String(item.latitude));
-    setEditLng(String(item.longitude));
-    setEditStart(item.startDate);
-    setEditEnd(item.expirationDate);
+    setEditVenue(item.venue);
+    setEditDate(item.date);
+    setEditTime(item.time);
     setEditCategory(item.category);
+    setEditTicketLink(item.ticketLink || '');
+    setEditSourceLink(item.sourceLink || '');
+    setEditAddress(item.address || '');
+    setEditLat(item.latitude !== undefined && item.latitude !== null ? String(item.latitude) : '');
+    setEditLng(item.longitude !== undefined && item.longitude !== null ? String(item.longitude) : '');
     setIsEditModalVisible(true);
   };
 
-  const handleSaveEdit = () => {
-    if (editIndex === null) return;
-    const latNum = parseFloat(editLat);
-    const lngNum = parseFloat(editLng);
+  const handleSaveEdit = async () => {
+    if (!editId) return;
+    const latNum = editLat ? parseFloat(editLat) : null;
+    const lngNum = editLng ? parseFloat(editLng) : null;
 
-    if (isNaN(latNum) || isNaN(lngNum)) {
-      Toast.show({ type: 'error', text1: 'Invalid Coordinates', text2: 'Latitude and longitude must be valid numbers.' });
-      return;
+    setIsLoading(true);
+    setLoadingStatus('Saving event details...');
+    try {
+      const updateData: any = {
+        name: editName,
+        description: editDesc,
+        venue: editVenue,
+        date: editDate,
+        time: editTime,
+        category: editCategory,
+        ticketLink: editTicketLink || null,
+        sourceLink: editSourceLink || null,
+        address: editAddress || null,
+        latitude: latNum !== null && !isNaN(latNum) ? latNum : null,
+        longitude: lngNum !== null && !isNaN(lngNum) ? lngNum : null,
+      };
+
+      const item = pendingEvents.find(e => e.id === editId);
+      if (item && item.curatedBy === 'claude_cleanup' && item.action === 'NEEDS EDIT') {
+        updateData.updatedEvent = {
+          name: editName,
+          description: editDesc,
+          venue: editVenue,
+          date: editDate,
+          time: editTime,
+          category: editCategory,
+          ticketLink: editTicketLink || null,
+          sourceLink: editSourceLink || null
+        };
+      }
+
+      await updateDoc(doc(firestore, 'pendingEvents', editId), updateData);
+      setIsEditModalVisible(false);
+      setEditId(null);
+      Toast.show({ type: 'success', text1: 'Saved', text2: 'Modified details saved in database.' });
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert('Save Failed', err.message || 'Could not update event details.');
+    } finally {
+      setIsLoading(false);
+      setLoadingStatus('');
     }
-
-    const updatedList = [...draftEvents];
-    updatedList[editIndex] = {
-      name: editName,
-      description: editDesc,
-      address: editAddress,
-      latitude: latNum,
-      longitude: lngNum,
-      startDate: editStart,
-      expirationDate: editEnd,
-      category: editCategory
-    };
-
-    setDraftEvents(updatedList);
-    setIsEditModalVisible(false);
-    setEditIndex(null);
-    Toast.show({ type: 'success', text1: 'Event Updated', text2: 'Draft modifications saved.' });
   };
 
-  const handleBulkSave = async () => {
-    if (draftEvents.length === 0) return;
-
-    Alert.alert(
-      'Confirm Seeding',
-      `Are you sure you want to write these ${draftEvents.length} events into the database?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Save to DB',
-          onPress: async () => {
-            setIsLoading(true);
-            setLoadingStatus('Saving events to database...');
-            let successCount = 0;
-            try {
-              for (const event of draftEvents) {
-                const venueId = `event_ai_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-                const docRef = doc(firestore, 'venues', venueId);
-                
-                const venueData = {
-                  id: venueId,
-                  name: event.name,
-                  description: event.description,
-                  address: event.address,
-                  latitude: event.latitude,
-                  longitude: event.longitude,
-                  type: 'Event',
-                  startDate: new Date(event.startDate).getTime(),
-                  expirationDate: new Date(event.expirationDate).getTime(),
-                  imageUrl: CATEGORY_IMAGES[event.category] || CATEGORY_IMAGES['General'],
-                  simulatedUsersCount: 30 // Seed with simulated users count
-                };
-
-                await setDoc(docRef, venueData);
-                successCount++;
-              }
-              Toast.show({
-                type: 'success',
-                text1: 'Successfully Seeded!',
-                text2: `${successCount} new events added to Firestore.`,
-              });
-              setDraftEvents([]);
-            } catch (err: any) {
-              console.error(err);
-              Alert.alert('Database Save Failed', err.message || 'Could not write records to Firestore.');
-            } finally {
-              setIsLoading(false);
-              setLoadingStatus('');
-            }
-          }
-        }
-      ]
-    );
-  };
+  const filteredEvents = pendingEvents.filter(e => 
+    activeTab === 'curated' ? e.curatedBy === 'claude' : e.curatedBy === 'claude_cleanup'
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -325,145 +448,165 @@ No other text, explanations, markdown formatting, or HTML should be returned. Ju
         </TouchableOpacity>
         <View style={styles.headerTitleRow}>
           <Sparkles color="#00FFCC" size={18} />
-          <Text style={styles.headerTitle}>AI Event Curator</Text>
+          <Text style={styles.headerTitle}>Claude Event Curator</Text>
         </View>
         <View style={{ width: 24 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Info Banner */}
-        <View style={styles.infoBanner}>
-          <Info color="#00FFCC" size={20} />
-          <Text style={styles.infoText}>
-            Use Gemini with Google Search to discover public events around Nairobi. Set up your Google AI Studio API key to fetch real-time search results.
-          </Text>
-        </View>
-
-        {/* API Key Setup */}
+        {/* Core Actions Card */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <Key color="#00FFCC" size={20} />
-            <Text style={styles.cardTitle}>Google AI Studio Key</Text>
+            <Sparkles color="#00FFCC" size={20} />
+            <Text style={styles.cardTitle}>Curator Controls</Text>
           </View>
-          
           <Text style={styles.cardDesc}>
-            {isKeySaved 
-              ? 'Your API key is configured. You can update or clear it below.'
-              : 'A personal API key from Google AI Studio is required. You can get one for free.'}
+            Manage Nairobi nightlife event research and live database date cleaning via Claude Sonnet.
           </Text>
 
-          <View style={styles.keyInputRow}>
-            <TextInput
-              style={[styles.input, { flex: 1, marginBottom: 0 }]}
-              placeholder="Paste your Gemini API Key (starts with AIzaSy)..."
-              placeholderTextColor="#666"
-              secureTextEntry={isKeySaved}
-              value={apiKey}
-              onChangeText={setApiKey}
-              editable={!isKeySaved}
-            />
-            {isKeySaved ? (
-              <TouchableOpacity style={styles.clearKeyBtn} onPress={handleClearKey}>
-                <Text style={styles.clearKeyBtnText}>Clear</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.saveKeyBtn} onPress={handleSaveKey}>
-                <Check color="#000" size={16} />
-                <Text style={styles.saveKeyBtnText}>Save</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {!isKeySaved && (
-            <TouchableOpacity 
-              style={styles.linkRow} 
-              onPress={() => Linking.openURL('https://aistudio.google.com/')}
-            >
-              <Text style={styles.linkText}>Get a free API key from Google AI Studio</Text>
-              <ExternalLink color="#00FFCC" size={12} />
+          <View style={styles.actionBtnRow}>
+            <TouchableOpacity style={[styles.actionBtn, { flex: 1 }]} onPress={handleRunCurator} disabled={isLoading}>
+              <Sparkles color="#000" size={16} />
+              <Text style={styles.actionBtnText}>Run Curator</Text>
             </TouchableOpacity>
-          )}
+
+            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnSecondary, { flex: 1 }]} onPress={handleRunCleanup} disabled={isLoading}>
+              <AlertTriangle color="#000" size={16} />
+              <Text style={styles.actionBtnText}>Run Live Cleanup</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {/* Research Prompt Area */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Sparkles color="#FF00CC" size={20} />
-            <Text style={styles.cardTitle}>Research Events Prompt</Text>
-          </View>
-          <Text style={styles.cardDesc}>
-            Specify what kind of events to search for (e.g. month, year, or categories).
-          </Text>
-
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            multiline
-            numberOfLines={3}
-            placeholder="Type prompt here..."
-            placeholderTextColor="#666"
-            value={prompt}
-            onChangeText={setPrompt}
-          />
-
-          <TouchableOpacity 
-            style={[styles.actionBtn, !isKeySaved && styles.actionBtnDisabled]} 
-            onPress={handleResearchEvents}
-            disabled={isLoading || !isKeySaved}
+        {/* Tab Switcher */}
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'curated' && styles.tabButtonActive]}
+            onPress={() => setActiveTab('curated')}
           >
-            <Sparkles color="#000" size={18} />
-            <Text style={styles.actionBtnText}>Research Nairobi Events</Text>
+            <Sparkles color={activeTab === 'curated' ? '#00FFCC' : '#888'} size={16} />
+            <Text style={[styles.tabButtonText, activeTab === 'curated' && styles.tabButtonTextActive]}>
+              Curations ({pendingEvents.filter(e => e.curatedBy === 'claude').length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'cleanup' && styles.tabButtonActive]}
+            onPress={() => setActiveTab('cleanup')}
+          >
+            <AlertTriangle color={activeTab === 'cleanup' ? '#FFD700' : '#888'} size={16} />
+            <Text style={[styles.tabButtonText, activeTab === 'cleanup' && styles.tabButtonTextActive]}>
+              Cleanups ({pendingEvents.filter(e => e.curatedBy === 'claude_cleanup').length})
+            </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Draft Events Feed */}
-        {draftEvents.length > 0 && (
-          <View style={styles.resultsContainer}>
-            <Text style={styles.resultsHeader}>
-              Draft Results ({draftEvents.length} Events)
+        {/* Results Area */}
+        {filteredEvents.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Info color="#555" size={40} />
+            <Text style={styles.emptyText}>
+              {activeTab === 'curated'
+                ? "No pending Claude-curated events found. Tap 'Run Curator' to search upcoming Nairobi nightlife events."
+                : "No pending cleanup tasks found. Tap 'Run Live Cleanup' to scan live events and detect outdated posts."}
             </Text>
-
-            {draftEvents.map((item, index) => {
-              const startStr = new Date(item.startDate).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+          </View>
+        ) : (
+          <View style={styles.resultsContainer}>
+            {filteredEvents.map((item) => {
               return (
-                <View key={index} style={styles.eventCard}>
+                <View key={item.id} style={styles.eventCard}>
+                  {/* Card Header info */}
                   <View style={styles.eventCardHeader}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.eventName}>{item.name}</Text>
-                      <View style={styles.categoryBadge}>
-                        <Text style={styles.categoryText}>{item.category}</Text>
+                      <View style={styles.badgeRow}>
+                        <View style={styles.categoryBadge}>
+                          <Text style={styles.categoryText}>{item.category}</Text>
+                        </View>
+                        {item.curatedBy === 'claude_cleanup' && (
+                          <View style={[
+                            styles.actionBadge,
+                            item.action === 'KEEP' && styles.actionBadgeKeep,
+                            item.action === 'REMOVE' && styles.actionBadgeRemove,
+                            item.action === 'NEEDS EDIT' && styles.actionBadgeEdit,
+                          ]}>
+                            <Text style={[
+                              styles.actionBadgeText,
+                              item.action === 'KEEP' && styles.actionBadgeTextKeep,
+                              item.action === 'REMOVE' && styles.actionBadgeTextRemove,
+                              item.action === 'NEEDS EDIT' && styles.actionBadgeTextEdit,
+                            ]}>
+                              {item.action}
+                            </Text>
+                          </View>
+                        )}
                       </View>
-                    </View>
-                    <View style={styles.eventActions}>
-                      <TouchableOpacity 
-                        style={styles.editBtn} 
-                        onPress={() => handleOpenEditModal(index)}
-                      >
-                        <Edit color="#00FFCC" size={16} />
-                      </TouchableOpacity>
-                      <TouchableOpacity 
-                        style={styles.deleteBtn} 
-                        onPress={() => handleDeleteDraft(index)}
-                      >
-                        <Trash2 color="#FF3366" size={16} />
-                      </TouchableOpacity>
                     </View>
                   </View>
 
+                  {/* Body description */}
                   <Text style={styles.eventDesc}>{item.description}</Text>
 
+                  {/* Metadata fields */}
                   <View style={styles.metaRow}>
                     <MapPin color="#888" size={14} />
-                    <Text style={styles.metaText} numberOfLines={1}>{item.address}</Text>
+                    <Text style={styles.metaText} numberOfLines={1}>{item.venue}</Text>
                   </View>
 
                   <View style={styles.metaRow}>
                     <Calendar color="#888" size={14} />
-                    <Text style={styles.metaText}>{startStr}</Text>
+                    <Text style={styles.metaText}>{item.date} at {item.time || 'TBD'}</Text>
                   </View>
 
-                  <Text style={styles.coordsText}>
-                    Lat: {item.latitude.toFixed(5)} · Lng: {item.longitude.toFixed(5)}
-                  </Text>
+                  {(item.ticketLink || item.sourceLink) && (
+                    <View style={styles.linksRow}>
+                      {item.ticketLink && (
+                        <TouchableOpacity style={styles.linkButton} onPress={() => Linking.openURL(item.ticketLink!)}>
+                          <Link color="#00FFCC" size={12} />
+                          <Text style={styles.linkButtonText}>Ticket Link</Text>
+                        </TouchableOpacity>
+                      )}
+                      {item.sourceLink && (
+                        <TouchableOpacity style={styles.linkButton} onPress={() => Linking.openURL(item.sourceLink!)}>
+                          <ExternalLink color="#00FFCC" size={12} />
+                          <Text style={styles.linkButtonText}>Source</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
+
+                  {/* Action buttons */}
+                  {item.curatedBy === 'claude' ? (
+                    <View style={styles.cardActionsRow}>
+                      <TouchableOpacity style={styles.actionPillApprove} onPress={() => handleApproveCurated(item)}>
+                        <Check color="#000" size={14} />
+                        <Text style={styles.actionPillTextApprove}>Approve</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleOpenEditModal(item)}>
+                        <Edit color="#00FFCC" size={14} />
+                        <Text style={styles.actionPillTextEdit}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.actionPillReject} onPress={() => handleRejectCurated(item)}>
+                        <Trash2 color="#FF3366" size={14} />
+                        <Text style={styles.actionPillTextReject}>Reject</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.cardActionsRow}>
+                      <TouchableOpacity style={styles.actionPillApprove} onPress={() => handleConfirmCleanup(item)}>
+                        <Check color="#000" size={14} />
+                        <Text style={styles.actionPillTextApprove}>Confirm</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.actionPillEdit} onPress={() => handleOpenEditModal(item)}>
+                        <Edit color="#00FFCC" size={14} />
+                        <Text style={styles.actionPillTextEdit}>Edit Details</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.actionPillReject} onPress={() => handleRejectCleanup(item)}>
+                        <X color="#FF3366" size={14} />
+                        <Text style={styles.actionPillTextReject}>Override</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               );
             })}
@@ -471,22 +614,12 @@ No other text, explanations, markdown formatting, or HTML should be returned. Ju
         )}
       </ScrollView>
 
-      {/* Save Button for Drafts */}
-      {draftEvents.length > 0 && (
-        <View style={styles.footerContainer}>
-          <TouchableOpacity style={styles.saveBulkBtn} onPress={handleBulkSave} disabled={isLoading}>
-            <Save color="#000" size={18} />
-            <Text style={styles.saveBulkBtnText}>Approve & Seed {draftEvents.length} Events</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
       {/* Loading Modal overlay */}
       <Modal visible={isLoading} transparent animationType="fade">
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingContent}>
             <ActivityIndicator size="large" color="#00FFCC" />
-            <Text style={styles.loadingTitle}>AI Curator Active</Text>
+            <Text style={styles.loadingTitle}>Claude Curator Active</Text>
             <Text style={styles.loadingSubtitle}>{loadingStatus}</Text>
           </View>
         </View>
@@ -494,13 +627,13 @@ No other text, explanations, markdown formatting, or HTML should be returned. Ju
 
       {/* Edit Event Modal */}
       <Modal visible={isEditModalVisible} transparent animationType="slide">
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.modalOverlay}
         >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Edit Event details</Text>
+              <Text style={styles.modalTitle}>Edit Event Details</Text>
               <TouchableOpacity onPress={() => setIsEditModalVisible(false)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
@@ -514,52 +647,68 @@ No other text, explanations, markdown formatting, or HTML should be returned. Ju
 
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Description</Text>
-                <TextInput 
-                  style={[styles.modalInput, styles.modalTextArea]} 
-                  multiline 
-                  numberOfLines={3} 
-                  value={editDesc} 
-                  onChangeText={setEditDesc} 
+                <TextInput
+                  style={[styles.modalInput, styles.modalTextArea]}
+                  multiline
+                  numberOfLines={3}
+                  value={editDesc}
+                  onChangeText={setEditDesc}
                 />
               </View>
 
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Physical Address</Text>
-                <TextInput style={styles.modalInput} value={editAddress} onChangeText={setEditAddress} />
+                <Text style={styles.label}>Venue / Address Name</Text>
+                <TextInput style={styles.modalInput} value={editVenue} onChangeText={setEditVenue} />
               </View>
 
               <View style={styles.formRow}>
                 <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-                  <Text style={styles.label}>Latitude</Text>
-                  <TextInput style={styles.modalInput} value={editLat} onChangeText={setEditLat} keyboardType="numeric" />
+                  <Text style={styles.label}>Date (DD/MM/YYYY)</Text>
+                  <TextInput style={styles.modalInput} value={editDate} onChangeText={setEditDate} placeholder="e.g. 26/07/2026" placeholderTextColor="#555" />
                 </View>
                 <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
-                  <Text style={styles.label}>Longitude</Text>
-                  <TextInput style={styles.modalInput} value={editLng} onChangeText={setEditLng} keyboardType="numeric" />
+                  <Text style={styles.label}>Time</Text>
+                  <TextInput style={styles.modalInput} value={editTime} onChangeText={setEditTime} placeholder="e.g. 20:00" placeholderTextColor="#555" />
                 </View>
               </View>
 
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Start ISO String</Text>
-                <TextInput style={styles.modalInput} value={editStart} onChangeText={setEditStart} />
+                <Text style={styles.label}>Ticket Link</Text>
+                <TextInput style={styles.modalInput} value={editTicketLink} onChangeText={setEditTicketLink} placeholder="https://..." placeholderTextColor="#555" />
               </View>
 
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Expiration ISO String</Text>
-                <TextInput style={styles.modalInput} value={editEnd} onChangeText={setEditEnd} />
+                <Text style={styles.label}>Source URL</Text>
+                <TextInput style={styles.modalInput} value={editSourceLink} onChangeText={setEditSourceLink} placeholder="https://..." placeholderTextColor="#555" />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Physical Address Override (Optional)</Text>
+                <TextInput style={styles.modalInput} value={editAddress} onChangeText={setEditAddress} placeholder="e.g. Ngong Racecourse" placeholderTextColor="#555" />
+              </View>
+
+              <View style={styles.formRow}>
+                <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+                  <Text style={styles.label}>Latitude Override</Text>
+                  <TextInput style={styles.modalInput} value={editLat} onChangeText={setEditLat} keyboardType="numeric" placeholder="-1.286389" placeholderTextColor="#555" />
+                </View>
+                <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
+                  <Text style={styles.label}>Longitude Override</Text>
+                  <TextInput style={styles.modalInput} value={editLng} onChangeText={setEditLng} keyboardType="numeric" placeholder="36.817223" placeholderTextColor="#555" />
+                </View>
               </View>
 
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Category</Text>
                 <View style={styles.categoryPickerRow}>
-                  {['Music', 'Food', 'Art', 'Sports', 'Conference', 'General'].map((cat) => (
+                  {CATEGORIES.map((cat) => (
                     <TouchableOpacity
                       key={cat}
                       style={[
                         styles.categoryPickerPill,
                         editCategory === cat && styles.categoryPickerPillActive
                       ]}
-                      onPress={() => setEditCategory(cat as any)}
+                      onPress={() => setEditCategory(cat)}
                     >
                       <Text style={[
                         styles.categoryPickerPillText,
@@ -574,7 +723,7 @@ No other text, explanations, markdown formatting, or HTML should be returned. Ju
 
               <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSaveEdit}>
                 <Save color="#000" size={16} />
-                <Text style={styles.modalSaveBtnText}>Confirm Changes</Text>
+                <Text style={styles.modalSaveBtnText}>Save Draft Details</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -612,25 +761,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   scrollContent: {
-    padding: 24,
-    paddingBottom: 80,
-  },
-  infoBanner: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(0, 255, 204, 0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 255, 204, 0.2)',
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-    marginBottom: 24,
-    alignItems: 'center',
-  },
-  infoText: {
-    color: '#B0B0B0',
-    fontSize: 13,
-    lineHeight: 18,
-    flex: 1,
+    padding: 20,
+    paddingBottom: 40,
   },
   card: {
     backgroundColor: '#1A1A1A',
@@ -657,62 +789,9 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginBottom: 16,
   },
-  keyInputRow: {
+  actionBtnRow: {
     flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  input: {
-    backgroundColor: '#222',
-    borderColor: '#444',
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: '#FFF',
-    fontSize: 14,
-    marginBottom: 16,
-  },
-  textArea: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  saveKeyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#00FFCC',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  saveKeyBtnText: {
-    color: '#000',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  clearKeyBtn: {
-    backgroundColor: '#333',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  clearKeyBtnText: {
-    color: '#FF3366',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  linkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 12,
-  },
-  linkText: {
-    color: '#00FFCC',
-    fontSize: 12,
-    fontWeight: '600',
-    textDecorationLine: 'underline',
+    gap: 12,
   },
   actionBtn: {
     flexDirection: 'row',
@@ -720,26 +799,62 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     backgroundColor: '#00FFCC',
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 12,
   },
-  actionBtnDisabled: {
-    backgroundColor: '#2A2A2A',
-    opacity: 0.5,
+  actionBtnSecondary: {
+    backgroundColor: '#FFD700',
   },
   actionBtnText: {
     color: '#000',
     fontWeight: '800',
+    fontSize: 13,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#2D2D2D',
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  tabButtonActive: {
+    backgroundColor: '#2A2A2A',
+  },
+  tabButtonText: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tabButtonTextActive: {
+    color: '#FFF',
+    fontWeight: '700',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 20,
+    gap: 16,
+  },
+  emptyText: {
+    color: '#666',
     fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   resultsContainer: {
-    marginTop: 12,
-  },
-  resultsHeader: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFF',
-    marginBottom: 16,
+    gap: 16,
   },
   eventCard: {
     backgroundColor: '#1E1E1E',
@@ -747,7 +862,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 16,
     padding: 16,
-    marginBottom: 16,
   },
   eventCardHeader: {
     flexDirection: 'row',
@@ -759,10 +873,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#FFF',
+    marginBottom: 6,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
     marginBottom: 4,
   },
   categoryBadge: {
-    alignSelf: 'flex-start',
     backgroundColor: 'rgba(0, 255, 204, 0.1)',
     borderColor: '#00FFCC',
     borderWidth: 1,
@@ -775,15 +894,36 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
   },
-  eventActions: {
-    flexDirection: 'row',
-    gap: 12,
+  actionBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderWidth: 1,
   },
-  editBtn: {
-    padding: 4,
+  actionBadgeKeep: {
+    backgroundColor: 'rgba(46, 204, 113, 0.1)',
+    borderColor: '#2ecc71',
   },
-  deleteBtn: {
-    padding: 4,
+  actionBadgeRemove: {
+    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+    borderColor: '#e74c3c',
+  },
+  actionBadgeEdit: {
+    backgroundColor: 'rgba(241, 196, 15, 0.1)',
+    borderColor: '#f1c40f',
+  },
+  actionBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  actionBadgeTextKeep: {
+    color: '#2ecc71',
+  },
+  actionBadgeTextRemove: {
+    color: '#e74c3c',
+  },
+  actionBadgeTextEdit: {
+    color: '#f1c40f',
   },
   eventDesc: {
     color: '#AAA',
@@ -802,40 +942,84 @@ const styles = StyleSheet.create({
     fontSize: 12,
     flex: 1,
   },
-  coordsText: {
-    color: '#555',
-    fontSize: 11,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    marginTop: 4,
+  linksRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+    marginBottom: 12,
   },
-  footerContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#121212',
+  linkButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#2A2A2A',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3D3D3D',
+  },
+  linkButtonText: {
+    color: '#00FFCC',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  cardActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#2A2A2A',
-    padding: 16,
+    paddingTop: 12,
   },
-  saveBulkBtn: {
+  actionPillApprove: {
+    flex: 2,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
     backgroundColor: '#00FFCC',
-    paddingVertical: 16,
-    borderRadius: 16,
-    shadowColor: '#00FFCC',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
   },
-  saveBulkBtnText: {
+  actionPillTextApprove: {
     color: '#000',
     fontWeight: '800',
-    fontSize: 15,
+    fontSize: 12,
+  },
+  actionPillEdit: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0, 255, 204, 0.1)',
+    borderColor: '#00FFCC',
+    borderWidth: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  actionPillTextEdit: {
+    color: '#00FFCC',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  actionPillReject: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255, 51, 102, 0.1)',
+    borderColor: '#FF3366',
+    borderWidth: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  actionPillTextReject: {
+    color: '#FF3366',
+    fontWeight: '700',
+    fontSize: 12,
   },
   loadingOverlay: {
     flex: 1,
