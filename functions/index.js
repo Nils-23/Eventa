@@ -245,9 +245,7 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
     const messageData = snapshot.val();
     if (!messageData) return;
 
-    // Persona messages handle their own targeted notifications in runPersonaActivity.
-    // Skip the global broadcast to avoid spamming all users with simulated activity.
-    if (messageData.isPersona === true) return;
+    const isPersonaMessage = messageData.isPersona === true;
 
     const venueId = context.params.venueId;
     const senderId = messageData.user_id;
@@ -288,7 +286,9 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
       const isEngaged = members[user.id] && (now - (members[user.id].lastInteractionTime || 0) < ONE_HOUR);
 
       if (isEngaged) {
-        // Engaged users get unlimited notifications for this chat (bypassing daily and throttle limits)
+        // Persona messages already notify engaged users inside runPersonaActivity — skip here to avoid doubles.
+        if (isPersonaMessage) continue;
+        // Real user messages: engaged users get unlimited notifications (bypass all limits)
         await sendRateLimitedPushNotification(
           user.id,
           venueName,
@@ -299,14 +299,15 @@ exports.onNewChatMessage = functions.database.ref('/venue_chats/{venueId}/{messa
           true // bypassLimits
         );
       } else {
-        // Non-engaged users receive broadcast rate-limited to 1 per hour per venue, bypassing daily limit
+        // Non-engaged users: max 2 chat activity notifications per venue per hour (30-min throttle).
+        // The throttle key ensures only the first message in each 30-min window pings them.
         await sendRateLimitedPushNotification(
           user.id,
           venueName,
           body,
           { venueId, type: 'chat' },
           `chat_${venueId}`,
-          1 * 60 * 60 * 1000, // 1 hour throttle
+          30 * 60 * 1000, // 30-minute throttle → max 2 pings/hour per venue
           false, // bypassLimits
           true // bypassDailyLimit
         );
