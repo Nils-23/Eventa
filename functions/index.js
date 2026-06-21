@@ -358,7 +358,7 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                 `It is ${dayAndTime}. A user named @${cleanSenderName} just sent a message: "${messageData.message || ''}". ` +
                 `The last few messages in the chat were:\n${last5Messages}\n` +
                 `Write ONE short chat reply directly addressing @${cleanSenderName}'s message. Write in natural Nairobi English mixed with Sheng. ` +
-                `Keep it under 1-2 lines max (1-2 sentences), casual, never formal. Do not use line breaks or newlines. Do not use hashtags. Return only the message text, nothing else.`;
+                `STRICT RULES: max 1 sentence, max 100 characters total (including spaces), no line breaks, no hashtags. Return ONLY the message text, nothing else.`;
 
               let replyText = await callAnthropicHaiku(apiKey, prompt);
               replyText = cleanPersonaMessageText(replyText, selectedPersona.username, selectedPersona.name);
@@ -492,7 +492,7 @@ exports.onChatReaction = functions.runWith({ timeoutSeconds: 360, memory: '512MB
         `It is ${dayAndTime}. A user named @${cleanReactingName} just reacted with a ${emoji} to your message: "${originalMessage.message}". ` +
         `The last few messages in the chat were:\n${last5Messages}\n` +
         `Write ONE short chat reply directly to @${cleanReactingName} acknowledging their reaction. Write in natural Nairobi English mixed with Sheng. ` +
-        `Keep it under 1-2 lines max (1-2 sentences), casual, never formal. Do not use line breaks or newlines. Do not use hashtags. Return only the message text, nothing else.`;
+        `STRICT RULES: max 1 sentence, max 100 characters total (including spaces), no line breaks, no hashtags. Return ONLY the message text, nothing else.`;
 
       let replyText = await callAnthropicHaiku(apiKey, prompt);
       replyText = cleanPersonaMessageText(replyText, persona.username, persona.name);
@@ -1648,6 +1648,12 @@ function cleanPersonaMessageText(text, username, personaName) {
     cleaned = sentences.slice(0, 2).join('').trim();
   }
 
+  // Hard cap at 100 characters (including spaces)
+  if (cleaned.length > 100) {
+    // Truncate at last word boundary within 100 chars
+    cleaned = cleaned.substring(0, 100).replace(/\s+\S*$/, '').trim();
+  }
+
   // Safety filter to completely block/censor real user names
   const realNamePattern = /nilsakonkwa|nils/gi;
   cleaned = cleaned.replace(realNamePattern, 'buda');
@@ -1704,9 +1710,9 @@ function getPersonaActivityWindow(weekday, hour) {
   if (['Wed', 'Thu'].includes(weekday) && hour >= 20 && hour < 24) {
     return { window: 'mid_week_night', personaSampleSize: Math.floor(Math.random() * 3) + 3 };
   }
-  // Mon–Fri 3pm–6pm → light afternoon, ~30% of 25 = 8 personas
+  // Mon–Fri 3pm–6pm → light afternoon, 1–2 personas
   if (['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday) && hour >= 15 && hour < 18) {
-    return { window: 'afternoon', personaSampleSize: 8 };
+    return { window: 'afternoon', personaSampleSize: Math.floor(Math.random() * 2) + 1 };
   }
   // Dead silent: Mon & Tue mornings (all other times)
   if (['Mon', 'Tue'].includes(weekday) && (hour < 15 || hour >= 18)) {
@@ -1971,8 +1977,8 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
       `You are currently in the ${targetVenue.name} group chat on a Nairobi nightlife app called Eventas. ` +
       `It is ${dayAndTime}. The last few messages in this chat were:\n${last5Messages}\n` +
       `Write ONE short chat message in natural Nairobi English mixed with Sheng. ` +
-      `Vary randomly between full English, full Sheng, and mixed. Keep it under 1-2 lines max (1-2 sentences), casual, never formal. ` +
-      `Do not use line breaks or newlines. Do not use hashtags. Return only the message text, nothing else.`;
+      `Vary randomly between full English, full Sheng, and mixed. ` +
+      `STRICT RULES: max 1 sentence, max 100 characters total (including spaces), no line breaks, no hashtags. Return ONLY the message text, nothing else.`;
 
     // ── e. Call Haiku API ─────────────────────────────────────────────────
     let messageText = null;
@@ -1988,8 +1994,8 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
     if (!messageText || messageText.length === 0) continue;
 
     // ── f. Write message to RTDB with staggered timestamp ────────────────
-    // Stagger 2–6 minutes ahead so messages don't all appear at once
-    const staggerMs = (Math.floor(Math.random() * 5) + 2) * 60 * 1000; // 2–6 minutes
+    // Stagger 3–15 minutes ahead so messages arrive spread out, not all at once
+    const staggerMs = (Math.floor(Math.random() * 13) + 3) * 60 * 1000; // 3–15 minutes
     const messageTimestamp = nowMs + staggerMs;
 
     try {
