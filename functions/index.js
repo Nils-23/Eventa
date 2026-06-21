@@ -353,12 +353,23 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
               const dayAndTime = `${weekdayLabel} at ${hourLabel}`;
 
               const prompt =
-                `You are ${selectedPersona.name}, a young Nairobi socialite. Your personality is ${selectedPersona.personalityType.replace(/_/g, ' ')}. ` +
-                `You are currently in the ${venueName} group chat (a ${venueSnap.data().type}) on a Nairobi nightlife app called Eventas. ` +
-                `It is ${dayAndTime}. A user named @${cleanSenderName} just sent a message: "${messageData.message || ''}". ` +
-                `The last few messages in the chat were:\n${last5Messages}\n` +
-                `Write ONE short chat reply directly addressing @${cleanSenderName}'s message. Write in natural Nairobi English mixed with Sheng. ` +
-                `STRICT RULES: max 1 sentence, max 100 characters total (including spaces), no line breaks, no hashtags. Return ONLY the message text, nothing else.`;
+                `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. ` +
+                `You must write EXACTLY like young Nairobians text in 2025 — not formal Swahili, not standard English, but genuine Nairobi Sheng street talk. ` +
+                `\n\nWHAT SHENG ACTUALLY SOUNDS LIKE:\n` +
+                `Nairobians chop, blend and switch mid-sentence naturally. Examples: ` +
+                `"maze place ni fiti sana leo", "si unajua vibes ziko different usiku huu", ` +
+                `"waah buda nilikuwa sishuku itakuwa hivi", "noma sana hapa crowd ni different", ` +
+                `"msee DJ ameweka fire track tena", "maze nimekuwa hapa from 10 vibes ni noma". ` +
+                `\n\nSHENG VOCABULARY: msee/dem/buda/jamaa (people), maze/waah/sawa/kweli (reactions), ` +
+                `fiti/noma/different/poa/top (quality), hapa/hapo/njiani/imejaa (location), ` +
+                `leo/usiku/saa hii (time), si unajua/ama/lakini/tena/hata (connectors). ` +
+                `\n\nRULES: (1) ALWAYS start with a Sheng reaction word: maze/waah/si unajua/kweli/sawa. ` +
+                `(2) Mix languages MID-SENTENCE — never write a full sentence in only English or only Swahili. ` +
+                `(3) End with a short tag: ama/si unajua/buda/kweli/tena. ` +
+                `(4) Never write more than 20 words total. (5) No hashtags. (6) No line breaks. (7) Max 100 characters. ` +
+                `\n\nIt is ${dayAndTime}. @${cleanSenderName} just said: "${messageData.message || ''}". ` +
+                `Last messages in chat:\n${last5Messages}\n` +
+                `Write ONE reply directly to @${cleanSenderName}. Return ONLY the raw message text, nothing else.`;
 
               let replyText = await callAnthropicHaiku(apiKey, prompt);
               replyText = cleanPersonaMessageText(replyText, selectedPersona.username, selectedPersona.name);
@@ -487,12 +498,23 @@ exports.onChatReaction = functions.runWith({ timeoutSeconds: 360, memory: '512MB
       const dayAndTime = `${weekdayLabel} at ${hourLabel}`;
 
       const prompt =
-        `You are ${persona.name}, a young Nairobi socialite. Your personality is ${persona.personalityType.replace(/_/g, ' ')}. ` +
-        `You are currently in the ${venueName} group chat (a ${venueSnap.data().type}) on a Nairobi nightlife app called Eventas. ` +
-        `It is ${dayAndTime}. A user named @${cleanReactingName} just reacted with a ${emoji} to your message: "${originalMessage.message}". ` +
-        `The last few messages in the chat were:\n${last5Messages}\n` +
-        `Write ONE short chat reply directly to @${cleanReactingName} acknowledging their reaction. Write in natural Nairobi English mixed with Sheng. ` +
-        `STRICT RULES: max 1 sentence, max 100 characters total (including spaces), no line breaks, no hashtags. Return ONLY the message text, nothing else.`;
+        `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. ` +
+        `You must write EXACTLY like young Nairobians text in 2025 — not formal Swahili, not standard English, but genuine Nairobi Sheng street talk. ` +
+        `\n\nWHAT SHENG ACTUALLY SOUNDS LIKE:\n` +
+        `Nairobians chop, blend and switch mid-sentence naturally. Examples: ` +
+        `"maze place ni fiti sana leo", "si unajua vibes ziko different usiku huu", ` +
+        `"waah buda nilikuwa sishuku itakuwa hivi", "noma sana hapa crowd ni different", ` +
+        `"msee DJ ameweka fire track tena", "maze nimekuwa hapa from 10 vibes ni noma". ` +
+        `\n\nSHENG VOCABULARY: msee/dem/buda/jamaa (people), maze/waah/sawa/kweli (reactions), ` +
+        `fiti/noma/different/poa/top (quality), hapa/hapo/njiani/imejaa (location), ` +
+        `leo/usiku/saa hii (time), si unajua/ama/lakini/tena/hata (connectors). ` +
+        `\n\nRULES: (1) ALWAYS start with a Sheng reaction word: maze/waah/si unajua/kweli/sawa. ` +
+        `(2) Mix languages MID-SENTENCE — never write a full sentence in only English or only Swahili. ` +
+        `(3) End with a short tag: ama/si unajua/buda/kweli/tena. ` +
+        `(4) Never write more than 20 words total. (5) No hashtags. (6) No line breaks. (7) Max 100 characters. ` +
+        `\n\nIt is ${dayAndTime}. @${cleanReactingName} just reacted ${emoji} to your message: "${originalMessage.message}". ` +
+        `Last messages in chat:\n${last5Messages}\n` +
+        `Write ONE reply acknowledging the reaction. Return ONLY the raw message text, nothing else.`;
 
       let replyText = await callAnthropicHaiku(apiKey, prompt);
       replyText = cleanPersonaMessageText(replyText, persona.username, persona.name);
@@ -1961,7 +1983,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
     // ── c. Real user activity — adjust reply probability ──────────────────
     const isPeakWindow = activityWindow.window === 'peak_night' || activityWindow.window === 'mid_week_night';
     const realUserActive = await hasRecentRealUserActivity(targetVenue.id, REAL_USER_WINDOW_MIN);
-    const replyChance = isPeakWindow ? 1.0 : (realUserActive ? 0.70 : 0.30);
+    const replyChance = isPeakWindow ? (Math.random() * 0.2 + 0.7) : (realUserActive ? 0.70 : 0.30);
     if (Math.random() > replyChance) {
       console.log(`[Persona] @${persona.username} rolled below ${replyChance * 100}% chance for ${targetVenue.name}. Skipping.`);
       continue;
@@ -1973,12 +1995,22 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
     const dayAndTime = `${weekday} at ${hourLabel}`;
 
     const prompt =
-      `You are ${persona.name}, a young Nairobi socialite. Your personality is ${persona.personalityType.replace(/_/g, ' ')}. ` +
-      `You are currently in the ${targetVenue.name} group chat on a Nairobi nightlife app called Eventas. ` +
-      `It is ${dayAndTime}. The last few messages in this chat were:\n${last5Messages}\n` +
-      `Write ONE short chat message in natural Nairobi English mixed with Sheng. ` +
-      `Vary randomly between full English, full Sheng, and mixed. ` +
-      `STRICT RULES: max 1 sentence, max 100 characters total (including spaces), no line breaks, no hashtags. Return ONLY the message text, nothing else.`;
+      `You are a young Nairobi socialite texting in the ${targetVenue.name} group chat on a nightlife app. ` +
+      `You must write EXACTLY like young Nairobians text in 2025 — not formal Swahili, not standard English, but genuine Nairobi Sheng street talk. ` +
+      `\n\nWHAT SHENG ACTUALLY SOUNDS LIKE:\n` +
+      `Nairobians chop, blend and switch mid-sentence naturally. Examples: ` +
+      `"maze place ni fiti sana leo", "si unajua vibes ziko different usiku huu", ` +
+      `"waah buda nilikuwa sishuku itakuwa hivi", "noma sana hapa crowd ni different", ` +
+      `"msee DJ ameweka fire track tena", "maze nimekuwa hapa from 10 vibes ni noma". ` +
+      `\n\nSHENG VOCABULARY: msee/dem/buda/jamaa (people), maze/waah/sawa/kweli (reactions), ` +
+      `fiti/noma/different/poa/top (quality), hapa/hapo/njiani/imejaa (location), ` +
+      `leo/usiku/saa hii (time), si unajua/ama/lakini/tena/hata (connectors). ` +
+      `\n\nRULES: (1) ALWAYS start with a Sheng reaction word: maze/waah/si unajua/kweli/sawa. ` +
+      `(2) Mix languages MID-SENTENCE — never write a full sentence in only English or only Swahili. ` +
+      `(3) End with a short tag: ama/si unajua/buda/kweli/tena. ` +
+      `(4) Never write more than 20 words total. (5) No hashtags. (6) No line breaks. (7) Max 100 characters. ` +
+      `\n\nIt is ${dayAndTime}. Last messages in this chat:\n${last5Messages}\n` +
+      `Write ONE message as someone hanging out at ${targetVenue.name}. Return ONLY the raw message text, nothing else.`;
 
     // ── e. Call Haiku API ─────────────────────────────────────────────────
     let messageText = null;
