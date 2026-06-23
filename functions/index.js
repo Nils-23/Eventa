@@ -366,7 +366,7 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                 `\n\nRULES: (1) ALWAYS start with a Sheng reaction word: maze/waah/si unajua/kweli/sawa. ` +
                 `(2) Mix languages MID-SENTENCE — never write a full sentence in only English or only Swahili. ` +
                 `(3) End with a short tag: ama/si unajua/buda/kweli/tena. ` +
-                `(4) Never write more than 20 words total. (5) No hashtags. (6) No line breaks. (7) Max 100 characters. ` +
+                `(4) Keep message length strictly between 20 and 40 characters total. (5) No hashtags. (6) No line breaks. ` +
                 `\n\nIt is ${dayAndTime}. @${cleanSenderName} just said: "${messageData.message || ''}". ` +
                 `Last messages in chat:\n${last5Messages}\n` +
                 `Write ONE reply directly to @${cleanSenderName}. Return ONLY the raw message text, nothing else.`;
@@ -511,7 +511,7 @@ exports.onChatReaction = functions.runWith({ timeoutSeconds: 360, memory: '512MB
         `\n\nRULES: (1) ALWAYS start with a Sheng reaction word: maze/waah/si unajua/kweli/sawa. ` +
         `(2) Mix languages MID-SENTENCE — never write a full sentence in only English or only Swahili. ` +
         `(3) End with a short tag: ama/si unajua/buda/kweli/tena. ` +
-        `(4) Never write more than 20 words total. (5) No hashtags. (6) No line breaks. (7) Max 100 characters. ` +
+        `(4) Keep message length strictly between 20 and 40 characters total. (5) No hashtags. (6) No line breaks. ` +
         `\n\nIt is ${dayAndTime}. @${cleanReactingName} just reacted ${emoji} to your message: "${originalMessage.message}". ` +
         `Last messages in chat:\n${last5Messages}\n` +
         `Write ONE reply acknowledging the reaction. Return ONLY the raw message text, nothing else.`;
@@ -1670,15 +1670,32 @@ function cleanPersonaMessageText(text, username, personaName) {
     cleaned = sentences.slice(0, 2).join('').trim();
   }
 
-  // Hard cap at 100 characters (including spaces)
-  if (cleaned.length > 100) {
-    // Truncate at last word boundary within 100 chars
-    cleaned = cleaned.substring(0, 100).replace(/\s+\S*$/, '').trim();
-  }
-
-  // Safety filter to completely block/censor real user names
+  // Safety filter to completely block/censor real user names (run BEFORE length constraint so replacement doesn't break limits)
   const realNamePattern = /nilsakonkwa|nils/gi;
   cleaned = cleaned.replace(realNamePattern, 'buda');
+
+  // Strict cap: always between 20 and 40 characters MAX (inclusive)
+  if (cleaned.length > 40) {
+    // Try to truncate at last word boundary within 40 chars
+    let truncated = cleaned.substring(0, 40).replace(/\s+\S*$/, '').trim();
+    if (truncated.length < 20) {
+      truncated = cleaned.substring(0, 40).trim();
+    }
+    if (truncated.length > 40) {
+      truncated = truncated.substring(0, 40);
+    }
+    cleaned = truncated;
+  }
+
+  // Enforce minimum 20 characters by appending Sheng fillers
+  if (cleaned.length < 20) {
+    const fillers = [" maze", " buda", " noma", " vibe", " fiti", " sana", " hapa"];
+    let fillerIdx = 0;
+    while (cleaned.length < 20) {
+      cleaned += fillers[fillerIdx % fillers.length];
+      fillerIdx++;
+    }
+  }
 
   return cleaned;
 }
@@ -2008,7 +2025,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
       `\n\nRULES: (1) ALWAYS start with a Sheng reaction word: maze/waah/si unajua/kweli/sawa. ` +
       `(2) Mix languages MID-SENTENCE — never write a full sentence in only English or only Swahili. ` +
       `(3) End with a short tag: ama/si unajua/buda/kweli/tena. ` +
-      `(4) Never write more than 20 words total. (5) No hashtags. (6) No line breaks. (7) Max 100 characters. ` +
+      `(4) Keep message length strictly between 20 and 40 characters total. (5) No hashtags. (6) No line breaks. ` +
       `\n\nIt is ${dayAndTime}. Last messages in this chat:\n${last5Messages}\n` +
       `Write ONE message as someone hanging out at ${targetVenue.name}. Return ONLY the raw message text, nothing else.`;
 

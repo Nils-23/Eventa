@@ -16,7 +16,11 @@
     },
     "venue_chats": {
       ".read": "auth != null",
-      ".write": "auth != null"
+      "$venueId": {
+        "$messageId": {
+          ".write": "auth != null && (!newData.exists() || newData.child('type').val() !== 'text' || !newData.child('message').exists() || newData.child('message').val().length <= 80)"
+        }
+      }
     },
     "user_chats": {
       "$userId": {

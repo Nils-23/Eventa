@@ -84,11 +84,15 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
 
             const nonHiddenMsg = sortedMsgs.find(msg => !hiddenUsers.includes(msg.user_id));
             if (nonHiddenMsg) {
+              let displayMsg = nonHiddenMsg.message || '';
+              if (nonHiddenMsg.type === 'custom_sticker' || nonHiddenMsg.type === 'Sticker') {
+                displayMsg = 'Sticker';
+              }
               setLatestMessages((prev) => ({
                 ...prev,
                 [venue.id]: {
                   username: nonHiddenMsg.username || 'Someone',
-                  message: nonHiddenMsg.message || '',
+                  message: displayMsg,
                   timestamp: nonHiddenMsg.timestamp || Date.now(),
                   userId: nonHiddenMsg.user_id || '',
                 },
@@ -190,72 +194,72 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   return (
     <View style={[StyleSheet.absoluteFillObject, styles.modalOverlay, { zIndex: 1000 }]}>
       <View style={[styles.modalContainer, { paddingTop: insets.top, paddingBottom: insets.bottom || 20 }]}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.titleContainer}>
-              <MessageSquare color="#00FFCC" size={24} style={styles.headerIcon} />
-              <Text style={styles.headerTitle}>Active Chats</Text>
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <X color="#FFF" size={22} />
-            </TouchableOpacity>
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={styles.titleContainer}>
+            <MessageSquare color="#00FFCC" size={24} style={styles.headerIcon} />
+            <Text style={styles.headerTitle}>Active Chats</Text>
           </View>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <X color="#FFF" size={22} />
+          </TouchableOpacity>
+        </View>
 
-          {/* Chat List */}
-          {loadingChats && activeChats.length === 0 ? (
-            <View style={styles.centerContainer}>
-              <ActivityIndicator color="#00FFCC" size="large" />
-              <Text style={styles.loadingText}>Fetching active chats...</Text>
-            </View>
-          ) : activeChats.length === 0 ? (
-            <View style={styles.centerContainer}>
-              <MessageSquare color="#444" size={48} style={{ marginBottom: 16 }} />
-              <Text style={styles.emptyTitle}>No Active Chats</Text>
-              <Text style={styles.emptySubtitle}>No messages have been sent in the last 24 hours. Be the first to start a conversation!</Text>
-            </View>
-          ) : (
-            <FlatList
-              data={activeChats}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={styles.listContent}
-              showsVerticalScrollIndicator={false}
-              renderItem={({ item }) => {
-                const lastViewed = lastViewedChats[item.venueId] || 0;
-                const isUnread = item.timestamp > lastViewed && item.latestUserId !== user?.uid;
-                
-                return (
-                  <TouchableOpacity
-                    style={[
-                      styles.feedCard,
-                      isUnread && styles.feedCardUnread
-                    ]}
-                    onPress={() => handleItemPress(item)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.cardHeader}>
-                      <View style={styles.iconCircle}>
-                        <MessageSquare color="#00FFCC" size={18} />
-                      </View>
-                      <View style={styles.cardTitles}>
-                        <Text style={styles.cardTitle} numberOfLines={1}>
-                          {item.venueName}
-                        </Text>
-                        <Text style={styles.cardSubtitle} numberOfLines={2}>
-                          {item.latestUsername}: "{item.latestMessage}"
-                        </Text>
-                      </View>
-                      <View style={styles.metaColumn}>
-                        <Text style={styles.timeText}>
-                          {formatTimeAgo(item.timestamp)}
-                        </Text>
-                        <ChevronRight color="#444" size={16} />
-                      </View>
+        {/* Chat List */}
+        {loadingChats && activeChats.length === 0 ? (
+          <View style={styles.centerContainer}>
+            <ActivityIndicator color="#00FFCC" size="large" />
+            <Text style={styles.loadingText}>Fetching active chats...</Text>
+          </View>
+        ) : activeChats.length === 0 ? (
+          <View style={styles.centerContainer}>
+            <MessageSquare color="#444" size={48} style={{ marginBottom: 16 }} />
+            <Text style={styles.emptyTitle}>No Active Chats</Text>
+            <Text style={styles.emptySubtitle}>No messages have been sent in the last 24 hours. Be the first to start a conversation!</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={activeChats}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) => {
+              const lastViewed = lastViewedChats[item.venueId] || 0;
+              const isUnread = item.timestamp > lastViewed && item.latestUserId !== user?.uid;
+
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.feedCard,
+                    isUnread && styles.feedCardUnread
+                  ]}
+                  onPress={() => handleItemPress(item)}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.cardHeader}>
+                    <View style={styles.iconCircle}>
+                      <MessageSquare color="#00FFCC" size={18} />
                     </View>
-                  </TouchableOpacity>
-                );
-              }}
-            />
-          )}
+                    <View style={styles.cardTitles}>
+                      <Text style={styles.cardTitle} numberOfLines={1}>
+                        {item.venueName}
+                      </Text>
+                      <Text style={styles.cardSubtitle} numberOfLines={2}>
+                        {item.latestUsername}: "{item.latestMessage}"
+                      </Text>
+                    </View>
+                    <View style={styles.metaColumn}>
+                      <Text style={styles.timeText}>
+                        {formatTimeAgo(item.timestamp)}
+                      </Text>
+                      <ChevronRight color="#444" size={16} />
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        )}
       </View>
     </View>
   );

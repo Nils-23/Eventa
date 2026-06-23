@@ -315,6 +315,15 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     const textToSend = inputText.trim();
     if (!textToSend || !user || !venueId) return;
 
+    if (textToSend.length > 80) {
+      Toast.show({
+        type: 'error',
+        text1: 'Message Too Long',
+        text2: 'Messages must be 80 characters or less.'
+      });
+      return;
+    }
+
     // Clear input immediately to make chat feel extremely snappy and responsive
     setInputText('');
     const previousReplyTo = replyingTo;
@@ -566,7 +575,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
 
         // Upload to Firebase Storage
         const fileExtension = uri.split('.').pop() || 'jpg';
-        const fileName = `chat_stickers/${user.uid}_${Date.now()}.${fileExtension}`;
+        const fileName = `stories/${user.uid}_sticker_${Date.now()}.${fileExtension}`;
         const stRef = storageRef(storage, fileName);
 
         const response = await fetch(uri);
@@ -1103,7 +1112,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
               value={inputText}
               onChangeText={setInputText}
               onFocus={() => setIsStickerPickerVisible(false)}
-              maxLength={200}
+              maxLength={80}
               multiline
             />
             <TouchableOpacity 
