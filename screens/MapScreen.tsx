@@ -358,10 +358,12 @@ export const MapScreen = () => {
     if (selectedMapVenue) {
       setIsChatVisible(false);
       setChatVenue(null);
-      setIsViewerVisible(false);
       setIsLiveFeedVisible(false);
+      if (!isViewerVisible) {
+        setIsViewerVisible(false);
+      }
     }
-  }, [selectedMapVenue]);
+  }, [selectedMapVenue, isViewerVisible]);
 
   useEffect(() => {
     if (selectedMapVenue && pendingVenueAction === 'chat') {
@@ -660,6 +662,24 @@ export const MapScreen = () => {
     }
   };
 
+  const handleStoriesEnd = () => {
+    // Find all venues that have stories, preserving the order they are in the active venues list
+    const venuesWithStories = venues.filter(v => stories.some(s => s.venue_id === v.id));
+    if (selectedMapVenue) {
+      const currentIdx = venuesWithStories.findIndex(v => v.id === selectedMapVenue.id);
+      if (currentIdx !== -1 && currentIdx < venuesWithStories.length - 1) {
+        const nextVenue = venuesWithStories[currentIdx + 1];
+        setSelectedMapVenue(nextVenue);
+      } else {
+        // No more venues with stories, close the viewer
+        setIsViewerVisible(false);
+        setSelectedMapVenue(null);
+      }
+    } else {
+      setIsViewerVisible(false);
+    }
+  };
+
   const closestLiveVenue = useMemo(() => {
     if (!userLocation || !venues.length) return { venue: null, distance: Infinity };
     let minDist = Infinity;
@@ -819,6 +839,7 @@ export const MapScreen = () => {
           canAddStory={Boolean(isNearLiveVenue)}
           onAddStory={handleAddStory}
           onRemoveStory={handleRemoveStory}
+          onStoriesEnd={handleStoriesEnd}
         />
       )}
 

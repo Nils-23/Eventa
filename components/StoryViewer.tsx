@@ -38,6 +38,7 @@ interface StoryViewerProps {
   onAddStory: () => void;
   /** When provided, a "Remove Story" button is shown and this callback is invoked with the story id */
   onRemoveStory?: (storyId: string) => void;
+  onStoriesEnd?: () => void;
 }
 
 interface StoryMediaItemProps {
@@ -176,12 +177,14 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   canAddStory,
   onAddStory,
   onRemoveStory,
+  onStoriesEnd,
 }) => {
   const insets = useSafeAreaInsets();
   const { user, hiddenUsers, setHiddenUsers } = useAppStore();
 
   const [shouldRender, setShouldRender] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const storiesSerialized = stories.map(s => s.id).join(',');
   const [isPaused, setIsPaused] = useState(false);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
@@ -330,6 +333,11 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     return () => progressAnim.removeListener(listener);
   }, []);
 
+  // Reset index when stories list changes (e.g. switching to next venue)
+  useEffect(() => {
+    setCurrentIndex(0);
+  }, [storiesSerialized]);
+
   // ─── Per-story reset ─────────────────────────────────────────────────────
   useEffect(() => {
     if (imageTimerRef.current) {
@@ -344,7 +352,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     progressValue.current = 0;
     setIsPaused(false);
     setIsMediaLoading(true);
-  }, [currentIndex]);
+  }, [currentIndex, storiesSerialized]);
 
   // ─── Image pause/resume ──────────────────────────────────────────────────
   useEffect(() => {
@@ -398,9 +406,13 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         }
       });
     } else {
-      onClose();
+      if (onStoriesEnd) {
+        onStoriesEnd();
+      } else {
+        onClose();
+      }
     }
-  }, [currentIndex, stories.length, onClose, translateX]);
+  }, [currentIndex, stories.length, onClose, translateX, onStoriesEnd]);
 
   const handlePrev = useCallback(() => {
     if (currentIndex > 0) {
