@@ -656,7 +656,7 @@ export const AdminSimulationScreen = () => {
 
           <View style={styles.keyInputRow}>
             <TextInput
-              style={[styles.input, { flex: 1, marginBottom: 0 }]}
+              style={[styles.keyInputText, { flex: 1, marginBottom: 0 }]}
               placeholder="Paste Anthropic API Key (sk-ant-)..."
               placeholderTextColor="#666"
               secureTextEntry={isAnthropicKeySaved}
@@ -1854,7 +1854,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  input: {
+  keyInputText: {
     backgroundColor: '#2A2A2A',
     borderColor: '#444',
     borderWidth: 1,

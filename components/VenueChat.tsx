@@ -224,6 +224,20 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   const flatListRef = useRef<FlatList>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
+  const swipeClosePanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dx > 40) {
+          onClose();
+        }
+      },
+    })
+  ).current;
+
   useEffect(() => {
     if (isVisible && venueId) {
       updateLastViewedChat(venueId);
@@ -959,6 +973,11 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           style={styles.modalOverlay} 
           behavior="padding"
         >
+          {/* Left-edge swipe strip: sits above everything, captures swipe-right on the left 40px to close */}
+          <View
+            style={styles.swipeEdgeStrip}
+            {...swipeClosePanResponder.panHandlers}
+          />
           <View style={[styles.chatContainer, { paddingTop: insets.top }]}>
           <View style={styles.header}>
             <View>
@@ -1264,6 +1283,14 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: '#121212',
+  },
+  swipeEdgeStrip: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: 40,
+    zIndex: 9999,
   },
   chatContainer: {
     flex: 1,

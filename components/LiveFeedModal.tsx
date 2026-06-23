@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -7,6 +7,7 @@ import {
   FlatList,
   StyleSheet,
   ActivityIndicator,
+  PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ref, query, limitToLast } from 'firebase/database';
@@ -49,6 +50,20 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   const [latestMessages, setLatestMessages] = useState<Record<string, { username: string; message: string; timestamp: number; userId?: string }>>({});
   const [loadingChats, setLoadingChats] = useState(true);
   const { hiddenUsers, lastViewedChats, user } = useAppStore();
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dx > 40) {
+          onClose();
+        }
+      },
+    })
+  ).current;
 
   useEffect(() => {
     if (isVisible) {
@@ -192,7 +207,14 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   }
 
   return (
-    <View style={[StyleSheet.absoluteFillObject, styles.modalOverlay, { zIndex: 1000 }]}>
+    <View 
+      style={[StyleSheet.absoluteFillObject, styles.modalOverlay, { zIndex: 1000 }]}
+    >
+      {/* Left-edge swipe strip: captures swipe-right gestures starting on the left 40px to close */}
+      <View
+        style={styles.swipeEdgeStrip}
+        {...panResponder.panHandlers}
+      />
       <View style={[styles.modalContainer, { paddingTop: insets.top, paddingBottom: insets.bottom || 20 }]}>
         {/* Header */}
         <View style={styles.header}>
@@ -269,6 +291,14 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(10, 5, 20, 0.96)', // Deep premium purple-black backplate
+  },
+  swipeEdgeStrip: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: 40,
+    zIndex: 9999,
   },
   modalContainer: {
     flex: 1,
