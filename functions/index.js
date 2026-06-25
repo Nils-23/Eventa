@@ -352,27 +352,25 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
               const weekdayLabel = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Africa/Nairobi' }).format(new Date());
               const dayAndTime = `${weekdayLabel} at ${hourLabel}`;
 
+              const langMode = rollLanguageMode();
+              const useEmoji = rollEmoji();
+              const langInstruction = langMode === 'english'
+                ? `\nFor THIS reply: casual English only, no Sheng.\n`
+                : `\nFor THIS reply: mix Sheng and English naturally.\n`;
+              const emojiInstruction = useEmoji ? `Include ONE fitting emoji.\n` : `No emoji this time.\n`;
+
               const prompt =
-                `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. ` +
-                `You must write EXACTLY like young Nairobians text in 2025 — not formal Swahili, not standard English, but genuine Nairobi Sheng street talk. ` +
-                `\n\nWHAT SHENG ACTUALLY SOUNDS LIKE:\n` +
-                `Nairobians chop, blend and switch mid-sentence naturally. Examples: ` +
-                `"maze place ni fiti sana leo", "si unajua vibes ziko different usiku huu", ` +
-                `"waah buda nilikuwa sishuku itakuwa hivi", "noma sana hapa crowd ni different", ` +
-                `"msee DJ ameweka fire track tena", "maze nimekuwa hapa from 10 vibes ni noma". ` +
-                `\n\nSHENG VOCABULARY: msee/dem/buda/jamaa (people), maze/waah/sawa/kweli (reactions), ` +
-                `fiti/noma/different/poa/top (quality), hapa/hapo/njiani/imejaa (location), ` +
-                `leo/usiku/saa hii (time), si unajua/ama/lakini/tena/hata (connectors). ` +
-                `\n\nRULES: (1) ALWAYS start with a Sheng reaction word: maze/waah/si unajua/kweli/sawa. ` +
-                `(2) Mix languages MID-SENTENCE — never write a full sentence in only English or only Swahili. ` +
-                `(3) End with a short tag: ama/si unajua/buda/kweli/tena. ` +
-                `(4) Keep message length strictly between 20 and 40 characters total. (5) No hashtags. (6) No line breaks. ` +
-                `\n\nIt is ${dayAndTime}. @${cleanSenderName} just said: "${messageData.message || ''}". ` +
-                `Last messages in chat:\n${last5Messages}\n` +
-                `Write ONE reply directly to @${cleanSenderName}. Return ONLY the raw message text, nothing else.`;
+                getBaseStyle(venueName) +
+                RULES +
+                langInstruction +
+                emojiInstruction +
+                `\nIt is ${dayAndTime}. @${cleanSenderName} just said directly to you: "${messageData.message || ''}".\n` +
+                `Recent chat:\n${last5Messages}\n` +
+                `Reply directly to what @${cleanSenderName} said — actually respond to their point, don't change the subject. ` +
+                `Return ONLY the raw message text.`;
 
               let replyText = await callAnthropicHaiku(apiKey, prompt);
-              replyText = cleanPersonaMessageText(replyText, selectedPersona.username, selectedPersona.name);
+              replyText = enforceCeiling(replyText, selectedPersona.username, selectedPersona.name);
 
               if (replyText && replyText.length > 0) {
                 const chatRef = rtdb.ref(`venue_chats/${venueId}`);
@@ -497,27 +495,25 @@ exports.onChatReaction = functions.runWith({ timeoutSeconds: 360, memory: '512MB
       const weekdayLabel = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Africa/Nairobi' }).format(new Date());
       const dayAndTime = `${weekdayLabel} at ${hourLabel}`;
 
+      const langMode = rollLanguageMode();
+      const useEmoji = rollEmoji();
+      const langInstruction = langMode === 'english'
+        ? `\nFor THIS reply: casual English only, no Sheng.\n`
+        : `\nFor THIS reply: mix Sheng and English naturally.\n`;
+      const emojiInstruction = useEmoji ? `Include ONE fitting emoji.\n` : `No emoji this time.\n`;
+
       const prompt =
-        `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. ` +
-        `You must write EXACTLY like young Nairobians text in 2025 — not formal Swahili, not standard English, but genuine Nairobi Sheng street talk. ` +
-        `\n\nWHAT SHENG ACTUALLY SOUNDS LIKE:\n` +
-        `Nairobians chop, blend and switch mid-sentence naturally. Examples: ` +
-        `"maze place ni fiti sana leo", "si unajua vibes ziko different usiku huu", ` +
-        `"waah buda nilikuwa sishuku itakuwa hivi", "noma sana hapa crowd ni different", ` +
-        `"msee DJ ameweka fire track tena", "maze nimekuwa hapa from 10 vibes ni noma". ` +
-        `\n\nSHENG VOCABULARY: msee/dem/buda/jamaa (people), maze/waah/sawa/kweli (reactions), ` +
-        `fiti/noma/different/poa/top (quality), hapa/hapo/njiani/imejaa (location), ` +
-        `leo/usiku/saa hii (time), si unajua/ama/lakini/tena/hata (connectors). ` +
-        `\n\nRULES: (1) ALWAYS start with a Sheng reaction word: maze/waah/si unajua/kweli/sawa. ` +
-        `(2) Mix languages MID-SENTENCE — never write a full sentence in only English or only Swahili. ` +
-        `(3) End with a short tag: ama/si unajua/buda/kweli/tena. ` +
-        `(4) Keep message length strictly between 20 and 40 characters total. (5) No hashtags. (6) No line breaks. ` +
-        `\n\nIt is ${dayAndTime}. @${cleanReactingName} just reacted ${emoji} to your message: "${originalMessage.message}". ` +
-        `Last messages in chat:\n${last5Messages}\n` +
-        `Write ONE reply acknowledging the reaction. Return ONLY the raw message text, nothing else.`;
+        getBaseStyle(venueName) +
+        RULES +
+        langInstruction +
+        emojiInstruction +
+        `\nIt is ${dayAndTime}. @${cleanReactingName} reacted ${emoji} to your message: "${originalMessage.message}".\n` +
+        `Recent chat:\n${last5Messages}\n` +
+        `Write a short, natural acknowledgement of the reaction — a real person reacting to being reacted to. Keep it light. ` +
+        `Return ONLY the raw message text.`;
 
       let replyText = await callAnthropicHaiku(apiKey, prompt);
-      replyText = cleanPersonaMessageText(replyText, persona.username, persona.name);
+      replyText = enforceCeiling(replyText, persona.username, persona.name);
 
       if (replyText && replyText.length > 0) {
         const chatRef = rtdb.ref(`venue_chats/${venueId}`);
@@ -1614,6 +1610,45 @@ async function callAnthropicHaiku(apiKey, userPrompt) {
   throw new Error(`Unexpected Anthropic response: ${JSON.stringify(data)}`);
 }
 
+// --- Persona Prompt Helpers ---
+function rollLanguageMode() {
+  return Math.random() > 0.3 ? 'sheng' : 'english';
+}
+
+function rollEmoji() {
+  return Math.random() > 0.5;
+}
+
+const getBaseStyle = (venueName) => 
+  `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. ` +
+  `You must write EXACTLY like young Nairobians text in 2025. ` +
+  `\n\nWHAT SHENG ACTUALLY SOUNDS LIKE:\n` +
+  `Nairobians chop, blend and switch mid-sentence naturally. Examples: ` +
+  `"maze place ni fiti sana leo", "si unajua vibes ziko different usiku huu", ` +
+  `"waah buda nilikuwa sishuku itakuwa hivi", "noma sana hapa crowd ni different", ` +
+  `"msee DJ ameweka fire track tena", "maze nimekuwa hapa from 10 vibes ni noma". ` +
+  `\n\nSHENG VOCABULARY: msee/dem/buda/jamaa (people), maze/waah/sawa/kweli (reactions), ` +
+  `fiti/noma/different/poa/top (quality), hapa/hapo/njiani/imejaa (location), ` +
+  `leo/usiku/saa hii (time), si unajua/ama/lakini/tena/hata (connectors).\n`;
+
+const RULES = 
+  `\nRULES: ` +
+  `(1) Keep message length strictly under 40 characters total. ` +
+  `(2) No hashtags. (3) No line breaks. ` +
+  `(4) Be extremely casual, like texting a friend.\n`;
+
+function enforceCeiling(text, username, personaName) {
+  return cleanPersonaMessageText(text, username, personaName);
+}
+
+const personaStyles = {
+  hype: `You hype the crowd. Short energy bursts reacting to right now.`,
+  question: `You ask before committing. One genuine question — crowd, music, entry.`,
+  opinion: `You give honest takes. Can be mixed or critical, not just hype.`,
+  enthusiast: `You know events. Name a specific song, DJ, or compare to last week.`
+};
+// ------------------------------
+
 /**
  * Strips leading username/name prefixes and surrounding quotes from the generated message.
  */
@@ -1897,40 +1932,52 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
     return null;
   }
 
-  // ── Calculate top 10% venues per category and select active targeted venues ──
-  const nowMs = Date.now();
-  const cycleTime = (nowMs / (8 * 60 * 60 * 1000)) * 2 * Math.PI;
-
-  const getRotationScore = (v) => {
-    const score = v.simPopularityScore !== undefined ? v.simPopularityScore : 0.5;
-    const rot = Math.sin(cycleTime + getVenueHash(v.id)) * 0.3;
-    return Math.max(0.0, Math.min(1.0, score + rot));
+  // ── Select active targeted venues per day ──
+  const ACTIVE_VENUE_CAPS = {
+    'Sun': 1,
+    'Mon': 0,
+    'Tue': 0,
+    'Wed': 2,
+    'Thu': 3,
+    'Fri': 5,
+    'Sat': 5
   };
 
-  const clubs = allVenues.filter((v) => (v.type || '').toUpperCase() === 'CLUB');
-  const bars = allVenues.filter((v) => (v.type || '').toUpperCase() === 'BAR');
+  function getDateSeed() {
+    return new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Nairobi', year: 'numeric', month: 'numeric', day: 'numeric' }).format(new Date());
+  }
 
-  const sortedClubs = [...clubs].sort((a, b) => getRotationScore(b) - getRotationScore(a));
-  const sortedBars = [...bars].sort((a, b) => getRotationScore(b) - getRotationScore(a));
+  function seededShuffle(array, seedStr) {
+    let seed = 0;
+    for (let i = 0; i < seedStr.length; i++) {
+      seed = (seed << 5) - seed + seedStr.charCodeAt(i);
+      seed |= 0;
+    }
+    const random = () => {
+      let x = Math.sin(seed++) * 10000;
+      return x - Math.floor(x);
+    };
+    const result = [...array];
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+  }
 
-  const topClubsCount = Math.max(1, Math.ceil(sortedClubs.length * 0.1));
-  const topBarsCount = Math.max(1, Math.ceil(sortedBars.length * 0.1));
-
-  const topClubs = sortedClubs.slice(0, topClubsCount);
-  const topBars = sortedBars.slice(0, topBarsCount);
-
-  // Stagger/Progressively select at most 2 clubs and 2 bars from top 10% for this cycle
-  const activeClubs = shuffleArray([...topClubs]).slice(0, 2);
-  const activeBars = shuffleArray([...topBars]).slice(0, 2);
-  const activeVenues = [...activeClubs, ...activeBars];
-
-  console.log(`[Persona] Top 10% Clubs (Targeting ${activeClubs.length}/${topClubs.length}): ${activeClubs.map(v => v.name).join(', ')}`);
-  console.log(`[Persona] Top 10% Bars (Targeting ${activeBars.length}/${topBars.length}): ${activeBars.map(v => v.name).join(', ')}`);
-
-  if (activeVenues.length === 0) {
-    console.log('[Persona] No active venues in top 10% selected. Skipping.');
+  const cap = ACTIVE_VENUE_CAPS[weekday] || 0;
+  if (cap === 0) {
+    console.log(`[Persona] No active venues allowed on ${weekday}. Skipping.`);
     return null;
   }
+
+  const activeVenues = seededShuffle(allVenues, getDateSeed()).slice(0, cap);
+
+  console.log(`[Persona] Selected ${activeVenues.length} active venues for ${weekday}: ${activeVenues.map(v => v.name).join(', ')}`);
+
+  if (activeVenues.length === 0) return null;
+
+  const nowMs = Date.now();
 
   // ── 4. Sample personas for this cycle ───────────────────────────────────
   const shuffledPersonas = shuffleArray([...allPersonas]);
@@ -2011,29 +2058,33 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
     const hourLabel = hour > 12 ? `${hour - 12}PM` : hour === 12 ? '12PM' : `${hour}AM`;
     const dayAndTime = `${weekday} at ${hourLabel}`;
 
+    const langMode = rollLanguageMode();
+    const useEmoji = rollEmoji();
+
+    const langInstruction = langMode === 'english'
+      ? `\nFor THIS message: write in casual English only (no Sheng). Still sound like a young Nairobian texting fast.\n`
+      : `\nFor THIS message: mix Sheng and English naturally, switching mid-sentence.\n`;
+
+    const emojiInstruction = useEmoji
+      ? `Include ONE emoji that fits the mood.\n`
+      : `Do NOT use any emoji this time.\n`;
+
     const prompt =
-      `You are a young Nairobi socialite texting in the ${targetVenue.name} group chat on a nightlife app. ` +
-      `You must write EXACTLY like young Nairobians text in 2025 — not formal Swahili, not standard English, but genuine Nairobi Sheng street talk. ` +
-      `\n\nWHAT SHENG ACTUALLY SOUNDS LIKE:\n` +
-      `Nairobians chop, blend and switch mid-sentence naturally. Examples: ` +
-      `"maze place ni fiti sana leo", "si unajua vibes ziko different usiku huu", ` +
-      `"waah buda nilikuwa sishuku itakuwa hivi", "noma sana hapa crowd ni different", ` +
-      `"msee DJ ameweka fire track tena", "maze nimekuwa hapa from 10 vibes ni noma". ` +
-      `\n\nSHENG VOCABULARY: msee/dem/buda/jamaa (people), maze/waah/sawa/kweli (reactions), ` +
-      `fiti/noma/different/poa/top (quality), hapa/hapo/njiani/imejaa (location), ` +
-      `leo/usiku/saa hii (time), si unajua/ama/lakini/tena/hata (connectors). ` +
-      `\n\nRULES: (1) ALWAYS start with a Sheng reaction word: maze/waah/si unajua/kweli/sawa. ` +
-      `(2) Mix languages MID-SENTENCE — never write a full sentence in only English or only Swahili. ` +
-      `(3) End with a short tag: ama/si unajua/buda/kweli/tena. ` +
-      `(4) Keep message length strictly between 20 and 40 characters total. (5) No hashtags. (6) No line breaks. ` +
-      `\n\nIt is ${dayAndTime}. Last messages in this chat:\n${last5Messages}\n` +
-      `Write ONE message as someone hanging out at ${targetVenue.name}. Return ONLY the raw message text, nothing else.`;
+      getBaseStyle(targetVenue.name) +
+      `Your personality: ${personaStyles[persona.type] || personaStyles.hype}\n` +
+      RULES +
+      langInstruction +
+      emojiInstruction +
+      `\nThis is a GROUP CHAT — read what others just said and CONTINUE the conversation. ` +
+      `React to the last message, answer a question someone asked, or build on the topic. Do NOT post a random unrelated statement.\n` +
+      `\nIt is ${dayAndTime}. Recent chat:\n${last5Messages}\n` +
+      `Write ONE message as ${persona.name} that flows from the conversation above. Return ONLY the raw message text.`;
 
     // ── e. Call Haiku API ─────────────────────────────────────────────────
     let messageText = null;
     try {
       messageText = await callAnthropicHaiku(apiKey, prompt);
-      messageText = cleanPersonaMessageText(messageText, persona.username, persona.name);
+      messageText = enforceCeiling(messageText, persona.username, persona.name);
       console.log(`[Persona] @${persona.username} → "${messageText}"`);
     } catch (err) {
       console.error(`[Persona] Haiku API error for @${persona.username}:`, err.message);
