@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform, AppState } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
@@ -8,6 +8,7 @@ import { createReport } from '../services/reportService';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
+import { useFocusEffect } from '@react-navigation/native';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
 import { uploadStoryMedia, createStory, deleteStory } from '../services/storyService';
@@ -349,6 +350,17 @@ export const MapScreen = () => {
     });
     return () => subscription.remove();
   }, []);
+
+  // Also re-enable tracking when returning to this tab via React Navigation
+  useFocusEffect(
+    useCallback(() => {
+      if (!isMapReady) return;
+      setTrackMarkerChanges(true);
+      // Brief 500ms timeout is enough when map is already ready and we just focused the screen
+      const timer = setTimeout(() => setTrackMarkerChanges(false), 500);
+      return () => clearTimeout(timer);
+    }, [isMapReady])
+  );
 
   useEffect(() => {
     setTrackMarkerChanges(true);
