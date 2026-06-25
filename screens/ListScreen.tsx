@@ -48,8 +48,12 @@ const VenueCard = ({
     Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, speed: 30 }).start();
     
   const handlePress = () => {
-    setSelectedMapVenue(item);
-    navigation.navigate('Map');
+    if (item.type === 'Event') {
+      navigation.navigate('EventDetail', { event: item });
+    } else {
+      setSelectedMapVenue(item);
+      navigation.navigate('Map');
+    }
   };
 
   const formatDistance = (km: number | null) => {

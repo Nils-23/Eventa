@@ -8,7 +8,7 @@ import { createReport } from '../services/reportService';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
 import { uploadStoryMedia, createStory, deleteStory } from '../services/storyService';
@@ -260,6 +260,7 @@ export const MapScreen = () => {
   const { venues, heatPoints } = useLiveVenues();
   const { user, selectedMapVenue, setSelectedMapVenue, isAdmin, pendingVenueAction, setPendingVenueAction, unreadChatCount } = useAppStore();
   const { stories } = useStories();
+  const navigation = useNavigation<any>();
 
   // ─── Zoom tracking ───────────────────────────────────────────────
   // We track the current rounded zoom level so we can convert screen-pixel sizes to
@@ -375,8 +376,8 @@ export const MapScreen = () => {
           latitude: selectedMapVenue.latitude,
           longitude: selectedMapVenue.longitude,
         },
-        zoom: 16,
-        pitch: 45,
+        zoom: 19.5,
+        pitch: 60,
       }, { duration: 1000 });
     }
   }, [selectedMapVenue, isMapReady]);
@@ -886,7 +887,15 @@ export const MapScreen = () => {
 
       {/* LiveVenue Info Overlay Card */}
       {selectedMapVenue && (
-        <View style={[styles.venueInfoCard, { bottom: insets.bottom + 20 }]}>
+        <TouchableOpacity 
+          activeOpacity={selectedMapVenue.type === 'Event' ? 0.95 : 1}
+          style={[styles.venueInfoCard, { bottom: insets.bottom + 20 }]}
+          onPress={() => {
+            if (selectedMapVenue.type === 'Event') {
+              navigation.navigate('EventDetail', { event: selectedMapVenue });
+            }
+          }}
+        >
           {/* Top Banner Image with themed filter */}
           <View style={styles.cardImageContainer}>
             <VenueImage
@@ -939,7 +948,7 @@ export const MapScreen = () => {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
       )}
 
       <View style={[styles.controlsContainer, { bottom: insets.bottom + 120 }]}>
@@ -1000,8 +1009,8 @@ export const MapScreen = () => {
               latitude: venueObj.latitude,
               longitude: venueObj.longitude,
             },
-            zoom: 16,
-            pitch: 45,
+            zoom: 19.5,
+            pitch: 60,
           }, { duration: 1000 });
         }}
       />

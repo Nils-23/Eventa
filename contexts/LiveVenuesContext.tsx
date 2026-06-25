@@ -26,6 +26,8 @@ export interface LiveVenue {
   isOverride?: boolean;
   maxCapacity?: number;
   type?: 'Club' | 'Bar' | 'Activity' | 'Event';
+  ticketLink?: string;
+  price?: string;
   expirationDate?: number; // timestamp in ms
   startDate?: number; // timestamp in ms
   userCount: number;
@@ -65,6 +67,8 @@ interface RawVenue {
   maxCapacity?: number;
   simPopularityScore?: number;
   type?: 'Club' | 'Bar' | 'Activity' | 'Event';
+  ticketLink?: string;
+  price?: string;
   expirationDate?: number;
   startDate?: number;
   hidden?: boolean;
@@ -126,7 +130,9 @@ function areVenuesEqual(a: LiveVenue[], b: LiveVenue[]): boolean {
       va.hidden !== vb.hidden ||
       va.name !== vb.name ||
       va.latitude !== vb.latitude ||
-      va.longitude !== vb.longitude
+      va.longitude !== vb.longitude ||
+      va.ticketLink !== vb.ticketLink ||
+      va.price !== vb.price
     ) {
       return false;
     }

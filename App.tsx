@@ -16,6 +16,7 @@ import { AdminUsersScreen } from './screens/AdminUsersScreen';
 import { AdminReferralsScreen } from './screens/AdminReferralsScreen';
 import { AdminReportsScreen } from './screens/AdminReportsScreen';
 import { AdminAICuratorScreen } from './screens/AdminAICuratorScreen';
+import { EventDetailScreen } from './screens/EventDetailScreen';
 import { useAuth } from './hooks/useAuth';
 
 import { useAppStore } from './hooks/useAppStore';
@@ -97,6 +98,7 @@ export default function App() {
             ) : (
               <>
                 <Stack.Screen name="Main" component={MainTabs} />
+                <Stack.Screen name="EventDetail" component={EventDetailScreen} />
                 <Stack.Screen name="Terms" component={TermsScreen} />
                 <Stack.Screen name="Achievements" component={AchievementsScreen} />
                 <Stack.Screen name="Settings" component={SettingsScreen} />
