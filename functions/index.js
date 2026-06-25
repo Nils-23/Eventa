@@ -2093,10 +2093,8 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
 
     if (!messageText || messageText.length === 0) continue;
 
-    // ── f. Write message to RTDB with staggered timestamp ────────────────
-    // Stagger 3–15 minutes ahead so messages arrive spread out, not all at once
-    const staggerMs = (Math.floor(Math.random() * 13) + 3) * 60 * 1000; // 3–15 minutes
-    const messageTimestamp = nowMs + staggerMs;
+    // ── f. Write message to RTDB with current timestamp ──────────────────
+    const messageTimestamp = nowMs;
 
     try {
       const chatRef = rtdb.ref(`venue_chats/${targetVenue.id}`);
@@ -2109,7 +2107,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
         timestamp: messageTimestamp,
         isPersona: true, // internal flag — never exposed to frontend
       });
-      console.log(`[Persona] ✓ Posted @${persona.username} to ${targetVenue.name} (visible in ~${Math.round(staggerMs / 60000)}min)`);
+      console.log(`[Persona] ✓ Posted @${persona.username} to ${targetVenue.name}`);
       totalMessagesPosted++;
     } catch (err) {
       console.error(`[Persona] RTDB write failed for @${persona.username}:`, err.message);
