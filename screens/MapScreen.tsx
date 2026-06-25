@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import * as Location from 'expo-location';
-import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform, AppState } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Flag, MessageSquare } from 'lucide-react-native';
@@ -296,6 +296,10 @@ export const MapScreen = () => {
   const [showRawPoints, setShowRawPoints] = useState(false);
 
   const handleRegionChange = async (newRegion: Region) => {
+    // Briefly force marker tracking so they redraw correctly if OS garbage collected them during intense panning
+    setTrackMarkerChanges(true);
+    setTimeout(() => setTrackMarkerChanges(false), 2000);
+
     // Determine new zoom level
     let newZoom = 14;
     if (mapRef.current) {
@@ -334,6 +338,18 @@ export const MapScreen = () => {
 
   // Effect to stop marker tracking after mount to boost performance
   const [trackMarkerChanges, setTrackMarkerChanges] = useState(true);
+
+  // Briefly re-enable tracking when App returns to foreground to redraw any OS-dropped bitmaps
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        setTrackMarkerChanges(true);
+        setTimeout(() => setTrackMarkerChanges(false), 2000);
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
   useEffect(() => {
     setTrackMarkerChanges(true);
     const timer = setTimeout(() => setTrackMarkerChanges(false), 2000);
