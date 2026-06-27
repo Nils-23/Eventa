@@ -70,3 +70,36 @@ node scripts/cleanupStorage.js
 - `screens/`: Main application screens (Login, Map, Profile, etc.).
 - `services/`: Firebase configuration and API logic.
 - `scripts/`: Backend/Admin utility scripts.
+
+---
+
+## 🤖 AI Persona Message System (Local Testing)
+
+The AI Persona system uses Claude (`claude-haiku-4-5`) to generate casual Sheng/English messages for venue chats. You can test and iterate on the prompt/generation quality locally without deploying to Firebase or using Firebase emulators.
+
+### Environment Variables
+To run local tests, you only need to provide the Anthropic API key:
+- `ANTHROPIC_API_KEY`: Your Anthropic API console key.
+
+### 1. Batch Test Harness (Tier 1)
+Runs a batch of generations (default 100) rotating through mock dayparts, variants, and personas, and prints a final metrics report:
+```bash
+ANTHROPIC_API_KEY=your_key node scripts/harness.js
+```
+*Configurable parameters (model, temperature, sample size, and RNG seed for reproducibility) are exposed at the top of `scripts/harness.js`.*
+
+### 2. Conversation Simulator (Tier 2)
+Generates a continuous 20-message conversation thread in a single venue, feeding the message history back into the generation context to check the conversational flow:
+```bash
+ANTHROPIC_API_KEY=your_key node scripts/simulate.js
+```
+
+### Overriding the Daypart
+You can force a specific daypart (e.g. `morning`, `afternoon`, `evening`, `night`) for all generated messages by setting `overrideDaypart` inside [fixtures.js](file:///Users/nilsakonkwa/Desktop/Eventa_Ant/scripts/fixtures.js):
+```javascript
+module.exports = {
+  // ...
+  overrideDaypart: 'morning' // Force morning time in the prompt
+};
+```
+

@@ -1,6 +1,7 @@
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
+const { generateMessage } = require("./generator");
 
 admin.initializeApp();
 
@@ -249,6 +250,7 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
     const isPersonaMessage = messageData.isPersona === true || (messageData.user_id && messageData.user_id.startsWith('sim_'));
 
     const venueId = context.params.venueId;
+    const messageId = context.params.messageId;
     const senderId = messageData.user_id;
 
     // Fetch the venue name from Firestore to customize the message
@@ -258,72 +260,147 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
 
     // Load all users with push tokens
     const usersSnap = await db.collection('users').where('expoPushToken', '!=', null).get();
-    if (usersSnap.empty) return;
-    const allUsersWithToken = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const allUsersWithToken = !usersSnap.empty 
+      ? usersSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+      : [];
 
-    // Get all members of this venue's chat
-    const membersSnap = await rtdb.ref(`venue_members/${venueId}`).once('value');
-    const members = membersSnap.exists() ? membersSnap.val() : {};
+    if (allUsersWithToken.length > 0) {
+      // Get all members of this venue's chat
+      const membersSnap = await rtdb.ref(`venue_members/${venueId}`).once('value');
+      const members = membersSnap.exists() ? membersSnap.val() : {};
 
-    const now = Date.now();
-    const ONE_HOUR = 1 * 60 * 60 * 1000;
+      const now = Date.now();
+      const ONE_HOUR = 1 * 60 * 60 * 1000;
 
-    // Construct WhatsApp-style body content
-    let messageText = messageData.message || '';
-    if (messageData.type === 'custom_sticker') {
-      messageText = '📷 sent a custom sticker';
-    } else if (messageData.type === 'sticker') {
-      messageText = `${messageData.message} (sticker)`;
-    }
-    const body = `${messageData.username}: ${messageText}`;
+      // Construct WhatsApp-style body content
+      let messageText = messageData.message || '';
+      if (messageData.type === 'custom_sticker') {
+        messageText = '📷 sent a custom sticker';
+      } else if (messageData.type === 'sticker') {
+        messageText = `${messageData.message} (sticker)`;
+      }
+      const body = `${messageData.username}: ${messageText}`;
 
-    console.log(`Processing message from ${messageData.username} at ${venueName}. Notifying users...`);
+      console.log(`Processing message from ${messageData.username} at ${venueName}. Notifying users...`);
 
-    for (const user of allUsersWithToken) {
-      if (user.id === senderId) continue;
+      for (const user of allUsersWithToken) {
+        if (user.id === senderId) continue;
 
-      // Check if user is actively engaged in chat (last interaction within 1 hour)
-      const isEngaged = members[user.id] && (now - (members[user.id].lastInteractionTime || 0) < ONE_HOUR);
+        // Check if user is actively engaged in chat (last interaction within 1 hour)
+        const isEngaged = members[user.id] && (now - (members[user.id].lastInteractionTime || 0) < ONE_HOUR);
 
-      if (isEngaged) {
-        // Persona messages already notify engaged users inside runPersonaActivity — skip here to avoid doubles.
-        if (isPersonaMessage) continue;
-        // Real user messages: engaged users get unlimited notifications (bypass all limits)
-        await sendRateLimitedPushNotification(
-          user.id,
-          venueName,
-          body,
-          { venueId, type: 'chat' },
-          null,
-          0,
-          true // bypassLimits
-        );
-      } else {
-        // Non-engaged users: max 2 chat activity notifications per venue per hour (30-min throttle).
-        // The throttle key ensures only the first message in each 30-min window pings them.
-        await sendRateLimitedPushNotification(
-          user.id,
-          venueName,
-          body,
-          { venueId, type: 'chat' },
-          `chat_${venueId}`,
-          30 * 60 * 1000, // 30-minute throttle → max 2 pings/hour per venue
-          false, // bypassLimits
-          true // bypassDailyLimit
-        );
+        if (isEngaged) {
+          // Persona messages already notify engaged users inside runPersonaActivity — skip here to avoid doubles.
+          if (isPersonaMessage) continue;
+          // Real user messages: engaged users get unlimited notifications (bypass all limits)
+          await sendRateLimitedPushNotification(
+            user.id,
+            venueName,
+            body,
+            { venueId, type: 'chat' },
+            null,
+            0,
+            true // bypassLimits
+          );
+        } else {
+          // Non-engaged users: max 2 chat activity notifications per venue per hour (30-min throttle).
+          // The throttle key ensures only the first message in each 30-min window pings them.
+          await sendRateLimitedPushNotification(
+            user.id,
+            venueName,
+            body,
+            { venueId, type: 'chat' },
+            `chat_${venueId}`,
+            30 * 60 * 1000, // 30-minute throttle → max 2 pings/hour per venue
+            false, // bypassLimits
+            true // bypassDailyLimit
+          );
+        }
       }
     }
 
     // ── Persona Direct Message Reply Trigger ─────────────────────────────
     const venueType = (venueSnap.data().type || '').toUpperCase();
-    if (!isPersonaMessage && (venueType === 'CLUB' || venueType === 'BAR')) {
+    const parentChainDepth = messageData.chainDepth !== undefined 
+      ? parseInt(messageData.chainDepth, 10) 
+      : (isPersonaMessage ? 1 : 0);
+
+    // Determine venue tier based on cap & date seed, and hot activation override
+    const isHot = await hasRecentRealUserActivity(venueId, 180);
+    
+    const dateInfo = getRolloverEATDate(Date.now());
+    const seedStr = `${dateInfo.year}-${dateInfo.month}-${dateInfo.day}`;
+    
+    // Load all venues to do the seeded select
+    const venuesSnap = await db.collection('venues').get();
+    const allVenues = venuesSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((v) => {
+        if (v.hidden === true) return false;
+        if (v.expirationDate && v.expirationDate < Date.now()) return false;
+        if (v.startDate && v.startDate > Date.now()) return false;
+        const type = (v.type || '').toUpperCase();
+        return type === 'CLUB' || type === 'BAR';
+      });
+      
+    const totalSimCap = ['Fri', 'Sat'].includes(dateInfo.weekday) ? 4 : 2;
+    const selectedVenuesForNight = seededShuffle(allVenues, seedStr).slice(0, totalSimCap);
+    
+    const numDeep = ['Fri', 'Sat'].includes(dateInfo.weekday) 
+      ? (seededRandom(seedStr, 999) < 0.5 ? 1 : 2) 
+      : 0;
+      
+    let venueTier = null;
+    const simIndex = selectedVenuesForNight.findIndex(v => v.id === venueId);
+    if (simIndex !== -1) {
+      venueTier = simIndex < numDeep ? 'deep' : 'ambient';
+    }
+    if (isHot) {
+      venueTier = 'deep';
+    }
+
+    const shouldTriggerReply = (venueTier === 'deep' && (!isPersonaMessage || parentChainDepth < 2));
+
+    if (shouldTriggerReply && (venueType === 'CLUB' || venueType === 'BAR')) {
       try {
         const personasSnap = await db.collection('personas').get();
         if (!personasSnap.empty) {
           const allPersonas = personasSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-          const preferredPersonas = allPersonas.filter(p => p.preferredVenueTypes && p.preferredVenueTypes.includes(venueSnap.data().type));
-          const personaPool = preferredPersonas.length > 0 ? preferredPersonas : allPersonas;
+          // Loop guard: exclude the sender of the triggering message
+          const eligiblePersonas = allPersonas.filter(p => p.id !== messageData.user_id);
+          const preferredPersonas = eligiblePersonas.filter(p => p.preferredVenueTypes && p.preferredVenueTypes.includes(venueSnap.data().type));
+          const personaPool = preferredPersonas.length > 0 ? preferredPersonas : eligiblePersonas;
+          if (personaPool.length === 0) return;
           const selectedPersona = personaPool[Math.floor(Math.random() * personaPool.length)];
+
+          // Cooldown and hourly cap check (Loop guard + rate limit verification)
+          const cooldownId = `${selectedPersona.id}_${venueId}`;
+          let cooldownData = null;
+          try {
+            const cooldownDoc = await db.collection('persona_cooldowns').doc(cooldownId).get();
+            if (cooldownDoc.exists) cooldownData = cooldownDoc.data();
+          } catch (err) {
+            console.warn(`[Persona Message Reply] Cooldown read failed for ${cooldownId}:`, err.message);
+          }
+
+          const nowMs = Date.now();
+          const COOLDOWN_MS = 45 * 60 * 1000;
+          const VENUE_HOUR_CAP = 3;
+
+          if (cooldownData && cooldownData.lastPostAt && (nowMs - cooldownData.lastPostAt < COOLDOWN_MS)) {
+            console.log(`[Persona Message Reply] @${selectedPersona.username} is on cooldown for ${venueName}. Skipping reply.`);
+            return;
+          }
+
+          const oneHourAgo = nowMs - 60 * 60 * 1000;
+          const currentCount = cooldownData && cooldownData.countWindowStart && cooldownData.countWindowStart > oneHourAgo
+            ? (cooldownData.venueMessageCount || 0)
+            : 0;
+
+          if (currentCount >= VENUE_HOUR_CAP) {
+            console.log(`[Persona Message Reply] @${selectedPersona.username} hit hourly cap (${VENUE_HOUR_CAP}) at ${venueName}. Skipping reply.`);
+            return;
+          }
 
           // Get simulation settings
           let apiKey = null;
@@ -334,8 +411,11 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
             if (settingsData.enabled !== false && apiKey) {
               const cleanSenderName = (messageData.username || 'EventGoer').toLowerCase().includes('nils') ? 'VibeGoer' : (messageData.username || 'EventGoer');
               
-              // Wait for stagger: average 3-5 minutes, randomized between 2-6 minutes
-              const delaySeconds = Math.floor(Math.random() * 240) + 120; // 120 to 360 seconds (2 to 6 minutes)
+              // Wait for stagger: average 3-5 minutes, randomized between 2-6 minutes (shortened in emulator)
+              const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
+              const delaySeconds = isEmulator
+                ? (Math.floor(Math.random() * 2) + 1)
+                : (Math.floor(Math.random() * 240) + 120); // 120 to 360 seconds (2 to 6 minutes)
               console.log(`[Persona Message Reply] Scheduling reply from @${selectedPersona.username} to @${cleanSenderName} in ${delaySeconds} seconds...`);
               await new Promise(resolve => setTimeout(resolve, delaySeconds * 1000));
 
@@ -352,25 +432,17 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
               const weekdayLabel = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Africa/Nairobi' }).format(new Date());
               const dayAndTime = `${weekdayLabel} at ${hourLabel}`;
 
-              const langMode = rollLanguageMode();
-              const useEmoji = rollEmoji();
-              const langInstruction = langMode === 'english'
-                ? `\nFor THIS reply: casual English only, no Sheng.\n`
-                : `\nFor THIS reply: mix Sheng and English naturally.\n`;
-              const emojiInstruction = useEmoji ? `Include ONE fitting emoji.\n` : `No emoji this time.\n`;
-
-              const prompt =
-                getBaseStyle(venueName) +
-                RULES +
-                langInstruction +
-                emojiInstruction +
-                `\nIt is ${dayAndTime}. @${cleanSenderName} just said directly to you: "${messageData.message || ''}".\n` +
-                `Recent chat:\n${last5Messages}\n` +
-                `Reply directly to what @${cleanSenderName} said — actually respond to their point, don't change the subject. ` +
-                `Return ONLY the raw message text.`;
-
-              let replyText = await callAnthropicHaiku(apiKey, prompt);
-              replyText = enforceCeiling(replyText, selectedPersona.username, selectedPersona.name);
+              let replyText = await generateMessage({
+                variant: 'dm',
+                persona: selectedPersona,
+                venueName: venueName,
+                history: last5Messages,
+                daypart: dayAndTime,
+                senderName: cleanSenderName,
+                senderMessage: messageData.message || '',
+                tier: venueTier,
+                apiKey: apiKey
+              });
 
               if (replyText && replyText.length > 0) {
                 const chatRef = rtdb.ref(`venue_chats/${venueId}`);
@@ -382,19 +454,37 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                   message: replyText,
                   type: 'text',
                   timestamp: replyTimestamp,
-                  isPersona: true
+                  isPersona: true,
+                  chainDepth: parentChainDepth + 1
                 });
-                console.log(`[Persona Message Reply] ✓ Posted @${selectedPersona.username} reply to @${cleanSenderName} at ${venueName}`);
+                console.log(`[Persona Message Reply] ✓ Posted @${selectedPersona.username} reply to @${cleanSenderName} at ${venueName} (chainDepth: ${parentChainDepth + 1})`);
 
                 // Update cooldown
-                const cooldownId = `${selectedPersona.id}_${venueId}`;
-                await db.collection('persona_cooldowns').doc(cooldownId).set({
-                  personaId: selectedPersona.id,
-                  venueId: venueId,
-                  lastPostAt: Date.now(),
-                  venueMessageCount: admin.firestore.FieldValue.increment(1),
-                  countWindowStart: admin.firestore.FieldValue.serverTimestamp()
-                }, { merge: true });
+                const cooldownDocRef = db.collection('persona_cooldowns').doc(cooldownId);
+                const oneHourAgoMs = Date.now() - 60 * 60 * 1000;
+                
+                await db.runTransaction(async (t) => {
+                  const currentCooldown = await t.get(cooldownDocRef);
+                  let finalCount = 1;
+                  let finalWindowStart = Date.now();
+                  
+                  if (currentCooldown.exists) {
+                    const data = currentCooldown.data();
+                    const windowStartVal = data.countWindowStart || Date.now();
+                    if (windowStartVal > oneHourAgoMs) {
+                      finalCount = (data.venueMessageCount || 0) + 1;
+                      finalWindowStart = windowStartVal;
+                    }
+                  }
+                  
+                  t.set(cooldownDocRef, {
+                    personaId: selectedPersona.id,
+                    venueId: venueId,
+                    lastPostAt: Date.now(),
+                    venueMessageCount: finalCount,
+                    countWindowStart: finalWindowStart
+                  }, { merge: true });
+                });
 
                 // Push notification to members
                 try {
@@ -495,25 +585,17 @@ exports.onChatReaction = functions.runWith({ timeoutSeconds: 360, memory: '512MB
       const weekdayLabel = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Africa/Nairobi' }).format(new Date());
       const dayAndTime = `${weekdayLabel} at ${hourLabel}`;
 
-      const langMode = rollLanguageMode();
-      const useEmoji = rollEmoji();
-      const langInstruction = langMode === 'english'
-        ? `\nFor THIS reply: casual English only, no Sheng.\n`
-        : `\nFor THIS reply: mix Sheng and English naturally.\n`;
-      const emojiInstruction = useEmoji ? `Include ONE fitting emoji.\n` : `No emoji this time.\n`;
-
-      const prompt =
-        getBaseStyle(venueName) +
-        RULES +
-        langInstruction +
-        emojiInstruction +
-        `\nIt is ${dayAndTime}. @${cleanReactingName} reacted ${emoji} to your message: "${originalMessage.message}".\n` +
-        `Recent chat:\n${last5Messages}\n` +
-        `Write a short, natural acknowledgement of the reaction — a real person reacting to being reacted to. Keep it light. ` +
-        `Return ONLY the raw message text.`;
-
-      let replyText = await callAnthropicHaiku(apiKey, prompt);
-      replyText = enforceCeiling(replyText, persona.username, persona.name);
+      let replyText = await generateMessage({
+        variant: 'reaction',
+        persona: persona,
+        venueName: venueName,
+        history: last5Messages,
+        daypart: dayAndTime,
+        reactingName: cleanReactingName,
+        reactionEmoji: emoji,
+        originalMessage: originalMessage.message,
+        apiKey: apiKey
+      });
 
       if (replyText && replyText.length > 0) {
         const chatRef = rtdb.ref(`venue_chats/${venueId}`);
@@ -524,7 +606,8 @@ exports.onChatReaction = functions.runWith({ timeoutSeconds: 360, memory: '512MB
           message: replyText,
           type: 'text',
           timestamp: Date.now(),
-          isPersona: true
+          isPersona: true,
+          chainDepth: 0
         });
         console.log(`[Persona Reaction Reply] ✓ Posted @${persona.username} reaction reply to @${cleanReactingName} in ${venueName}`);
 
@@ -1577,163 +1660,7 @@ exports.monthlyEngagementNotification = functions.pubsub
 // peak hours. Messages are generated via Claude Haiku (claude-haiku-4-5).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Calls the Anthropic Claude Haiku API and returns the raw text response.
- * @param {string} apiKey
- * @param {string} userPrompt - Full prompt text (no separate system prompt needed for simple messages)
- * @return {Promise<string>}
- */
-async function callAnthropicHaiku(apiKey, userPrompt) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5',
-      max_tokens: 150,
-      messages: [{ role: 'user', content: userPrompt }],
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Anthropic API error: ${response.status} - ${errText}`);
-  }
-
-  const data = await response.json();
-  if (data && data.content && data.content[0] && data.content[0].text) {
-    return data.content[0].text.trim();
-  }
-  throw new Error(`Unexpected Anthropic response: ${JSON.stringify(data)}`);
-}
-
-// --- Persona Prompt Helpers ---
-function rollLanguageMode() {
-  return Math.random() > 0.3 ? 'sheng' : 'english';
-}
-
-function rollEmoji() {
-  return Math.random() > 0.5;
-}
-
-const getBaseStyle = (venueName) => 
-  `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. ` +
-  `You must write EXACTLY like young Nairobians text in 2025. ` +
-  `\n\nWHAT SHENG ACTUALLY SOUNDS LIKE:\n` +
-  `Nairobians chop, blend and switch mid-sentence naturally. Examples: ` +
-  `"maze place ni fiti sana leo", "si unajua vibes ziko different usiku huu", ` +
-  `"waah buda nilikuwa sishuku itakuwa hivi", "noma sana hapa crowd ni different", ` +
-  `"msee DJ ameweka fire track tena", "maze nimekuwa hapa from 10 vibes ni noma". ` +
-  `\n\nSHENG VOCABULARY: msee/dem/buda/jamaa (people), maze/waah/sawa/kweli (reactions), ` +
-  `fiti/noma/different/poa/top (quality), hapa/hapo/njiani/imejaa (location), ` +
-  `leo/usiku/saa hii (time), si unajua/ama/lakini/tena/hata (connectors).\n`;
-
-const RULES = 
-  `\nRULES: ` +
-  `(1) Keep message length strictly under 40 characters total. ` +
-  `(2) No hashtags. (3) No line breaks. ` +
-  `(4) Be extremely casual, like texting a friend.\n`;
-
-function enforceCeiling(text, username, personaName) {
-  return cleanPersonaMessageText(text, username, personaName);
-}
-
-const personaStyles = {
-  hype: `You hype the crowd. Short energy bursts reacting to right now.`,
-  question: `You ask before committing. One genuine question — crowd, music, entry.`,
-  opinion: `You give honest takes. Can be mixed or critical, not just hype.`,
-  enthusiast: `You know events. Name a specific song, DJ, or compare to last week.`
-};
-// ------------------------------
-
-/**
- * Strips leading username/name prefixes and surrounding quotes from the generated message.
- */
-function cleanPersonaMessageText(text, username, personaName) {
-  if (!text) return '';
-  let cleaned = text.trim();
-  
-  // Remove surrounding quotes if they exist
-  if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
-    cleaned = cleaned.slice(1, -1).trim();
-  }
-  if (cleaned.startsWith("'") && cleaned.endsWith("'")) {
-    cleaned = cleaned.slice(1, -1).trim();
-  }
-
-  // Remove username prefixes
-  // e.g. "username: message", "@username: message", "PersonaName: message", "PersonaName - message"
-  const prefixes = [
-    username + ':',
-    '@' + username + ':',
-    personaName + ':',
-    '@' + personaName + ':',
-    username + ' -',
-    personaName + ' -'
-  ];
-
-  for (const prefix of prefixes) {
-    if (cleaned.toLowerCase().startsWith(prefix.toLowerCase())) {
-      cleaned = cleaned.substring(prefix.length).trim();
-      break;
-    }
-  }
-
-  // Double check if there is any generic "Name:" or "@Name:" pattern at the beginning (up to 20 chars)
-  const colonMatch = cleaned.match(/^@?[\w\.\-]{2,20}\s*:\s*/i);
-  if (colonMatch) {
-    cleaned = cleaned.substring(colonMatch[0].length).trim();
-  }
-
-  // Strip quotes again in case they were inside the prefix
-  if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
-    cleaned = cleaned.slice(1, -1).trim();
-  }
-  if (cleaned.startsWith("'") && cleaned.endsWith("'")) {
-    cleaned = cleaned.slice(1, -1).trim();
-  }
-
-  // Remove any newlines or line breaks to keep it on a single line
-  cleaned = cleaned.replace(/[\r\n]+/g, ' ').trim();
-
-  // Enforce 1-2 sentences max by taking only the first 2 sentences
-  const sentences = cleaned.match(/[^.!?]+[.!?]+(\s+|$)/g);
-  if (sentences && sentences.length > 2) {
-    cleaned = sentences.slice(0, 2).join('').trim();
-  }
-
-  // Safety filter to completely block/censor real user names (run BEFORE length constraint so replacement doesn't break limits)
-  const realNamePattern = /nilsakonkwa|nils/gi;
-  cleaned = cleaned.replace(realNamePattern, 'buda');
-
-  // Strict cap: always between 20 and 40 characters MAX (inclusive)
-  if (cleaned.length > 40) {
-    // Try to truncate at last word boundary within 40 chars
-    let truncated = cleaned.substring(0, 40).replace(/\s+\S*$/, '').trim();
-    if (truncated.length < 20) {
-      truncated = cleaned.substring(0, 40).trim();
-    }
-    if (truncated.length > 40) {
-      truncated = truncated.substring(0, 40);
-    }
-    cleaned = truncated;
-  }
-
-  // Enforce minimum 20 characters by appending Sheng fillers
-  if (cleaned.length < 20) {
-    const fillers = [" maze", " buda", " noma", " vibe", " fiti", " sana", " hapa"];
-    let fillerIdx = 0;
-    while (cleaned.length < 20) {
-      cleaned += fillers[fillerIdx % fillers.length];
-      fillerIdx++;
-    }
-  }
-
-  return cleaned;
-}
+// Prompt building, call API, and post-processing functions have been moved to generator.js.
 
 
 /**
@@ -1764,6 +1691,70 @@ function getPersonaNairobiTime() {
   return { weekday, hour, minute };
 }
 
+function getRolloverEATDate(nowMs = Date.now()) {
+  const format = (options) => new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Nairobi', ...options }).format(nowMs);
+  
+  const yearStr = format({ year: 'numeric' });
+  const monthStr = format({ month: 'numeric' });
+  const dayStr = format({ day: 'numeric' });
+  const hourStr = format({ hour: 'numeric', hour12: false });
+  
+  let year = parseInt(yearStr, 10);
+  let month = parseInt(monthStr, 10);
+  let day = parseInt(dayStr, 10);
+  let hour = parseInt(hourStr, 10);
+  if (hour === 24) hour = 0;
+  
+  if (hour < 5) {
+    const d = new Date(nowMs - 24 * 60 * 60 * 1000);
+    const prevFormat = (options) => new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Nairobi', ...options }).format(d);
+    return {
+      year: parseInt(prevFormat({ year: 'numeric' }), 10),
+      month: parseInt(prevFormat({ month: 'numeric' }), 10),
+      day: parseInt(prevFormat({ day: 'numeric' }), 10),
+      weekday: prevFormat({ weekday: 'short' }),
+      hour: hour
+    };
+  }
+  
+  return {
+    year,
+    month,
+    day,
+    weekday: format({ weekday: 'short' }),
+    hour
+  };
+}
+
+function seededShuffle(array, seedStr) {
+  let seed = 0;
+  for (let i = 0; i < seedStr.length; i++) {
+    seed = (seed << 5) - seed + seedStr.charCodeAt(i);
+    seed |= 0;
+  }
+  const random = () => {
+    let x = Math.sin(seed++) * 10000;
+    return x - Math.floor(x);
+  };
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+function seededRandom(seedStr, extraSeed = 0) {
+  let seed = extraSeed;
+  const combined = seedStr + String(extraSeed);
+  for (let i = 0; i < combined.length; i++) {
+    seed = (seed << 5) - seed + combined.charCodeAt(i);
+    seed |= 0;
+  }
+  let x = Math.sin(seed) * 10000;
+  return x - Math.floor(x);
+}
+
 /**
  * Determines the activity window for personas given current Nairobi time.
  * Returns null if this is a dead-silent period.
@@ -1784,11 +1775,14 @@ function getPersonaActivityWindow(weekday, hour) {
   if (['Wed', 'Thu'].includes(weekday) && hour >= 20 && hour < 24) {
     return { window: 'mid_week_night', personaSampleSize: Math.floor(Math.random() * 3) + 3 };
   }
+  // Sun, Mon, Tue: 8pm–midnight → light activity, 1–2 personas
+  if (['Sun', 'Mon', 'Tue'].includes(weekday) && hour >= 20 && hour < 24) {
+    return { window: 'light_night', personaSampleSize: Math.floor(Math.random() * 2) + 1 }; // 1-2
+  }
   // Mon–Fri 3pm–6pm → light afternoon, 1–2 personas
   if (['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday) && hour >= 15 && hour < 18) {
     return { window: 'afternoon', personaSampleSize: Math.floor(Math.random() * 2) + 1 };
   }
-  // Dead silent: Mon & Tue mornings (all other times)
   if (['Mon', 'Tue'].includes(weekday) && (hour < 15 || hour >= 18)) {
     return null; // silent
   }
@@ -1868,8 +1862,14 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
   console.log('[Persona] Starting persona activity cycle...');
 
   // ── 1. Check current Nairobi time ────────────────────────────────────────
-  const { weekday, hour, minute } = getPersonaNairobiTime();
-  console.log(`[Persona] Nairobi time: ${weekday} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`);
+  const nowMs = Date.now();
+  const dateInfo = getRolloverEATDate(nowMs);
+  const weekday = dateInfo.weekday;
+  const hour = dateInfo.hour;
+  
+  const calendarTime = getPersonaNairobiTime();
+  console.log(`[Persona] Nairobi Calendar time: ${calendarTime.weekday} ${String(calendarTime.hour).padStart(2, '0')}:${String(calendarTime.minute).padStart(2, '0')}`);
+  console.log(`[Persona] Nairobi Rollover time: ${weekday} ${String(hour).padStart(2, '0')}:00`);
 
   const activityWindow = getPersonaActivityWindow(weekday, hour);
   if (!activityWindow) {
@@ -1933,51 +1933,43 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
   }
 
   // ── Select active targeted venues per day ──
-  const ACTIVE_VENUE_CAPS = {
-    'Sun': 1,
-    'Mon': 0,
-    'Tue': 0,
-    'Wed': 2,
-    'Thu': 3,
-    'Fri': 5,
-    'Sat': 5
-  };
+  const seedStr = `${dateInfo.year}-${dateInfo.month}-${dateInfo.day}`;
 
-  function getDateSeed() {
-    return new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Nairobi', year: 'numeric', month: 'numeric', day: 'numeric' }).format(new Date());
-  }
 
-  function seededShuffle(array, seedStr) {
-    let seed = 0;
-    for (let i = 0; i < seedStr.length; i++) {
-      seed = (seed << 5) - seed + seedStr.charCodeAt(i);
-      seed |= 0;
+
+  const totalSimCap = ['Fri', 'Sat'].includes(weekday) ? 4 : 2;
+  const selectedVenuesForNight = seededShuffle(allVenues, seedStr).slice(0, totalSimCap);
+
+  const numDeep = ['Fri', 'Sat'].includes(weekday)
+    ? (seededRandom(seedStr, 999) < 0.5 ? 1 : 2)
+    : 0;
+
+  // Track simulated venue tiers
+  const simulatedVenueTiers = {};
+  selectedVenuesForNight.forEach((venue, index) => {
+    simulatedVenueTiers[venue.id] = index < numDeep ? 'deep' : 'ambient';
+  });
+
+  // Find any uncapped active hot venues (real-user activity in last 3 hours)
+  const hotVenues = [];
+  for (const venue of allVenues) {
+    const isHot = await hasRecentRealUserActivity(venue.id, 180);
+    if (isHot && !selectedVenuesForNight.some(sv => sv.id === venue.id)) {
+      hotVenues.push(venue);
     }
-    const random = () => {
-      let x = Math.sin(seed++) * 10000;
-      return x - Math.floor(x);
-    };
-    const result = [...array];
-    for (let i = result.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [result[i], result[j]] = [result[j], result[i]];
-    }
-    return result;
   }
 
-  const cap = ACTIVE_VENUE_CAPS[weekday] || 0;
-  if (cap === 0) {
-    console.log(`[Persona] No active venues allowed on ${weekday}. Skipping.`);
-    return null;
+  // Combine simulated and hot venues
+  const activeVenues = [...selectedVenuesForNight, ...hotVenues];
+
+  console.log(`[Persona] Selected ${selectedVenuesForNight.length} simulated venues for ${weekday} (seed: ${seedStr}, numDeep: ${numDeep}): ${selectedVenuesForNight.map(v => `${v.name} (${simulatedVenueTiers[v.id]})`).join(', ')}`);
+  if (hotVenues.length > 0) {
+    console.log(`[Persona] Appended ${hotVenues.length} hot venues active with real users: ${hotVenues.map(v => v.name).join(', ')}`);
   }
-
-  const activeVenues = seededShuffle(allVenues, getDateSeed()).slice(0, cap);
-
-  console.log(`[Persona] Selected ${activeVenues.length} active venues for ${weekday}: ${activeVenues.map(v => v.name).join(', ')}`);
 
   if (activeVenues.length === 0) return null;
 
-  const nowMs = Date.now();
+
 
   // ── 4. Sample personas for this cycle ───────────────────────────────────
   const shuffledPersonas = shuffleArray([...allPersonas]);
@@ -2058,33 +2050,25 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
     const hourLabel = hour > 12 ? `${hour - 12}PM` : hour === 12 ? '12PM' : `${hour}AM`;
     const dayAndTime = `${weekday} at ${hourLabel}`;
 
-    const langMode = rollLanguageMode();
-    const useEmoji = rollEmoji();
+    // Determine target venue tier
+    let venueTier = simulatedVenueTiers[targetVenue.id] || null;
+    const isHot = await hasRecentRealUserActivity(targetVenue.id, 180);
+    if (isHot) {
+      venueTier = 'deep';
+    }
 
-    const langInstruction = langMode === 'english'
-      ? `\nFor THIS message: write in casual English only (no Sheng). Still sound like a young Nairobian texting fast.\n`
-      : `\nFor THIS message: mix Sheng and English naturally, switching mid-sentence.\n`;
-
-    const emojiInstruction = useEmoji
-      ? `Include ONE emoji that fits the mood.\n`
-      : `Do NOT use any emoji this time.\n`;
-
-    const prompt =
-      getBaseStyle(targetVenue.name) +
-      `Your personality: ${personaStyles[persona.type] || personaStyles.hype}\n` +
-      RULES +
-      langInstruction +
-      emojiInstruction +
-      `\nThis is a GROUP CHAT — read what others just said and CONTINUE the conversation. ` +
-      `React to the last message, answer a question someone asked, or build on the topic. Do NOT post a random unrelated statement.\n` +
-      `\nIt is ${dayAndTime}. Recent chat:\n${last5Messages}\n` +
-      `Write ONE message as ${persona.name} that flows from the conversation above. Return ONLY the raw message text.`;
-
-    // ── e. Call Haiku API ─────────────────────────────────────────────────
+    // ── e. Generate message text ──────────────────────────────────────────
     let messageText = null;
     try {
-      messageText = await callAnthropicHaiku(apiKey, prompt);
-      messageText = enforceCeiling(messageText, persona.username, persona.name);
+      messageText = await generateMessage({
+        variant: 'ambient',
+        persona: persona,
+        venueName: targetVenue.name,
+        history: last5Messages,
+        daypart: dayAndTime,
+        tier: venueTier,
+        apiKey: apiKey
+      });
       console.log(`[Persona] @${persona.username} → "${messageText}"`);
     } catch (err) {
       console.error(`[Persona] Haiku API error for @${persona.username}:`, err.message);
@@ -2106,6 +2090,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
         type: 'text',
         timestamp: messageTimestamp,
         isPersona: true, // internal flag — never exposed to frontend
+        chainDepth: 0
       });
       console.log(`[Persona] ✓ Posted @${persona.username} to ${targetVenue.name}`);
       totalMessagesPosted++;
