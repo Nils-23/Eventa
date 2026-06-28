@@ -26,7 +26,7 @@ const getBaseStyle = (venueName) =>
 
 const RULES = 
   `\nRULES: ` +
-  `(1) Write ONE COMPLETE short line (~5–10 words). It must be a finished thought. Never stop mid-sentence. ` +
+  `(1) Write ONE COMPLETE short line (~8 words max). It must be a finished thought. Never stop mid-sentence. ` +
   `(2) No hashtags. (3) No line breaks. ` +
   `(4) Be extremely casual, like texting a friend.\n`;
 
@@ -158,28 +158,11 @@ function cleanPersonaMessageText(text, username, personaName, intentType = 'defa
   // Remove any newlines or line breaks to keep it on a single line
   cleaned = cleaned.replace(/[\r\n]+/g, ' ').trim();
 
-  // Enforce 1-2 sentences max by taking only the first 2 sentences
-  const sentences = cleaned.match(/[^.!?]+[.!?]+(\s+|$)/g);
-  if (sentences && sentences.length > 2) {
-    cleaned = sentences.slice(0, 2).join('').trim();
-  }
-
   // Safety filter to completely block/censor real user names
   const realNamePattern = /nilsakonkwa|nils/gi;
   cleaned = cleaned.replace(realNamePattern, 'buda');
 
-  // Hard safety ceiling: raise to ~70 chars and cut ONLY at a whole-word boundary
   let body = cleaned;
-  let bodyArr = [...body];
-  if (bodyArr.length > 70) {
-    const sub = bodyArr.slice(0, 70).join('');
-    const lastSpace = sub.lastIndexOf(' ');
-    if (lastSpace !== -1) {
-      body = sub.substring(0, lastSpace).trim();
-    } else {
-      body = sub.trim();
-    }
-  }
   
   // Clean dangling endings (never cut mid-word or end on connector/comma)
   body = cleanDanglingEndings(body);
@@ -225,7 +208,7 @@ function cleanPersonaMessageText(text, username, personaName, intentType = 'defa
 
 async function callAnthropicHaiku(apiKey, userPrompt, config = {}) {
   const model = config.model || 'claude-haiku-4-5';
-  const maxTokens = 40;
+  const maxTokens = 60;
   
   const bodyData = {
     model: model,
@@ -383,11 +366,11 @@ async function generateMessage(context) {
 
   let langInstruction = '';
   if (langMode === 'english_dominant') {
-    langInstruction = `\nFor THIS message: write in natural casual English texting style, naturally weaving exactly 3 Sheng/Swahili words (like maze, msee, buda, fiti, noma, poa, sawa, sana) into the sentence. English must dominate completely. NEVER write a full Swahili or Swahili-dominant sentence.\n`;
+    langInstruction = `\nFor THIS message: write in natural casual English texting style, naturally weaving exactly 1 or 2 Sheng/Swahili words (like maze, msee, buda, fiti, noma, poa, sawa, sana) into the sentence. Keep it extremely brief (under 50 characters). English must dominate completely. NEVER write a full Swahili or Swahili-dominant sentence.\n`;
   } else if (langMode === 'mixed_light') {
-    langInstruction = `\nFor THIS message: write in casual English texting style, naturally weaving exactly 4 Sheng/Swahili words (like maze, msee, buda, fiti, noma, poa, sawa, leo, usiku, njiani, sana) into the sentence. English must still be the grammatical base.\n`;
+    langInstruction = `\nFor THIS message: write in casual English texting style, naturally weaving exactly 2 or 3 Sheng/Swahili words (like maze, msee, buda, fiti, noma, poa, sawa, leo, usiku, njiani, sana) into the sentence. Keep it extremely brief (under 50 characters). English must still be the grammatical base.\n`;
   } else {
-    langInstruction = `\nFor THIS message: mix Sheng/Swahili and English (5-6 Sheng/Swahili words max, e.g. maze, msee, buda, fiti, noma, poa, sawa, usiku, leo, njiani, sana, lakini) switching naturally mid-sentence. English must still be present.\n`;
+    langInstruction = `\nFor THIS message: mix Sheng/Swahili and English (3-4 Sheng/Swahili words max, e.g. maze, msee, buda, fiti, noma, poa, sawa, usiku, leo, njiani, sana, lakini) switching naturally mid-sentence. Keep it extremely brief (under 50 characters). English must still be present.\n`;
   }
 
   const emojiInstruction = (variant === 'ambient' || variant === 'ambient_seeding')
@@ -512,6 +495,8 @@ async function generateMessage(context) {
   let stopReason = '';
   let finalMessage = '';
   let attempts = 0;
+  let savedEndTurnText = null;
+  let lastText = '';
 
   while (attempts < 3) {
     console.log(`[Persona Generator] Generation attempt ${attempts + 1} for @${personaUsername}...`);
@@ -519,15 +504,30 @@ async function generateMessage(context) {
       const res = await callAnthropicHaiku(apiKey, prompt, callConfig);
       text = res.text;
       stopReason = res.stopReason;
+      lastText = text;
       
-      if (stopReason === 'max_tokens') {
-        console.warn(`[Persona Generator] Attempt ${attempts + 1} truncated (stop_reason: max_tokens). Retrying. Text: "${text}"`);
+      const isCutoff = stopReason !== 'end_turn';
+      const isDangling = endsWithConnectorOrComma(text);
+      const isTooLong = [...text].length > 50;
+      
+      if (!isCutoff) {
+        savedEndTurnText = text;
+      }
+      
+      if (isCutoff) {
+        console.warn(`[Persona Generator] Attempt ${attempts + 1} truncated (stop_reason: ${stopReason}). Retrying. Text: "${text}"`);
         attempts++;
         continue;
       }
       
-      if (endsWithConnectorOrComma(text)) {
+      if (isDangling) {
         console.warn(`[Persona Generator] Attempt ${attempts + 1} ended with a connector or comma. Retrying. Text: "${text}"`);
+        attempts++;
+        continue;
+      }
+      
+      if (isTooLong) {
+        console.warn(`[Persona Generator] Attempt ${attempts + 1} exceeded soft limit of 50 chars (${[...text].length} chars). Retrying. Text: "${text}"`);
         attempts++;
         continue;
       }
@@ -541,8 +541,13 @@ async function generateMessage(context) {
   }
 
   if (!finalMessage) {
-    console.warn(`[Persona Generator] All attempts truncated or dangling. Falling back to last text: "${text}"`);
-    finalMessage = text;
+    if (savedEndTurnText) {
+      console.warn(`[Persona Generator] All attempts failed validation, but using saved complete (end_turn) text: "${savedEndTurnText}"`);
+      finalMessage = savedEndTurnText;
+    } else {
+      console.warn(`[Persona Generator] All attempts failed and no end_turn text was found. Falling back to last text: "${lastText}"`);
+      finalMessage = lastText;
+    }
   }
 
   return enforceCeiling(finalMessage, personaUsername, personaName, sampledIntent.type, history || '');
