@@ -2,6 +2,7 @@ const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
 const { generateMessage } = require("./generator");
+const { SCENARIOS, getCoreStanceForScenario, getSecondaryStanceForScenario } = require("./scenarios");
 
 admin.initializeApp();
 
@@ -432,6 +433,82 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
               const weekdayLabel = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Africa/Nairobi' }).format(new Date());
               const dayAndTime = `${weekdayLabel} at ${hourLabel}`;
 
+              // Resolve scenario, role, stance, location, and keywords for deep venues
+              let scenario = null;
+              let role = null;
+              let stance = null;
+              let location = 'at_venue';
+              let scenarioKeywords = [];
+              
+              if (venueTier === 'deep') {
+                if (venueSnap.exists && venueSnap.data().scenarioOverride) {
+                  scenario = SCENARIOS.find(s => s.type === venueSnap.data().scenarioOverride);
+                }
+
+                if (!scenario) {
+                  const deepVenues = selectedVenuesForNight.slice(0, numDeep);
+                  const assignedScenarios = {};
+                  const usedScenarioIndexes = new Set();
+                  deepVenues.forEach((v) => {
+                    if (v.scenarioOverride) {
+                      const selected = SCENARIOS.find(s => s.type === v.scenarioOverride);
+                      if (selected) {
+                        assignedScenarios[v.id] = selected;
+                        const idx = SCENARIOS.indexOf(selected);
+                        if (idx !== -1) usedScenarioIndexes.add(idx);
+                        return;
+                      }
+                    }
+
+                    let attempt = 0;
+                    let selectedScenario = null;
+                    while (attempt < 100) {
+                      const randVal = seededRandom(seedStr + '_' + v.id, attempt);
+                      const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
+                      if (!usedScenarioIndexes.has(scenarioIndex)) {
+                        selectedScenario = SCENARIOS[scenarioIndex];
+                        usedScenarioIndexes.add(scenarioIndex);
+                        break;
+                      }
+                      attempt++;
+                    }
+                    if (!selectedScenario) {
+                      for (let i = 0; i < SCENARIOS.length; i++) {
+                        if (!usedScenarioIndexes.has(i)) {
+                          selectedScenario = SCENARIOS[i];
+                          usedScenarioIndexes.add(i);
+                          break;
+                        }
+                      }
+                    }
+                    assignedScenarios[v.id] = selectedScenario;
+                  });
+
+                  scenario = assignedScenarios[venueId];
+                }
+
+                if (!scenario) {
+                  const randVal = seededRandom(seedStr + '_' + venueId, 0);
+                  const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
+                  scenario = SCENARIOS[scenarioIndex];
+                }
+
+                if (scenario) {
+                  scenarioKeywords = scenario.keywords || [];
+                  const roleAssignments = assignPersonaRolesForScenario(allPersonas, scenario, seedStr, venueId);
+                  if (roleAssignments && roleAssignments[selectedPersona.id]) {
+                    role = roleAssignments[selectedPersona.id].role;
+                    stance = roleAssignments[selectedPersona.id].stance;
+
+                    if (scenario.type === 'from_home' && role === 'homebody') {
+                      location = 'at_home';
+                    } else if (scenario.type === 'always_late' && role === 'latecomer') {
+                      location = 'en_route';
+                    }
+                  }
+                }
+              }
+
               let replyText = await generateMessage({
                 variant: 'dm',
                 persona: selectedPersona,
@@ -441,6 +518,10 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                 senderName: cleanSenderName,
                 senderMessage: messageData.message || '',
                 tier: venueTier,
+                role: role,
+                stance: stance,
+                location: location,
+                scenarioKeywords: scenarioKeywords,
                 apiKey: apiKey
               });
 
@@ -1755,6 +1836,38 @@ function seededRandom(seedStr, extraSeed = 0) {
   return x - Math.floor(x);
 }
 
+function assignPersonaRolesForScenario(allPersonas, scenario, seedStr, venueId) {
+  const seed = seedStr + '_' + venueId;
+  const shuffled = seededShuffle(allPersonas, seed);
+  
+  const roleAssignments = {};
+  
+  if (['which_spot'].includes(scenario.type)) {
+    shuffled.forEach((persona, index) => {
+      const role = index % 2 === 0 ? scenario.roles[0] : scenario.roles[1];
+      roleAssignments[persona.id] = {
+        role: role,
+        stance: role === scenario.roles[0] ? 'Prefers staying/coming to this spot.' : 'Wants to move to the other spot.'
+      };
+    });
+  } else {
+    shuffled.forEach((persona, index) => {
+      if (index === 0) {
+        roleAssignments[persona.id] = {
+          role: scenario.roles[0],
+          stance: getCoreStanceForScenario(scenario.type)
+        };
+      } else {
+        roleAssignments[persona.id] = {
+          role: scenario.roles[1],
+          stance: getSecondaryStanceForScenario(scenario.type)
+        };
+      }
+    });
+  }
+  return roleAssignments;
+}
+
 /**
  * Determines the activity window for personas given current Nairobi time.
  * Returns null if this is a dead-silent period.
@@ -1950,6 +2063,52 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
     simulatedVenueTiers[venue.id] = index < numDeep ? 'deep' : 'ambient';
   });
 
+  // Assign distinct scenarios to deep venues
+  const deepVenues = selectedVenuesForNight.slice(0, numDeep);
+  const assignedScenarios = {};
+  const usedScenarioIndexes = new Set();
+  deepVenues.forEach((venue) => {
+    if (venue.scenarioOverride) {
+      const selected = SCENARIOS.find(s => s.type === venue.scenarioOverride);
+      if (selected) {
+        assignedScenarios[venue.id] = selected;
+        const idx = SCENARIOS.indexOf(selected);
+        if (idx !== -1) usedScenarioIndexes.add(idx);
+        return;
+      }
+    }
+
+    let attempt = 0;
+    let selectedScenario = null;
+    while (attempt < 100) {
+      const randVal = seededRandom(seedStr + '_' + venue.id, attempt);
+      const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
+      if (!usedScenarioIndexes.has(scenarioIndex)) {
+        selectedScenario = SCENARIOS[scenarioIndex];
+        usedScenarioIndexes.add(scenarioIndex);
+        break;
+      }
+      attempt++;
+    }
+    if (!selectedScenario) {
+      for (let i = 0; i < SCENARIOS.length; i++) {
+        if (!usedScenarioIndexes.has(i)) {
+          selectedScenario = SCENARIOS[i];
+          usedScenarioIndexes.add(i);
+          break;
+        }
+      }
+    }
+    assignedScenarios[venue.id] = selectedScenario;
+  });
+
+  // Pre-calculate persona role assignments for each deep venue
+  const deepVenueRoleAssignments = {};
+  deepVenues.forEach((venue) => {
+    const scenario = assignedScenarios[venue.id];
+    deepVenueRoleAssignments[venue.id] = assignPersonaRolesForScenario(allPersonas, scenario, seedStr, venue.id);
+  });
+
   // Find any uncapped active hot venues (real-user activity in last 3 hours)
   const hotVenues = [];
   for (const venue of allVenues) {
@@ -1962,7 +2121,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
   // Combine simulated and hot venues
   const activeVenues = [...selectedVenuesForNight, ...hotVenues];
 
-  console.log(`[Persona] Selected ${selectedVenuesForNight.length} simulated venues for ${weekday} (seed: ${seedStr}, numDeep: ${numDeep}): ${selectedVenuesForNight.map(v => `${v.name} (${simulatedVenueTiers[v.id]})`).join(', ')}`);
+  console.log(`[Persona] Selected ${selectedVenuesForNight.length} simulated venues for ${weekday} (seed: ${seedStr}, numDeep: ${numDeep}): ${selectedVenuesForNight.map(v => `${v.name} (${simulatedVenueTiers[v.id]}${simulatedVenueTiers[v.id] === 'deep' ? `, Scenario: ${assignedScenarios[v.id].type}` : ''})`).join(', ')}`);
   if (hotVenues.length > 0) {
     console.log(`[Persona] Appended ${hotVenues.length} hot venues active with real users: ${hotVenues.map(v => v.name).join(', ')}`);
   }
@@ -2057,6 +2216,41 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
       venueTier = 'deep';
     }
 
+    // Resolve scenario, role, stance, location, and keywords for deep venues
+    let scenario = null;
+    let role = null;
+    let stance = null;
+    let location = 'at_venue';
+    let scenarioKeywords = [];
+    
+    if (venueTier === 'deep') {
+      scenario = assignedScenarios[targetVenue.id];
+      if (!scenario) {
+        // Dynamically assign scenario stably for hot-upgraded venue
+        const randVal = seededRandom(seedStr + '_' + targetVenue.id, 0);
+        const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
+        scenario = SCENARIOS[scenarioIndex];
+      }
+      
+      if (scenario) {
+        scenarioKeywords = scenario.keywords || [];
+        let roleAssignments = deepVenueRoleAssignments[targetVenue.id];
+        if (!roleAssignments) {
+          roleAssignments = assignPersonaRolesForScenario(allPersonas, scenario, seedStr, targetVenue.id);
+        }
+        if (roleAssignments && roleAssignments[persona.id]) {
+          role = roleAssignments[persona.id].role;
+          stance = roleAssignments[persona.id].stance;
+          
+          if (scenario.type === 'from_home' && role === 'homebody') {
+            location = 'at_home';
+          } else if (scenario.type === 'always_late' && role === 'latecomer') {
+            location = 'en_route';
+          }
+        }
+      }
+    }
+
     // ── e. Generate message text ──────────────────────────────────────────
     let messageText = null;
     try {
@@ -2067,6 +2261,10 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
         history: last5Messages,
         daypart: dayAndTime,
         tier: venueTier,
+        role: role,
+        stance: stance,
+        location: location,
+        scenarioKeywords: scenarioKeywords,
         apiKey: apiKey
       });
       console.log(`[Persona] @${persona.username} → "${messageText}"`);

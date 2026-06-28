@@ -73,6 +73,13 @@ async function cleanDatabases() {
 async function runTest() {
   console.log("\n=================== STARTING PERSONA CAPS & ROLLOVER TESTS ===================");
 
+  const originalRandom = Math.random;
+  let randomCallCount = 0;
+  Math.random = () => {
+    randomCallCount++;
+    return randomCallCount === 1 ? 0.99 : 0.0;
+  };
+
   // ---------------------------------------------------------------------------
   // SCENARIO 1: Peak Night (Friday 23:00 EAT)
   // ---------------------------------------------------------------------------
@@ -83,6 +90,7 @@ async function runTest() {
   mockTimeMs = new Date('2026-06-26T20:00:00Z').getTime();
   
   console.log("Invoking runPersonaActivity for Friday 23:00 EAT...");
+  randomCallCount = 0;
   await f.runPersonaActivity.run();
 
   // Retrieve messages posted in RTDB to see which venues were simulated
@@ -114,6 +122,7 @@ async function runTest() {
   // Clean databases to measure what gets posted next
   await cleanDatabases();
   console.log("Invoking runPersonaActivity for Saturday 01:00 EAT...");
+  randomCallCount = 0;
   await f.runPersonaActivity.run();
 
   chatSnap = await rtdb.ref('venue_chats').once('value');
@@ -134,6 +143,7 @@ async function runTest() {
   mockTimeMs = new Date('2026-06-29T19:00:00Z').getTime();
 
   console.log("Invoking runPersonaActivity for Monday 22:00 EAT...");
+  randomCallCount = 0;
   await f.runPersonaActivity.run();
 
   chatSnap = await rtdb.ref('venue_chats').once('value');
@@ -153,8 +163,9 @@ async function runTest() {
   }
   console.log("✓ Weekday seed correctly produced at most 2 ambient-only venues with zero deep chains.");
 
-  // Restore original Date.now
+  // Restore original Date.now and Math.random
   Date.now = originalDateNow;
+  Math.random = originalRandom;
   console.log("\n=================== ALL LOCAL PERSONA CAPS & ROLLOVER TESTS PASSED! ===================\n");
   process.exit(0);
 }

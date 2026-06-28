@@ -2,7 +2,10 @@ const fetch = require('node-fetch');
 
 // --- Persona Prompt Helpers ---
 function rollLanguageMode() {
-  return Math.random() > 0.3 ? 'sheng' : 'english';
+  const r = Math.random();
+  if (r < 0.45) return 'english_dominant';
+  if (r < 0.80) return 'mixed_light';
+  return 'mixed_heavy';
 }
 
 function rollEmoji() {
@@ -23,7 +26,7 @@ const getBaseStyle = (venueName) =>
 
 const RULES = 
   `\nRULES: ` +
-  `(1) Write ONE short chat line, ~4–10 words. Don't explain. Don't trail off mid-thought. ` +
+  `(1) Write ONE COMPLETE short line (~5–10 words). It must be a finished thought. Never stop mid-sentence. ` +
   `(2) No hashtags. (3) No line breaks. ` +
   `(4) Be extremely casual, like texting a friend.\n`;
 
@@ -85,6 +88,25 @@ function cleanDanglingEndings(text) {
     }
   }
   return cleaned;
+}
+
+function endsWithConnectorOrComma(text) {
+  const connectors = new Set(['n', 'na', 'ni', 'tho', 'lakini', 'ama', 'like', 'and', 'or', 'for', 'kwa', 'ya', 'wa', 'the', 'to', 'in', 'at', 'a', 'of', 'with', 'on', 'up']);
+  const trimmed = text.trim();
+  
+  if (trimmed.endsWith(',')) {
+    return true;
+  }
+  
+  const words = trimmed.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()!?]/g, "").trim().split(/\s+/);
+  if (words.length > 0) {
+    const lastWord = words[words.length - 1].toLowerCase();
+    if (connectors.has(lastWord)) {
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 function cleanPersonaMessageText(text, username, personaName, intentType = 'default', history = '') {
@@ -203,7 +225,7 @@ function cleanPersonaMessageText(text, username, personaName, intentType = 'defa
 
 async function callAnthropicHaiku(apiKey, userPrompt, config = {}) {
   const model = config.model || 'claude-haiku-4-5';
-  const maxTokens = 24;
+  const maxTokens = 40;
   
   const bodyData = {
     model: model,
@@ -232,13 +254,17 @@ async function callAnthropicHaiku(apiKey, userPrompt, config = {}) {
 
   const data = await response.json();
   if (data && data.content && data.content[0] && data.content[0].text) {
-    return data.content[0].text.trim();
+    return {
+      text: data.content[0].text.trim(),
+      stopReason: data.stop_reason
+    };
   }
   throw new Error(`Unexpected Anthropic response: ${JSON.stringify(data)}`);
 }
 
-function getForbiddenTopicWord(history) {
+function getForbiddenTopicWord(history, exemptWords = []) {
   if (!history) return null;
+  const exemptSet = new Set((exemptWords || []).map(w => w.toLowerCase()));
   
   const stopWords = new Set([
     'the', 'to', 'is', 'a', 'and', 'in', 'on', 'at', 'for', 'of', 'this', 'that', 'it', 
@@ -264,7 +290,7 @@ function getForbiddenTopicWord(history) {
       
     for (const w of words) {
       const cleanW = w.trim();
-      if (cleanW.length > 2 && !stopWords.has(cleanW)) {
+      if (cleanW.length > 2 && !stopWords.has(cleanW) && !exemptSet.has(cleanW)) {
         wordCounts[cleanW] = (wordCounts[cleanW] || 0) + 1;
       }
     }
@@ -355,13 +381,14 @@ async function generateMessage(context) {
 
   const langMode = rollLanguageMode();
 
-  const langInstruction = langMode === 'english'
-    ? (variant === 'ambient' || variant === 'ambient_seeding'
-        ? `\nFor THIS message: write in casual English only (no Sheng). Still sound like a young Nairobian texting fast.\n`
-        : `\nFor THIS reply: casual English only, no Sheng.\n`)
-    : (variant === 'ambient' || variant === 'ambient_seeding'
-        ? `\nFor THIS message: mix Sheng and English naturally, switching mid-sentence.\n`
-        : `\nFor THIS reply: mix Sheng and English naturally.\n`);
+  let langInstruction = '';
+  if (langMode === 'english_dominant') {
+    langInstruction = `\nFor THIS message: write in natural casual English texting style, naturally weaving exactly 3 Sheng/Swahili words (like maze, msee, buda, fiti, noma, poa, sawa, sana) into the sentence. English must dominate completely. NEVER write a full Swahili or Swahili-dominant sentence.\n`;
+  } else if (langMode === 'mixed_light') {
+    langInstruction = `\nFor THIS message: write in casual English texting style, naturally weaving exactly 4 Sheng/Swahili words (like maze, msee, buda, fiti, noma, poa, sawa, leo, usiku, njiani, sana) into the sentence. English must still be the grammatical base.\n`;
+  } else {
+    langInstruction = `\nFor THIS message: mix Sheng/Swahili and English (5-6 Sheng/Swahili words max, e.g. maze, msee, buda, fiti, noma, poa, sawa, usiku, leo, njiani, sana, lakini) switching naturally mid-sentence. English must still be present.\n`;
+  }
 
   const emojiInstruction = (variant === 'ambient' || variant === 'ambient_seeding')
     ? `Do NOT use any emoji this time.\n`
@@ -399,14 +426,14 @@ async function generateMessage(context) {
       intentInstruction = `\nInstruction for this message: Respond directly to the last message by reacting to its actual content.\n` +
                           `The last message was: "${lastMessage}". Write a reply addressing that specific point.\n`;
     } else if (sampledIntent.type === 'banter') {
-      const handles = getHandlesFromHistory(history);
+      const handles = getHandlesFromHistory(history).filter(h => h !== `@${personaUsername}`);
       let hint = sampledIntent.hint;
       if (handles.length > 0) {
         hint += ` You can target one of these users: ${handles.join(', ')}.`;
       }
       intentInstruction = `\nInstruction for this message: ${hint}\n`;
     } else if (sampledIntent.type === 'cosign') {
-      const handles = getHandlesFromHistory(history);
+      const handles = getHandlesFromHistory(history).filter(h => h !== `@${personaUsername}`);
       let hint = sampledIntent.hint;
       if (handles.length > 0) {
         hint += ` Reference what ${handles.join(' or ')} said.`;
@@ -417,10 +444,19 @@ async function generateMessage(context) {
     }
   }
 
-  const forbiddenWord = getForbiddenTopicWord(history);
+  const forbiddenWord = getForbiddenTopicWord(history, context.scenarioKeywords || []);
   const topicNegationInstruction = forbiddenWord
     ? `\nCRITICAL: Do NOT mention or talk about "${forbiddenWord}". Pivot the topic away from it completely.\n`
     : '';
+
+  let scenarioInstruction = '';
+  if (context.role && context.stance) {
+    scenarioInstruction = `\nROLE AND STANCE CONTROLS:\n` +
+                          `- Your Role: ${context.role}\n` +
+                          `- Your Stance/Opinion: ${context.stance}\n` +
+                          `- Your Current Location: ${context.location || 'at_venue'}\n` +
+                          `CRITICAL: Ground your message strictly in your role, stance, and location. For example, if your location is 'at_home', you are NOT at the venue yet (do not say you are inside or listening to the DJ, speak as someone at home). If you are 'en_route', you are on the way. If you are a skeptic, maintain your skeptical stance. Stay consistent!\n`;
+  }
 
   if (variant === 'ambient' || variant === 'ambient_seeding') {
     prompt =
@@ -431,6 +467,7 @@ async function generateMessage(context) {
       emojiInstruction +
       intentInstruction +
       topicNegationInstruction +
+      scenarioInstruction +
       `\nThis is a GROUP CHAT — read what others just said and CONTINUE the conversation. ` +
       `React to the last message, answer a question someone asked, or build on the topic. Do NOT post a random unrelated statement.\n` +
       `\nIt is ${dayAndTime}. Recent chat:\n${history || 'No recent messages.'}\n` +
@@ -443,6 +480,7 @@ async function generateMessage(context) {
       RULES +
       langInstruction +
       emojiInstruction +
+      scenarioInstruction +
       `\nIt is ${dayAndTime}. @${cleanSenderName} just said directly to you: "${senderMsg}".\n` +
       `Recent chat:\n${history || 'No recent messages.'}\n` +
       `Reply directly to what @${cleanSenderName} said — actually respond to their point, don't change the subject. ` +
@@ -456,6 +494,7 @@ async function generateMessage(context) {
       RULES +
       langInstruction +
       emojiInstruction +
+      scenarioInstruction +
       `\nIt is ${dayAndTime}. @${cleanReactingName} reacted ${emoji} to your message: "${origMsg}".\n` +
       `Recent chat:\n${history || 'No recent messages.'}\n` +
       `Write a short, natural acknowledgement of the reaction — a real person reacting to being reacted to. Keep it light. ` +
@@ -469,8 +508,44 @@ async function generateMessage(context) {
     temperature: context.temperature,
   };
 
-  let text = await callAnthropicHaiku(apiKey, prompt, callConfig);
-  return enforceCeiling(text, personaUsername, personaName, sampledIntent.type, history || '');
+  let text = '';
+  let stopReason = '';
+  let finalMessage = '';
+  let attempts = 0;
+
+  while (attempts < 3) {
+    console.log(`[Persona Generator] Generation attempt ${attempts + 1} for @${personaUsername}...`);
+    try {
+      const res = await callAnthropicHaiku(apiKey, prompt, callConfig);
+      text = res.text;
+      stopReason = res.stopReason;
+      
+      if (stopReason === 'max_tokens') {
+        console.warn(`[Persona Generator] Attempt ${attempts + 1} truncated (stop_reason: max_tokens). Retrying. Text: "${text}"`);
+        attempts++;
+        continue;
+      }
+      
+      if (endsWithConnectorOrComma(text)) {
+        console.warn(`[Persona Generator] Attempt ${attempts + 1} ended with a connector or comma. Retrying. Text: "${text}"`);
+        attempts++;
+        continue;
+      }
+      
+      finalMessage = text;
+      break;
+    } catch (err) {
+      console.error(`[Persona Generator] Attempt ${attempts + 1} failed:`, err.message);
+      attempts++;
+    }
+  }
+
+  if (!finalMessage) {
+    console.warn(`[Persona Generator] All attempts truncated or dangling. Falling back to last text: "${text}"`);
+    finalMessage = text;
+  }
+
+  return enforceCeiling(finalMessage, personaUsername, personaName, sampledIntent.type, history || '');
 }
 
 module.exports = {
