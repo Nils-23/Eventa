@@ -101,8 +101,11 @@ function getSecondaryStanceForScenario(type) {
   }
 }
 
+const STRANGER_OK_SCENARIOS = ['music_skeptic', 'from_home', 'lost_inside', 'first_timer', 'food_run', 'broke_night', 'vibe_check', 'bouncer_drama'];
+
 module.exports = {
   SCENARIOS,
   getCoreStanceForScenario,
-  getSecondaryStanceForScenario
+  getSecondaryStanceForScenario,
+  STRANGER_OK_SCENARIOS
 };

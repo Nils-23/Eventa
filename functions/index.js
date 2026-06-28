@@ -2,7 +2,7 @@ const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
 const { generateMessage } = require("./generator");
-const { SCENARIOS, getCoreStanceForScenario, getSecondaryStanceForScenario } = require("./scenarios");
+const { SCENARIOS, getCoreStanceForScenario, getSecondaryStanceForScenario, STRANGER_OK_SCENARIOS } = require("./scenarios");
 
 admin.initializeApp();
 
@@ -460,13 +460,19 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                       }
                     }
 
+                    const hasPairRand = seededRandom(seedStr + '_' + v.id + '_acquaintance', 0);
+                    const hasPreExistingPair = hasPairRand < 0.25;
+
                     let attempt = 0;
                     let selectedScenario = null;
                     while (attempt < 100) {
                       const randVal = seededRandom(seedStr + '_' + v.id, attempt);
                       const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
-                      if (!usedScenarioIndexes.has(scenarioIndex)) {
-                        selectedScenario = SCENARIOS[scenarioIndex];
+                      const candidate = SCENARIOS[scenarioIndex];
+                      const isAllowed = STRANGER_OK_SCENARIOS.includes(candidate.type) || hasPreExistingPair;
+                      
+                      if (isAllowed && !usedScenarioIndexes.has(scenarioIndex)) {
+                        selectedScenario = candidate;
                         usedScenarioIndexes.add(scenarioIndex);
                         break;
                       }
@@ -474,8 +480,10 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                     }
                     if (!selectedScenario) {
                       for (let i = 0; i < SCENARIOS.length; i++) {
-                        if (!usedScenarioIndexes.has(i)) {
-                          selectedScenario = SCENARIOS[i];
+                        const candidate = SCENARIOS[i];
+                        const isAllowed = STRANGER_OK_SCENARIOS.includes(candidate.type) || hasPreExistingPair;
+                        if (isAllowed && !usedScenarioIndexes.has(i)) {
+                          selectedScenario = candidate;
                           usedScenarioIndexes.add(i);
                           break;
                         }
@@ -488,9 +496,23 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                 }
 
                 if (!scenario) {
-                  const randVal = seededRandom(seedStr + '_' + venueId, 0);
-                  const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
-                  scenario = SCENARIOS[scenarioIndex];
+                  const hasPairRand = seededRandom(seedStr + '_' + venueId + '_acquaintance', 0);
+                  const hasPreExistingPair = hasPairRand < 0.25;
+                  
+                  let attempt = 0;
+                  while (attempt < 100) {
+                    const randVal = seededRandom(seedStr + '_' + venueId, attempt);
+                    const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
+                    const candidate = SCENARIOS[scenarioIndex];
+                    if (STRANGER_OK_SCENARIOS.includes(candidate.type) || hasPreExistingPair) {
+                      scenario = candidate;
+                      break;
+                    }
+                    attempt++;
+                  }
+                  if (!scenario) {
+                    scenario = SCENARIOS.find(s => STRANGER_OK_SCENARIOS.includes(s.type));
+                  }
                 }
 
                 if (scenario) {
@@ -509,6 +531,21 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                 }
               }
 
+              let isStranger = true;
+              let friendUsername = '';
+              if (venueTier === 'deep' && scenario) {
+                const hasPairRand = seededRandom(seedStr + '_' + venueId + '_acquaintance', 0);
+                const hasPreExistingPair = hasPairRand < 0.25;
+                if (hasPreExistingPair) {
+                  const shuffled = seededShuffle(allPersonas, seedStr + '_' + venueId);
+                  const pair = [shuffled[0].username, shuffled[1].username];
+                  if (pair.includes(selectedPersona.username)) {
+                    isStranger = false;
+                    friendUsername = pair[0] === selectedPersona.username ? pair[1] : pair[0];
+                  }
+                }
+              }
+
               let replyText = await generateMessage({
                 variant: 'dm',
                 persona: selectedPersona,
@@ -522,7 +559,10 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                 stance: stance,
                 location: location,
                 scenarioKeywords: scenarioKeywords,
-                apiKey: apiKey
+                apiKey: apiKey,
+                historyLimit: 5,
+                isStranger,
+                friendUsername
               });
 
               if (replyText && replyText.length > 0) {
@@ -2078,13 +2118,19 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
       }
     }
 
+    const hasPairRand = seededRandom(seedStr + '_' + venue.id + '_acquaintance', 0);
+    const hasPreExistingPair = hasPairRand < 0.25;
+
     let attempt = 0;
     let selectedScenario = null;
     while (attempt < 100) {
       const randVal = seededRandom(seedStr + '_' + venue.id, attempt);
       const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
-      if (!usedScenarioIndexes.has(scenarioIndex)) {
-        selectedScenario = SCENARIOS[scenarioIndex];
+      const candidate = SCENARIOS[scenarioIndex];
+      const isAllowed = STRANGER_OK_SCENARIOS.includes(candidate.type) || hasPreExistingPair;
+      
+      if (isAllowed && !usedScenarioIndexes.has(scenarioIndex)) {
+        selectedScenario = candidate;
         usedScenarioIndexes.add(scenarioIndex);
         break;
       }
@@ -2092,8 +2138,10 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
     }
     if (!selectedScenario) {
       for (let i = 0; i < SCENARIOS.length; i++) {
-        if (!usedScenarioIndexes.has(i)) {
-          selectedScenario = SCENARIOS[i];
+        const candidate = SCENARIOS[i];
+        const isAllowed = STRANGER_OK_SCENARIOS.includes(candidate.type) || hasPreExistingPair;
+        if (isAllowed && !usedScenarioIndexes.has(i)) {
+          selectedScenario = candidate;
           usedScenarioIndexes.add(i);
           break;
         }
@@ -2227,9 +2275,23 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
       scenario = assignedScenarios[targetVenue.id];
       if (!scenario) {
         // Dynamically assign scenario stably for hot-upgraded venue
-        const randVal = seededRandom(seedStr + '_' + targetVenue.id, 0);
-        const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
-        scenario = SCENARIOS[scenarioIndex];
+        const hasPairRand = seededRandom(seedStr + '_' + targetVenue.id + '_acquaintance', 0);
+        const hasPreExistingPair = hasPairRand < 0.25;
+        
+        let attempt = 0;
+        while (attempt < 100) {
+          const randVal = seededRandom(seedStr + '_' + targetVenue.id, attempt);
+          const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
+          const candidate = SCENARIOS[scenarioIndex];
+          if (STRANGER_OK_SCENARIOS.includes(candidate.type) || hasPreExistingPair) {
+            scenario = candidate;
+            break;
+          }
+          attempt++;
+        }
+        if (!scenario) {
+          scenario = SCENARIOS.find(s => STRANGER_OK_SCENARIOS.includes(s.type));
+        }
       }
       
       if (scenario) {
@@ -2251,6 +2313,21 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
       }
     }
 
+    let isStranger = true;
+    let friendUsername = '';
+    if (venueTier === 'deep' && scenario) {
+      const hasPairRand = seededRandom(seedStr + '_' + targetVenue.id + '_acquaintance', 0);
+      const hasPreExistingPair = hasPairRand < 0.25;
+      if (hasPreExistingPair) {
+        const shuffled = seededShuffle(allPersonas, seedStr + '_' + targetVenue.id);
+        const pair = [shuffled[0].username, shuffled[1].username];
+        if (pair.includes(persona.username)) {
+          isStranger = false;
+          friendUsername = pair[0] === persona.username ? pair[1] : pair[0];
+        }
+      }
+    }
+
     // ── e. Generate message text ──────────────────────────────────────────
     let messageText = null;
     try {
@@ -2265,7 +2342,9 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
         stance: stance,
         location: location,
         scenarioKeywords: scenarioKeywords,
-        apiKey: apiKey
+        apiKey: apiKey,
+        isStranger,
+        friendUsername
       });
       console.log(`[Persona] @${persona.username} → "${messageText}"`);
     } catch (err) {

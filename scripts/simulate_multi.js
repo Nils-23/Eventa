@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { generateMessage } = require('../functions/generator');
-const { SCENARIOS, getCoreStanceForScenario, getSecondaryStanceForScenario } = require('../functions/scenarios');
+const { SCENARIOS, getCoreStanceForScenario, getSecondaryStanceForScenario, STRANGER_OK_SCENARIOS } = require('../functions/scenarios');
 const fixtures = require('./fixtures');
 
 // 1. Load env variables
@@ -182,13 +182,19 @@ async function simulateNight(seedStr) {
       }
     }
 
+    const hasPairRand = seededRandom(seedStr + '_' + venue.id + '_acquaintance', 0);
+    const hasPreExistingPair = hasPairRand < 0.25;
+
     let attempt = 0;
     let selectedScenario = null;
     while (attempt < 100) {
       const randVal = seededRandom(seedStr + '_' + venue.id, attempt);
       const scenarioIndex = Math.floor(randVal * SCENARIOS.length);
-      if (!usedScenarioIndexes.has(scenarioIndex)) {
-        selectedScenario = SCENARIOS[scenarioIndex];
+      const candidate = SCENARIOS[scenarioIndex];
+      const isAllowed = STRANGER_OK_SCENARIOS.includes(candidate.type) || hasPreExistingPair;
+      
+      if (isAllowed && !usedScenarioIndexes.has(scenarioIndex)) {
+        selectedScenario = candidate;
         usedScenarioIndexes.add(scenarioIndex);
         break;
       }
@@ -196,8 +202,10 @@ async function simulateNight(seedStr) {
     }
     if (!selectedScenario) {
       for (let i = 0; i < SCENARIOS.length; i++) {
-        if (!usedScenarioIndexes.has(i)) {
-          selectedScenario = SCENARIOS[i];
+        const candidate = SCENARIOS[i];
+        const isAllowed = STRANGER_OK_SCENARIOS.includes(candidate.type) || hasPreExistingPair;
+        if (isAllowed && !usedScenarioIndexes.has(i)) {
+          selectedScenario = candidate;
           usedScenarioIndexes.add(i);
           break;
         }
@@ -236,6 +244,19 @@ async function simulateNight(seedStr) {
       if (scenario.type === 'from_home' && assignment.role === 'homebody') location = 'at_home';
       else if (scenario.type === 'always_late' && assignment.role === 'latecomer') location = 'en_route';
 
+      let isStranger = true;
+      let friendUsername = '';
+      const hasPairRand = seededRandom(seedStr + '_' + venue.id + '_acquaintance', 0);
+      const hasPreExistingPair = hasPairRand < 0.25;
+      if (hasPreExistingPair) {
+        const shuffled = seededShuffle(fixtures.personas, seedStr + '_' + venue.id);
+        const pair = [shuffled[0].username, shuffled[1].username];
+        if (pair.includes(persona.username)) {
+          isStranger = false;
+          friendUsername = pair[0] === persona.username ? pair[1] : pair[0];
+        }
+      }
+
       const context = {
         variant: step === 0 ? 'ambient' : 'dm',
         persona,
@@ -250,6 +271,8 @@ async function simulateNight(seedStr) {
         apiKey,
         senderName: step === 0 ? 'VibeGoer' : fixtures.personas[(step - 1) % fixtures.personas.length].username,
         senderMessage: step === 0 ? 'Anyone here tonight?' : chatMessages[chatMessages.length - 1].text,
+        isStranger,
+        friendUsername
       };
 
       try {

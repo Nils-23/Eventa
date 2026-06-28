@@ -441,6 +441,26 @@ async function generateMessage(context) {
                           `CRITICAL: Ground your message strictly in your role, stance, and location. For example, if your location is 'at_home', you are NOT at the venue yet (do not say you are inside or listening to the DJ, speak as someone at home). If you are 'en_route', you are on the way. If you are a skeptic, maintain your skeptical stance. Stay consistent!\n`;
   }
 
+  let relationshipInstruction = '';
+  if (context.isStranger) {
+    relationshipInstruction = 
+      `\nRELATIONSHIP STATUS: STRANGERS MEETING FOR THE FIRST TIME\n` +
+      `- You do NOT know the other people in this chat. You just arrived at ${venueName} or are thinking of coming.\n` +
+      `- You have NO shared history with anyone here. Never say "remember when", "you always", or roast/tease anyone about their past behavior/habits.\n` +
+      `- Sound open, curious, and inclusive. E.g., ask: "first time here?", "who else came solo?", "you guys know each other or just met?".\n` +
+      `- Banter must stay light and friendly (teasing the DJ, the line, the drinks, or the moment), NOT familiar roasting.\n`;
+  } else if (context.friendUsername) {
+    relationshipInstruction = 
+      `\nRELATIONSHIP STATUS: PRE-EXISTING FRIENDSHIP\n` +
+      `- You know @${context.friendUsername} from before. You two are friends.\n` +
+      `- You are strangers to everyone else in the chat.\n` +
+      `- You can tease or roast @${context.friendUsername} specifically, but be open and inclusive to other participants in the chat who are strangers.\n`;
+  } else {
+    relationshipInstruction = 
+      `\nRELATIONSHIP STATUS: ACQUAINTANCES MEETING AT THE VENUE\n` +
+      `- Sound open, friendly, and inclusive. React to the venue together.\n`;
+  }
+
   if (variant === 'ambient' || variant === 'ambient_seeding') {
     prompt =
       getBaseStyle(venueName) +
@@ -448,6 +468,7 @@ async function generateMessage(context) {
       RULES +
       langInstruction +
       emojiInstruction +
+      relationshipInstruction +
       intentInstruction +
       topicNegationInstruction +
       scenarioInstruction +
@@ -463,6 +484,7 @@ async function generateMessage(context) {
       RULES +
       langInstruction +
       emojiInstruction +
+      relationshipInstruction +
       scenarioInstruction +
       `\nIt is ${dayAndTime}. @${cleanSenderName} just said directly to you: "${senderMsg}".\n` +
       `Recent chat:\n${history || 'No recent messages.'}\n` +
@@ -477,6 +499,7 @@ async function generateMessage(context) {
       RULES +
       langInstruction +
       emojiInstruction +
+      relationshipInstruction +
       scenarioInstruction +
       `\nIt is ${dayAndTime}. @${cleanReactingName} reacted ${emoji} to your message: "${origMsg}".\n` +
       `Recent chat:\n${history || 'No recent messages.'}\n` +

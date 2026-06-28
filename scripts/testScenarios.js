@@ -130,6 +130,20 @@ async function simulateDeepVenueChat(venue, scenario, seedStr) {
     if (scenario.type === 'from_home' && assignment.role === 'homebody') location = 'at_home';
     else if (scenario.type === 'always_late' && assignment.role === 'latecomer') location = 'en_route';
 
+    const needsHistory = ['always_late', 'which_spot'].includes(scenario.type);
+    const hasPairRand = seededRandom(seedStr + '_' + venue.id + '_acquaintance', 0);
+    const hasPreExistingPair = needsHistory || (hasPairRand < 0.25);
+    let isStranger = true;
+    let friendUsername = '';
+    if (hasPreExistingPair) {
+      const shuffled = seededShuffle(personas, seedStr + '_' + venue.id);
+      const pair = [shuffled[0].username, shuffled[1].username];
+      if (pair.includes(persona.username)) {
+        isStranger = false;
+        friendUsername = pair[0] === persona.username ? pair[1] : pair[0];
+      }
+    }
+
     const context = {
       variant: step === 0 ? 'ambient' : 'dm',
       persona: persona,
@@ -144,6 +158,8 @@ async function simulateDeepVenueChat(venue, scenario, seedStr) {
       apiKey: apiKey,
       senderName: step === 0 ? 'VibeGoer' : personas[(step - 1) % personas.length].username,
       senderMessage: step === 0 ? 'Anyone here tonight?' : chatMessages[chatMessages.length - 1],
+      isStranger,
+      friendUsername
     };
 
     console.log(`[Step ${step + 1}] @${persona.username} (${location}) generating...`);
