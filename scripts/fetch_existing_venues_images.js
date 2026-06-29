@@ -1,12 +1,27 @@
 const admin = require('firebase-admin');
-const serviceAccount = require('./serviceAccountKey.json');
+let serviceAccount;
+
+try {
+  serviceAccount = require('./serviceAccountKey.json');
+} catch (error) {
+  console.error('ERROR: scripts/serviceAccountKey.json is missing.');
+  console.error('This file is required to run Firebase Admin scripts locally.');
+  console.error('Please obtain a service account key from the Firebase Console and save it as scripts/serviceAccountKey.json');
+  process.exit(1);
+}
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
 
 const db = admin.firestore();
-const apiKey = 'REDACTED_GOOGLE_MAPS_KEY';
+const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+if (!apiKey) {
+  console.error('ERROR: EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is not defined in your environment.');
+  console.error('Please run the script with your environment variables loaded, e.g.,');
+  console.error('  node --env-file=.env scripts/fetch_existing_venues_images.js');
+  process.exit(1);
+}
 
 const queries = {
   venue_001: 'Alchemist Bar, Parklands Road, Nairobi',

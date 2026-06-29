@@ -153,7 +153,7 @@ export const AdminSimulationScreen = () => {
       return;
     }
     try {
-      const apiKey = 'REDACTED_GOOGLE_MAPS_KEY';
+      const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
       const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&location=-1.286389,36.817223&radius=50000&key=${apiKey}`;
       const res = await fetch(url);
       const data = await res.json();
@@ -170,7 +170,7 @@ export const AdminSimulationScreen = () => {
 
   const handleSelectSuggestion = async (placeId: string) => {
     try {
-      const apiKey = 'REDACTED_GOOGLE_MAPS_KEY';
+      const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
       const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=geometry,formatted_address,name,photos&key=${apiKey}`;
       const res = await fetch(url);
       const data = await res.json();

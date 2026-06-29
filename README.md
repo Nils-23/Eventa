@@ -77,9 +77,29 @@ node scripts/cleanupStorage.js
 
 The AI Persona system uses Claude (`claude-haiku-4-5`) to generate casual Sheng/English messages for venue chats. You can test and iterate on the prompt/generation quality locally without deploying to Firebase or using Firebase emulators.
 
-### Environment Variables
-To run local tests, you only need to provide the Anthropic API key:
-- `ANTHROPIC_API_KEY`: Your Anthropic API console key.
+### Environment Variables & Local Setup
+
+To run this project locally, you must set up the following local configuration files (which are ignored by Git to prevent leaking credentials):
+
+1. **`.env`** (in the root directory):
+   ```env
+   EXPO_PUBLIC_FIREBASE_API_KEY=your_firebase_api_key
+   EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+   EXPO_PUBLIC_FIREBASE_PROJECT_ID=your_project
+   EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project.firebasestorage.app
+   EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+   EXPO_PUBLIC_FIREBASE_APP_ID=your_app_id
+   EXPO_PUBLIC_FIREBASE_DATABASE_URL=your_rtdb_url
+   EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=your_ios_client_id
+   EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID=your_android_client_id
+   EXPO_PUBLIC_FIREBASE_WEB_CLIENT_ID=your_web_client_id
+   EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
+   ANTHROPIC_API_KEY=your_anthropic_api_key
+   ```
+   *Note: `EXPO_PUBLIC_` variables are bundled with the Expo application. For local admin node scripts, load them using native Node.js support, e.g.: `node --env-file=.env scripts/fetch_existing_venues_images.js`.*
+
+2. **`scripts/serviceAccountKey.json`**:
+   This is the Firebase Admin SDK private service account credentials JSON. Download this file from the Firebase Console under **Project Settings > Service Accounts** and save it to the `scripts/` directory with the name `serviceAccountKey.json` to enable local backend/database seeding scripts to run.
 
 ### 1. Batch Test Harness (Tier 1)
 Runs a batch of generations (default 100) rotating through mock dayparts, variants, and personas, and prints a final metrics report:
