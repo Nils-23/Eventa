@@ -1,6 +1,98 @@
 const fetch = require('node-fetch');
 
 // --- Persona Prompt Helpers ---
+// --- Opener Tracking State ---
+const recentOpenersByVenue = {};
+const globalOpenersList = [];
+const globalOpenerCounts = {};
+
+// --- Emoji Tracking State ---
+const globalEmojiCounts = {
+  '😂': 0,
+  '💀': 0,
+  '😭': 0,
+  '🥹': 0,
+  '👀': 0
+};
+
+function getToneFromMessage(text) {
+  const clean = text.toLowerCase();
+  
+  // 1. Curious / Shady (questions, sus, where, etc. - remove 'ati' to prevent 👀 overload)
+  if (clean.includes('?') || clean.includes('sus') || clean.includes('shady') || clean.includes('who') || clean.includes('why') || clean.includes('where') || clean.includes('what') || clean.includes('how')) {
+    return 'curious';
+  }
+
+  // 2. Savage / Extremely Funny (cooked, crash out, took the L, wild, savage, dead)
+  if (clean.includes('cooked') || clean.includes('crash out') || clean.includes('took the l') || clean.includes('savage') || clean.includes('wild') || clean.includes('dead')) {
+    return 'savage';
+  }
+
+  // 3. Wholesome / Emotional (woiye, woi, aki, love, cute, wholesome, sweet, pure, safe, happy)
+  if (clean.includes('woiye') || clean.includes('woi') || clean.includes('aki') || clean.includes('love') || clean.includes('cute') || clean.includes('pure') || clean.includes('wholesome') || clean.includes('safe') || clean.includes('happy') || clean.includes('aww')) {
+    return 'wholesome';
+  }
+
+  // 4. Overwhelmed (wueh, weuh, ate, slay, scream, surely, fire, mid, etc.)
+  if (clean.includes('wueh') || clean.includes('weuh') || clean.includes('surely') || clean.includes('ate') || clean.includes('slay') || clean.includes('omg') || clean.includes('fire') || clean.includes('literally') || clean.includes('screaming') || clean.includes('mid') || clean.includes('no crumbs')) {
+    return 'overwhelmed';
+  }
+
+  // 5. Funny / Banter (haha, funny, lol, lmao, joke, tease, bro, buda, fam, boss)
+  if (clean.includes('haha') || clean.includes('funny') || clean.includes('lol') || clean.includes('lmao') || clean.includes('joke') || clean.includes('tease') || clean.includes('bro') || clean.includes('buda') || clean.includes('fam') || clean.includes('boss')) {
+    return 'funny';
+  }
+
+  return null; // Return null to trigger balancing fallback
+}
+
+// --- Opener Verification Helper ---
+function getCleanedFirstWord(text, username, personaName) {
+  if (!text) return '';
+  const emojiRegex = /[\uD800-\uDBFF][\uDC00-\uDFFF]|\p{Emoji_Presentation}|\p{Emoji_Modifier_Base}|\p{Emoji_Component}/gu;
+  let cleaned = text.replace(emojiRegex, '').replace(/\s+/g, ' ').trim();
+  
+  if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  if (cleaned.startsWith("'") && cleaned.endsWith("'")) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+
+  const prefixes = [
+    username + ':',
+    '@' + username + ':',
+    personaName + ':',
+    '@' + personaName + ':',
+    username + ' -',
+    personaName + ' -'
+  ];
+
+  for (const prefix of prefixes) {
+    if (cleaned.toLowerCase().startsWith(prefix.toLowerCase())) {
+      cleaned = cleaned.substring(prefix.length).trim();
+      break;
+    }
+  }
+
+  const colonMatch = cleaned.match(/^@?[\w\.\-]{2,20}\s*:\s*/i);
+  if (colonMatch) {
+    cleaned = cleaned.substring(colonMatch[0].length).trim();
+  }
+
+  if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  if (cleaned.startsWith("'") && cleaned.endsWith("'")) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+
+  cleaned = cleaned.replace(/[\r\n]+/g, ' ').trim();
+  
+  const words = cleaned.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'!]/g, ' ').trim().split(/\s+/);
+  return words[0] || '';
+}
+
 function rollLanguageMode() {
   const r = Math.random();
   if (r < 0.45) return 'english_dominant';
@@ -14,21 +106,28 @@ function rollEmoji() {
 
 const getBaseStyle = (venueName) => 
   `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. ` +
-  `You must write EXACTLY like young Nairobians text in 2025. ` +
-  `\n\nWHAT SHENG ACTUALLY SOUNDS LIKE:\n` +
-  `Nairobians chop, blend and switch mid-sentence naturally. Examples: ` +
-  `"maze place ni fiti sana leo", "si unajua vibes ziko different usiku huu", ` +
-  `"waah buda nilikuwa sishuku itakuwa hivi", "noma sana hapa crowd ni different", ` +
-  `"msee DJ ameweka fire track tena", "maze nimekuwa hapa from 10 vibes ni noma". ` +
-  `\n\nSHENG VOCABULARY: msee/dem/buda/jamaa (people), maze/waah/sawa/kweli (reactions), ` +
-  `fiti/noma/different/poa/top (quality), hapa/hapo/njiani/imejaa (location), ` +
-  `leo/usiku/saa hii (time), si unajua/ama/lakini/tena/hata (connectors).\n`;
+  `You must write EXACTLY like young Kenyan Gen Z text online. ` +
+  `Use natural English texting style (lowercase, brief, relaxed). ` +
+  `\n\nSTYLE RULES:\n` +
+  `- Do NOT use retired Sheng words (do NOT say: fiti, noma, poa, moto, maze, sawa).\n` +
+  `- Use a mix of global Gen Z slang and thin Kenyan-English discourse markers. Do NOT sound like a generic American TikToker.\n` +
+  `- Global Gen Z slang to draw from naturally: fire, mid, ate, no cap, fr, lowkey, highkey, vibe, slay, cooked, sheesh, locked in, pull up, iykyk, sus, "it's giving", "that's so real", "not me", "the way".\n` +
+  `- Kenyan-English markers to weave in occasionally (aim for about 1 marker per message to keep it Nairobi): wueh (or weuh), ati, surely, woiye (or woi), aki, "me I...", buda, boss, bro, fam, bruv, kindly, imagine.\n` +
+  `\nEXAMPLES OF GOOD AND BAD STYLE:\n` +
+  `- BAD (Too American/Generic): "no cap that's bussin fr fr" (no Kenyan flavor)\n` +
+  `- BAD (Too old Sheng register): "hii place iko fiti sana maze" (uses retired Sheng words)\n` +
+  `- GOOD: "wueh the DJ ate, no cap"\n` +
+  `- GOOD: "me I'm not leaving the house for mid music"\n` +
+  `- GOOD: "ati entry is how much, surely"\n` +
+  `- GOOD: "aki this queue is cooked, imagine"\n` +
+  `- GOOD: "buda, pull up, the vibe is fire"\n`;
 
 const RULES = 
   `\nRULES: ` +
   `(1) Write ONE COMPLETE short line (~8 words max). It must be a finished thought. Never stop mid-sentence. ` +
   `(2) No hashtags. (3) No line breaks. ` +
-  `(4) Be extremely casual, like texting a friend.\n`;
+  `(4) Be extremely casual, like texting a friend. ` +
+  `(5) Do NOT start with 'yo', 'yoo', 'ayo', 'bro', or 'buda'. Most messages should open mid-thought, with no greeting/filler word at all — just say the thing.\n`;
 
 function enforceCeiling(text, username, personaName, intentType = 'default', history = '') {
   return cleanPersonaMessageText(text, username, personaName, intentType, history);
@@ -167,10 +266,10 @@ function cleanPersonaMessageText(text, username, personaName, intentType = 'defa
   // Clean dangling endings (never cut mid-word or end on connector/comma)
   body = cleanDanglingEndings(body);
 
-  // Enforce minimum 20 characters by appending Sheng fillers
+  // Enforce minimum 20 characters by appending Kenyan/Gen Z fillers
   bodyArr = [...body];
   if (bodyArr.length < 20) {
-    const fillers = [" maze", " buda", " noma", " vibe", " fiti", " sana", " hapa"];
+    const fillers = [" wueh", " aki", " surely", " vibe", " fr fr", " no cap", " boss", " bro"];
     let fillerIdx = 0;
     while (bodyArr.length < 20) {
       const fillerChars = [...fillers[fillerIdx % fillers.length]];
@@ -183,23 +282,37 @@ function cleanPersonaMessageText(text, username, personaName, intentType = 'defa
   // Clean dangling endings final check
   body = cleanDanglingEndings(body);
 
-  // 2. Decide whether to append an emoji (~35% chance)
+  // 2. Decide whether to append a reaction emoji (~35% chance)
   const appendEmoji = Math.random() < 0.35;
   if (appendEmoji) {
-    const EMOJI_POOLS = {
-      hype: ['🔥','🥵','💯','✨'],
-      question: ['👀','🤔','📍'],
-      logistics: ['📍','🚗','🎟️'],
-      plan: ['🙌','💃','🕺'],
-      default: ['😂','🎶','🍻','👀']
+    const tone = getToneFromMessage(body);
+    const toneEmojiMap = {
+      funny: '😂',
+      savage: '💀',
+      overwhelmed: '😭',
+      wholesome: '🥹',
+      curious: '👀'
     };
-    const pool = EMOJI_POOLS[intentType] || EMOJI_POOLS.default;
+    
     const lastEmojis = getLastEmojisFromHistory(history);
-    let filteredPool = pool.filter(emo => !lastEmojis.includes(emo));
-    if (filteredPool.length === 0) {
-      filteredPool = pool;
+    const allReactionEmojis = ['😂', '💀', '😭', '🥹', '👀'];
+    
+    let chosenEmoji = tone ? toneEmojiMap[tone] : null;
+    
+    if (!chosenEmoji || lastEmojis.includes(chosenEmoji)) {
+      const filtered = allReactionEmojis.filter(emo => !lastEmojis.includes(emo));
+      if (filtered.length > 0) {
+        // Find the emoji in the filtered set with the lowest representation in globalEmojiCounts
+        filtered.sort((a, b) => (globalEmojiCounts[a] || 0) - (globalEmojiCounts[b] || 0));
+        chosenEmoji = filtered[0];
+      } else {
+        chosenEmoji = allReactionEmojis[0];
+      }
     }
-    const chosenEmoji = filteredPool[Math.floor(Math.random() * filteredPool.length)];
+    
+    // Update global stat count
+    globalEmojiCounts[chosenEmoji] = (globalEmojiCounts[chosenEmoji] || 0) + 1;
+    
     body = `${body} ${chosenEmoji}`;
   }
 
@@ -254,7 +367,8 @@ function getForbiddenTopicWord(history, exemptWords = []) {
     'ni', 'na', 'n', 'ya', 'wa', 'kwa', 'i', 'you', 'we', 'they', 'me', 'my', 'your', 'our', 
     'he', 'she', 'him', 'her', 'was', 'were', 'are', 'am', 'be', 'have', 'has', 'had', 
     'do', 'does', 'did', 'go', 'went', 'gone', 'but', 'so', 'if', 'or', 'as', 'an', 'with',
-    'sana', 'noma', 'fiti', 'maze', 'buda', 'msee', 'vibe', 'vibes', 'hapa', 'leo'
+    'sana', 'noma', 'fiti', 'maze', 'buda', 'msee', 'vibe', 'vibes', 'hapa', 'leo',
+    'wueh', 'weuh', 'ati', 'surely', 'woiye', 'woi', 'aki', 'kindly', 'imagine', 'fire', 'mid', 'slay', 'cooked', 'sus'
   ]);
 
   const wordCounts = {};
@@ -366,11 +480,11 @@ async function generateMessage(context) {
 
   let langInstruction = '';
   if (langMode === 'english_dominant') {
-    langInstruction = `\nFor THIS message: write in natural casual English texting style, naturally weaving exactly 1 or 2 Sheng/Swahili words (like maze, msee, buda, fiti, noma, poa, sawa, sana) into the sentence. Keep it extremely brief (under 50 characters). English must dominate completely. NEVER write a full Swahili or Swahili-dominant sentence.\n`;
+    langInstruction = `\nFor THIS message: write in natural casual English texting style (optionally a global Gen Z slang word, but NO Sheng words). Keep it extremely brief.\n`;
   } else if (langMode === 'mixed_light') {
-    langInstruction = `\nFor THIS message: write in casual English texting style, naturally weaving exactly 2 or 3 Sheng/Swahili words (like maze, msee, buda, fiti, noma, poa, sawa, leo, usiku, njiani, sana) into the sentence. Keep it extremely brief (under 50 characters). English must still be the grammatical base.\n`;
+    langInstruction = `\nFor THIS message: write in casual English texting style, naturally weaving in exactly ONE Kenyan-English marker (e.g. wueh, ati, surely, woiye, aki, buda, boss, bro, kindly, imagine) or "me I...". Keep it extremely brief.\n`;
   } else {
-    langInstruction = `\nFor THIS message: mix Sheng/Swahili and English (3-4 Sheng/Swahili words max, e.g. maze, msee, buda, fiti, noma, poa, sawa, usiku, leo, njiani, sana, lakini) switching naturally mid-sentence. Keep it extremely brief (under 50 characters). English must still be present.\n`;
+    langInstruction = `\nFor THIS message: write in casual English texting style, weaving in exactly ONE Kenyan-English marker AND one global Gen Z slang word (e.g., "wueh the DJ ate, no cap" or "buda this place is lowkey cooked"). Keep it extremely brief.\n`;
   }
 
   const emojiInstruction = (variant === 'ambient' || variant === 'ambient_seeding')
@@ -520,8 +634,10 @@ async function generateMessage(context) {
   let attempts = 0;
   let savedEndTurnText = null;
   let lastText = '';
+  
+  const BANNED_OPENERS = new Set(['yo', 'yoo', 'ayo', 'bro', 'buda']);
 
-  while (attempts < 3) {
+  while (attempts < 5) {
     console.log(`[Persona Generator] Generation attempt ${attempts + 1} for @${personaUsername}...`);
     try {
       const res = await callAnthropicHaiku(apiKey, prompt, callConfig);
@@ -555,6 +671,38 @@ async function generateMessage(context) {
         continue;
       }
       
+      // Opener validation
+      const candidateCleaned = enforceCeiling(text, personaUsername, personaName, sampledIntent.type, history || '');
+      const firstW = getCleanedFirstWord(candidateCleaned, personaUsername, personaName);
+      
+      const isBanned = BANNED_OPENERS.has(firstW);
+      
+      const venue = venueName || 'default';
+      const recentForVenue = recentOpenersByVenue[venue] || [];
+      const isConsecutiveThree = recentForVenue.length >= 2 && recentForVenue[0] === firstW && recentForVenue[1] === firstW;
+      
+      const currentCount = globalOpenerCounts[firstW] || 0;
+      const totalCount = globalOpenersList.length;
+      const isOverGlobalCap = (currentCount + 1) > Math.max(2, Math.ceil((totalCount + 1) * 0.15));
+
+      if (isBanned && attempts < 4) {
+        console.warn(`[Persona Generator] Attempt ${attempts + 1} started with banned opener "${firstW}". Retrying.`);
+        attempts++;
+        continue;
+      }
+      
+      if (isConsecutiveThree && attempts < 4) {
+        console.warn(`[Persona Generator] Attempt ${attempts + 1} venue consecutive three opener violation for "${firstW}". Retrying.`);
+        attempts++;
+        continue;
+      }
+      
+      if (isOverGlobalCap && attempts < 4) {
+        console.warn(`[Persona Generator] Attempt ${attempts + 1} global cap 15% opener violation for "${firstW}" (${currentCount + 1}/${totalCount + 1} > 15%). Retrying.`);
+        attempts++;
+        continue;
+      }
+      
       finalMessage = text;
       break;
     } catch (err) {
@@ -573,7 +721,25 @@ async function generateMessage(context) {
     }
   }
 
-  return enforceCeiling(finalMessage, personaUsername, personaName, sampledIntent.type, history || '');
+  const finalCleaned = enforceCeiling(finalMessage, personaUsername, personaName, sampledIntent.type, history || '');
+  
+  // Track selected opener
+  const actualFirstW = getCleanedFirstWord(finalCleaned, personaUsername, personaName);
+  if (actualFirstW) {
+    const venue = venueName || 'default';
+    if (!recentOpenersByVenue[venue]) {
+      recentOpenersByVenue[venue] = [];
+    }
+    recentOpenersByVenue[venue].push(actualFirstW);
+    if (recentOpenersByVenue[venue].length > 2) {
+      recentOpenersByVenue[venue].shift();
+    }
+    
+    globalOpenersList.push(actualFirstW);
+    globalOpenerCounts[actualFirstW] = (globalOpenerCounts[actualFirstW] || 0) + 1;
+  }
+
+  return finalCleaned;
 }
 
 module.exports = {

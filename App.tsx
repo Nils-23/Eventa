@@ -8,6 +8,7 @@ import { toastConfig } from './config/toast';
 import { MainTabs } from './navigation/MainTabs';
 import { LoginScreen } from './screens/LoginScreen';
 import { TermsScreen } from './screens/TermsScreen';
+import { OnboardingScreen } from './screens/OnboardingScreen';
 import { AchievementsScreen } from './screens/AchievementsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { AdminSimulationScreen } from './screens/AdminSimulationScreen';
@@ -47,6 +48,15 @@ export default function App() {
   const versionInfo = useVersionCheck();
   const [hasDismissedFlexibleUpdate, setHasDismissedFlexibleUpdate] = React.useState(false);
 
+  // First Launch Onboarding State
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = React.useState<boolean | null>(null);
+
+  React.useEffect(() => {
+    AsyncStorage.getItem('eventas_has_completed_onboarding').then(val => {
+      setHasCompletedOnboarding(val === 'true');
+    });
+  }, []);
+
 
   React.useEffect(() => {
 
@@ -71,7 +81,7 @@ export default function App() {
 
   const { user, isLoading, hasAgreedToTerms } = useAppStore();
 
-  if (isLoading) {
+  if (isLoading || hasCompletedOnboarding === null) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FAFAFA' }}>
         <ActivityIndicator size="large" color="#000000" />
@@ -91,8 +101,23 @@ export default function App() {
               fullScreenGestureEnabled: true,
             }}
           >
-            {!user ? (
-              <Stack.Screen name="Login" component={LoginScreen} />
+            {!hasCompletedOnboarding ? (
+              <Stack.Screen name="Onboarding">
+                {props => (
+                  <OnboardingScreen
+                    {...props}
+                    onComplete={async () => {
+                      await AsyncStorage.setItem('eventas_has_completed_onboarding', 'true');
+                      setHasCompletedOnboarding(true);
+                    }}
+                  />
+                )}
+              </Stack.Screen>
+            ) : !user ? (
+              <>
+                <Stack.Screen name="Login" component={LoginScreen} />
+                <Stack.Screen name="Terms" component={TermsScreen} />
+              </>
             ) : !hasAgreedToTerms ? (
               <Stack.Screen name="OnboardingTerms" component={TermsScreen} />
             ) : (

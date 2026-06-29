@@ -28,6 +28,7 @@ import {
 import app from '../services/firebase';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
+import { useNavigation } from '@react-navigation/native';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -124,6 +125,7 @@ const AnimatedRay: React.FC<RayConfig> = ({
 
 // ─── Main Login Screen ────────────────────────────────────────────────────────
 export const LoginScreen = () => {
+  const navigation = useNavigation<any>();
   const [isLoading, setIsLoading] = useState<string | null>(null);
 
   // Phone Auth State
@@ -437,6 +439,13 @@ export const LoginScreen = () => {
             <Text style={styles.footer}>
               A universe of moments is just{'\n'}a location away.
             </Text>
+
+            {/* Terms of Service Link */}
+            <View style={styles.linksRow}>
+              <TouchableOpacity onPress={() => navigation.navigate('Terms', { viewOnly: true })} activeOpacity={0.7}>
+                <Text style={styles.linkText}>Terms of Service</Text>
+              </TouchableOpacity>
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -669,5 +678,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
     fontWeight: '400',
+  },
+  linksRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  linkText: {
+    color: '#A78BFA',
+    fontSize: 13,
+    fontWeight: '500',
+    textDecorationLine: 'underline',
   },
 });
