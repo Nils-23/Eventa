@@ -1,6 +1,6 @@
 {
   "name": "eventa",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -43,6 +43,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@react-native-community/cli": "^20.2.0",
     "@types/react": "~19.1.0",
     "babel-preset-expo": "^55.0.21",
     "firebase-admin": "^13.8.0",
