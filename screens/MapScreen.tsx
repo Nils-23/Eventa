@@ -8,7 +8,7 @@ import { createReport } from '../services/reportService';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
 import { uploadStoryMedia, createStory, deleteStory } from '../services/storyService';
@@ -261,6 +261,13 @@ export const MapScreen = () => {
   const { user, selectedMapVenue, setSelectedMapVenue, isAdmin, pendingVenueAction, setPendingVenueAction, unreadChatCount } = useAppStore();
   const { stories } = useStories();
   const navigation = useNavigation<any>();
+  const isFocused = useIsFocused();
+
+  // Bumped on every screen focus to remount all markers. On Android, markers with
+  // tracksViewChanges=false render from a bitmap captured when tracking was turned
+  // off; if that capture happened while this screen was hidden, the bitmap is blank
+  // and the pin becomes invisible. Remounting forces a fresh draw while visible.
+  const [focusEpoch, setFocusEpoch] = useState(0);
 
   // ─── Zoom tracking ───────────────────────────────────────────────
   // We track the current rounded zoom level so we can convert screen-pixel sizes to
@@ -341,33 +348,42 @@ export const MapScreen = () => {
   // Effect to stop marker tracking after mount to boost performance
   const [trackMarkerChanges, setTrackMarkerChanges] = useState(true);
 
-  // Briefly re-enable tracking when App returns to foreground to redraw any OS-dropped bitmaps
+  // Briefly re-enable tracking when App returns to foreground to redraw any OS-dropped bitmaps.
+  // Skipped when this screen isn't the focused tab — capturing the marker bitmaps while the
+  // screen is hidden produces blank pins on Android.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
-      if (nextAppState === 'active') {
+      if (nextAppState === 'active' && navigation.isFocused()) {
+        setFocusEpoch(e => e + 1);
         setTrackMarkerChanges(true);
         setTimeout(() => setTrackMarkerChanges(false), 2000);
       }
     });
     return () => subscription.remove();
-  }, []);
+  }, [navigation]);
 
-  // Also re-enable tracking when returning to this tab via React Navigation
+  // Re-enable tracking when returning to this tab via React Navigation. Remount the
+  // markers (focusEpoch) so Android draws fresh views, and keep tracking on long enough
+  // for the SVG pin icons to finish rendering before the bitmap is captured.
   useFocusEffect(
     useCallback(() => {
       if (!isMapReady) return;
+      setFocusEpoch(e => e + 1);
       setTrackMarkerChanges(true);
-      // Brief 500ms timeout is enough when map is already ready and we just focused the screen
-      const timer = setTimeout(() => setTrackMarkerChanges(false), 500);
+      const timer = setTimeout(() => setTrackMarkerChanges(false), 1500);
       return () => clearTimeout(timer);
     }, [isMapReady])
   );
 
   useEffect(() => {
+    // Never toggle tracking while unfocused: the toggle-off would capture blank marker
+    // bitmaps (venues/stories keep updating from Firebase while the user is on other tabs).
+    // The focus effect above re-rasterizes everything when the user comes back.
+    if (!isFocused) return;
     setTrackMarkerChanges(true);
     const timer = setTimeout(() => setTrackMarkerChanges(false), 2000);
     return () => clearTimeout(timer);
-  }, [venues, stories]);
+  }, [venues, stories, isFocused]);
 
   useEffect(() => {
     if (selectedMapVenue && mapRef.current && isMapReady) {
@@ -761,7 +777,7 @@ export const MapScreen = () => {
 
         return (
           <Marker
-            key={`${venue.id}_${hasStories}`}
+            key={`${venue.id}_${hasStories}_${focusEpoch}`}
             coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
             onPress={(e) => {
               e.stopPropagation();
@@ -771,7 +787,9 @@ export const MapScreen = () => {
             zIndex={hasStories ? 200 : 100}
             anchor={{ x: 0.5, y: 1 }}
           >
-            <View style={styles.markerContainer}>
+            {/* collapsable={false}: RN's Android view flattening can strip this wrapper,
+                breaking the marker's view-to-bitmap capture */}
+            <View style={styles.markerContainer} collapsable={false}>
               <View style={[styles.pinBubble, { backgroundColor: pinColor }]}>
                 <MapPin color="#000" size={14} fill="#000" />
               </View>
@@ -780,7 +798,7 @@ export const MapScreen = () => {
           </Marker>
         );
       });
-  }, [venues, stories, trackMarkerChanges]);
+  }, [venues, stories, trackMarkerChanges, focusEpoch]);
 
   return (
     <View style={styles.container}>

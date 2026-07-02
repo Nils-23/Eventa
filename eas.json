@@ -9,9 +9,11 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "preview"
     },
     "production": {
+      "channel": "production",
       "autoIncrement": false,
       "env": {
         "ANDROID_HOME": "/opt/homebrew/share/android-commandlinetools",

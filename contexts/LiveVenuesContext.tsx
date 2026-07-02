@@ -77,7 +77,10 @@ interface RawVenue {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const VENUE_RADIUS_METERS = 200;
-const STALE_MS = 2 * 60 * 60 * 1000; // 2 hours
+const STALE_MS = 2 * 60 * 60 * 1000; // 2 hours (real users)
+// Simulated users are heartbeated every 15s by the engine; if the engine stops,
+// their counts must fade quickly rather than freeze at (say) 1am levels for 2 hours.
+const SIM_STALE_MS = 10 * 60 * 1000;
 const REFRESH_RATE_MS = 2000;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -294,7 +297,7 @@ function computeLiveData(
   if (includeSimulated) {
     simActiveLocs.push(
       ...Object.values(simLocations).filter(
-        (loc) => loc.latitude && loc.longitude && now - loc.timestamp < STALE_MS
+        (loc) => loc.latitude && loc.longitude && now - loc.timestamp < SIM_STALE_MS
       )
     );
   }

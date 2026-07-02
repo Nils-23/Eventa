@@ -62,7 +62,7 @@
       "usesAppleSignIn": true
     },
     "android": {
-      "versionCode": 28,
+      "versionCode": 29,
       "adaptiveIcon": {
         "foregroundImage": "./assets/App_icon.png",
         "backgroundColor": "#ffffff"
@@ -111,7 +111,10 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/97c28f7f-bc55-49da-a7d8-7bcccc4fa3e2"
+      "url": "https://u.expo.dev/97c28f7f-bc55-49da-a7d8-7bcccc4fa3e2",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
     }
   }
 }
