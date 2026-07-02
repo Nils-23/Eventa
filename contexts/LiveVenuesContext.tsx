@@ -456,7 +456,9 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const cachedLive = await AsyncStorage.getItem('cached_live_venues');
         const cachedScheduled = await AsyncStorage.getItem('cached_scheduled_venues');
         if (cachedLive) {
-          setVenues(JSON.parse(cachedLive));
+          const parsed = JSON.parse(cachedLive);
+          setVenues(parsed);
+          venuesRef.current = parsed; // Sync ref immediately to allow stale-while-revalidate background loading
         }
         if (cachedScheduled) {
           setScheduledVenues(JSON.parse(cachedScheduled));
@@ -476,6 +478,8 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const simLocationsRef = useRef<Record<string, RawLocation>>({});
   const userPosRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const simConfigRef = useRef({ enabled: true, threshold: 100 });
+  const hasRealLocsLoadedRef = useRef(false);
+  const hasSimLocsLoadedRef = useRef(false);
 
   const isProcessingRef = useRef(false);
   const pendingUpdateRef = useRef(false);
@@ -500,6 +504,13 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const processData = () => {
     isProcessingRef.current = true;
+
+    // Wait until locations and simulated locations have loaded at least once (or fallback fires)
+    const isReady = hasRealLocsLoadedRef.current && hasSimLocsLoadedRef.current;
+    if (!isReady) {
+      isProcessingRef.current = false;
+      return;
+    }
 
     try {
       const activeRealCount = Object.values(locationsRef.current).filter(
@@ -579,7 +590,18 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         return;
       }
 
-      setIsLoading(true);
+      // Only show the loading spinner if we don't have cached data to display
+      if (venuesRef.current.length === 0) {
+        setIsLoading(true);
+      }
+
+      // 4-second safety fallback to prevent hanging in loading state if network is poor
+      const fallbackTimer = setTimeout(() => {
+        console.log('[LiveVenuesContext] Network load fallback triggered.');
+        hasRealLocsLoadedRef.current = true;
+        hasSimLocsLoadedRef.current = true;
+        requestRecalculate();
+      }, 4000);
 
       // 0. Load Simulation Config
       getDoc(doc(firestore, 'settings', 'simulation'))
@@ -639,6 +661,7 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         ref(realtimeDB, 'locations'),
         (snap) => {
           locationsRef.current = snap.exists() ? snap.val() : {};
+          hasRealLocsLoadedRef.current = true;
           requestRecalculate();
         },
         (e) => console.warn('[LiveVenuesContext] Locations listener error:', e)
@@ -649,6 +672,7 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         ref(realtimeDB, 'simulated_locations'),
         (snap) => {
           simLocationsRef.current = snap.exists() ? snap.val() : {};
+          hasSimLocsLoadedRef.current = true;
           requestRecalculate();
         },
         (e) => console.warn('[LiveVenuesContext] SimLocations listener error:', e)
@@ -660,6 +684,9 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         unsubVenues();
         unsubLocs();
         unsubSimLocs();
+        clearTimeout(fallbackTimer);
+        hasRealLocsLoadedRef.current = false;
+        hasSimLocsLoadedRef.current = false;
       };
     });
 

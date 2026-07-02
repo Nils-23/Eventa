@@ -6,9 +6,9 @@ import {
   TouchableOpacity,
   Dimensions,
   Animated,
-  SafeAreaView,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MapPin, MessageSquare, Trophy, ChevronRight } from 'lucide-react-native';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
@@ -308,8 +308,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 28,
-    paddingTop: Platform.OS === 'ios' ? 8 : 24,
-    height: 60,
+    paddingTop: 12,
+    paddingBottom: 12,
   },
   logoBadge: {
     paddingVertical: 4,

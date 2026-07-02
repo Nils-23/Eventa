@@ -10,7 +10,7 @@ export function subscribeToRTDB(
   callback: (snapshot: any) => void,
   errorCallback?: (error: any) => void,
   maxRetries = 5,
-  delayMs = 2000
+  delayMs = 300
 ): () => void {
   let unsubscribe: Unsubscribe | null = null;
   let isCancelled = false;

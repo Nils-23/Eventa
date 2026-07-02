@@ -42,12 +42,6 @@ export const ProfileScreen = () => {
             points: points,
           });
           setUnlockedAchievements(data.unlockedAchievements || []);
-          
-          // Self-heal: if user has points but monthly points field is missing, initialize it
-          const monthlyKey = getMonthlyPointsKey();
-          if (points > 0 && data[monthlyKey] === undefined) {
-            updateDoc(userDocRef, { [monthlyKey]: points }).catch(console.error);
-          }
         }
       });
       
