@@ -12,6 +12,7 @@ import Toast from 'react-native-toast-message';
 import * as ImagePicker from 'expo-image-picker';
 import { uploadStoryMedia, createSimulatedStory } from '../services/storyService';
 import { getFallbackImageByType } from '../utils/venueImageUtils';
+import { DatePickerField } from '../components/DatePickerField';
 
 export const AdminSimulationScreen = () => {
   const navigation = useNavigation();
@@ -147,6 +148,7 @@ export const AdminSimulationScreen = () => {
   const [customImageUri, setCustomImageUri] = useState<string | null>(null);
   const [isUploadingCustomImage, setIsUploadingCustomImage] = useState(false);
   const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showManualCoords, setShowManualCoords] = useState(false);
 
   const fetchSuggestions = async (input: string) => {
     if (input.length < 3) {
@@ -193,7 +195,7 @@ export const AdminSimulationScreen = () => {
       }
     } catch (error) {
       console.warn('Error getting place details:', error);
-      Toast.show({ type: 'error', text1: 'Lookup Failed', text2: 'Could not fetch details from Google Maps.' });
+      Alert.alert('Lookup Failed', 'Could not fetch details from Google Maps.');
     }
   };
 
@@ -273,7 +275,7 @@ export const AdminSimulationScreen = () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Gallery access is required to upload a thumbnail.' });
+        Alert.alert('Permission Denied', 'Gallery access is required to upload a thumbnail.');
         return;
       }
 
@@ -291,11 +293,7 @@ export const AdminSimulationScreen = () => {
       }
     } catch (error) {
       console.error('Image Picker Error:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Selection Failed',
-        text2: 'Could not open the gallery.',
-      });
+      Alert.alert('Selection Failed', 'Could not open the gallery.');
     }
   };
 
@@ -313,17 +311,22 @@ export const AdminSimulationScreen = () => {
 
   const handleCreateVenue = async () => {
     if (newVenueType === 'Event' && !newEventName.trim()) {
-      Toast.show({ type: 'error', text1: 'Missing Event Name', text2: 'Please fill in the event name.' });
+      Alert.alert('Missing Event Name', 'Please fill in the event name.');
       return;
     }
 
-    if (!newVenueName || !newVenueLat || !newVenueLng || !newVenueDesc) {
-      Toast.show({ type: 'error', text1: 'Missing Fields', text2: 'Please fill in all basic fields.' });
+    if (!newVenueName) {
+      Alert.alert('Missing Venue Name', 'Please fill in the venue name.');
+      return;
+    }
+
+    if (!newVenueLat || !newVenueLng) {
+      Alert.alert('Missing Location', 'Select the venue from the Google Maps search suggestions, or enter coordinates manually.');
       return;
     }
 
     if (newVenueType === 'Event' && !newVenueExpiration) {
-      Toast.show({ type: 'error', text1: 'Missing Expiration', text2: 'Events must have an expiration date.' });
+      Alert.alert('Missing Expiration', 'Events must have an expiration date.');
       return;
     }
 
@@ -331,7 +334,7 @@ export const AdminSimulationScreen = () => {
     if (newVenueExpiration) {
       const parsedDate = new Date(newVenueExpiration);
       if (isNaN(parsedDate.getTime())) {
-        Toast.show({ type: 'error', text1: 'Invalid Date', text2: 'Please use YYYY-MM-DD format.' });
+        Alert.alert('Invalid Date', 'Please use YYYY-MM-DD format.');
         return;
       }
       expirationDate = parsedDate.getTime();
@@ -341,13 +344,13 @@ export const AdminSimulationScreen = () => {
     if ((newVenueType === 'Activity' || newVenueType === 'Event') && newVenueStartDate) {
       const parsedDate = new Date(newVenueStartDate);
       if (isNaN(parsedDate.getTime())) {
-        Toast.show({ type: 'error', text1: 'Invalid Date', text2: 'Please use YYYY-MM-DD format for Start Date.' });
+        Alert.alert('Invalid Date', 'Please use YYYY-MM-DD format for Start Date.');
         return;
       }
       startDate = parsedDate.getTime();
 
-      if (expirationDate && startDate >= expirationDate) {
-        Toast.show({ type: 'error', text1: 'Invalid Dates', text2: 'Start Date must be before Expiration Date.' });
+      if (expirationDate && startDate > expirationDate) {
+        Alert.alert('Invalid Dates', 'Start Date cannot be after Expiration Date.');
         return;
       }
     }
@@ -356,7 +359,7 @@ export const AdminSimulationScreen = () => {
     const lng = parseFloat(newVenueLng);
 
     if (isNaN(lat) || isNaN(lng)) {
-      Toast.show({ type: 'error', text1: 'Invalid Coordinates', text2: 'Latitude and Longitude must be numbers.' });
+      Alert.alert('Invalid Coordinates', 'Latitude and Longitude must be numbers.');
       return;
     }
 
@@ -375,7 +378,7 @@ export const AdminSimulationScreen = () => {
         name: addedName,
         latitude: lat,
         longitude: lng,
-        description: newVenueDesc,
+        description: newVenueDesc.trim(),
         type: newVenueType,
         simulatedUsersCount: 0,
         isOverride: false,
@@ -427,10 +430,11 @@ export const AdminSimulationScreen = () => {
       setCustomImageUri(null);
       setNewVenueMaxCapacity('');
       setSuggestions([]);
+      setShowManualCoords(false);
 
     } catch (error) {
       console.error('Error creating venue:', error);
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to create new venue.' });
+      Alert.alert('Error', 'Failed to create new venue.');
     } finally {
       setIsUploadingCustomImage(false);
     }
@@ -482,7 +486,7 @@ export const AdminSimulationScreen = () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Gallery access is required.' });
+        Alert.alert('Permission Denied', 'Gallery access is required.');
         return;
       }
 
@@ -500,28 +504,24 @@ export const AdminSimulationScreen = () => {
       }
     } catch (error) {
       console.error('Select Media Error:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Selection Failed',
-        text2: 'Could not select media.',
-      });
+      Alert.alert('Selection Failed', 'Could not select media.');
     }
   };
 
   const handleSaveSchedule = async () => {
     if (!scheduleVenue) return;
     if (!scheduleMediaUri) {
-      Toast.show({ type: 'error', text1: 'Missing Media', text2: 'Please select an image or video.' });
+      Alert.alert('Missing Media', 'Please select an image or video.');
       return;
     }
     if (!scheduleTime) {
-      Toast.show({ type: 'error', text1: 'Missing Time', text2: 'Please specify the time.' });
+      Alert.alert('Missing Time', 'Please specify the time.');
       return;
     }
 
     const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
     if (!timeRegex.test(scheduleTime)) {
-      Toast.show({ type: 'error', text1: 'Invalid Time Format', text2: 'Time must be in 24-hour format (HH:MM), e.g. 19:00' });
+      Alert.alert('Invalid Time Format', 'Time must be in 24-hour format (HH:MM), e.g. 19:00.');
       return;
     }
 
@@ -560,11 +560,7 @@ export const AdminSimulationScreen = () => {
       setScheduleMediaUri(null);
     } catch (error) {
       console.error('Save Schedule Error:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Failed to Save',
-        text2: 'Could not create recurring story schedule.',
-      });
+      Alert.alert('Failed to Save', 'Could not create recurring story schedule.');
     } finally {
       setIsSavingSchedule(false);
     }
@@ -1050,54 +1046,83 @@ export const AdminSimulationScreen = () => {
 
                 <>
                   <View style={styles.formGroup}>
-                    <Text style={styles.label}>Scheduled Start Date (Optional, YYYY-MM-DD)</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="YYYY-MM-DD"
-                      placeholderTextColor="#666"
+                    <DatePickerField
+                      label="Scheduled Start Date (Optional)"
                       value={newVenueStartDate}
-                      onChangeText={setNewVenueStartDate}
+                      onChange={(date) => {
+                        setNewVenueStartDate(date);
+                        // For Events, expiration is mandatory — default it to the day after the start
+                        if (date && newVenueType === 'Event' && !newVenueExpiration) {
+                          const dayAfter = new Date(`${date}T00:00:00`);
+                          dayAfter.setDate(dayAfter.getDate() + 1);
+                          const y = dayAfter.getFullYear();
+                          const m = String(dayAfter.getMonth() + 1).padStart(2, '0');
+                          const d = String(dayAfter.getDate()).padStart(2, '0');
+                          setNewVenueExpiration(`${y}-${m}-${d}`);
+                        }
+                      }}
                     />
                   </View>
 
                   <View style={styles.formGroup}>
-                    <Text style={styles.label}>
-                      Expiration Date {newVenueType === 'Event' ? '(Mandatory for Events)' : '(Optional for Activities)'}
-                    </Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="YYYY-MM-DD"
-                      placeholderTextColor="#666"
+                    <DatePickerField
+                      label={`Expiration Date ${newVenueType === 'Event' ? '(Mandatory for Events)' : '(Optional for Activities)'}`}
                       value={newVenueExpiration}
-                      onChangeText={setNewVenueExpiration}
+                      onChange={setNewVenueExpiration}
+                      minDate={newVenueStartDate || undefined}
+                      clearable={newVenueType !== 'Event'}
                     />
                   </View>
                 </>
               )}
 
-              <View style={styles.rowFormGroup}>
-                <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-                  <Text style={styles.label}>Latitude</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="-1.2664"
-                    placeholderTextColor="#666"
-                    keyboardType="numeric"
-                    value={newVenueLat}
-                    onChangeText={setNewVenueLat}
-                  />
+              <View style={styles.formGroup}>
+                <View style={styles.locationLabelRow}>
+                  <Text style={styles.label}>Location</Text>
+                  <TouchableOpacity onPress={() => setShowManualCoords(prev => !prev)}>
+                    <Text style={styles.manualCoordsToggle}>
+                      {showManualCoords ? 'Hide manual entry' : 'Enter manually'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
-                <View style={[styles.formGroup, { flex: 1, marginLeft: 8 }]}>
-                  <Text style={styles.label}>Longitude</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="36.7966"
-                    placeholderTextColor="#666"
-                    keyboardType="numeric"
-                    value={newVenueLng}
-                    onChangeText={setNewVenueLng}
-                  />
-                </View>
+
+                {newVenueLat && newVenueLng ? (
+                  <View style={styles.locationSetRow}>
+                    <Check color="#00FFCC" size={16} />
+                    <Text style={styles.locationSetText}>
+                      Location set ({parseFloat(newVenueLat).toFixed(4)}, {parseFloat(newVenueLng).toFixed(4)})
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.locationHintText}>
+                    Search the venue name above — coordinates are filled in automatically.
+                  </Text>
+                )}
+
+                {showManualCoords && (
+                  <View style={styles.rowFormGroup}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Latitude (-1.2664)"
+                        placeholderTextColor="#666"
+                        keyboardType="numeric"
+                        value={newVenueLat}
+                        onChangeText={setNewVenueLat}
+                      />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Longitude (36.7966)"
+                        placeholderTextColor="#666"
+                        keyboardType="numeric"
+                        value={newVenueLng}
+                        onChangeText={setNewVenueLng}
+                      />
+                    </View>
+                  </View>
+                )}
               </View>
 
               {/* Thumbnail Image Picker & Preview Section */}
@@ -1147,7 +1172,7 @@ export const AdminSimulationScreen = () => {
               </View>
 
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Description</Text>
+                <Text style={styles.label}>Description (Optional)</Text>
                 <TextInput
                   style={[styles.input, styles.textArea]}
                   placeholder="Brief description of the venue..."
@@ -1299,12 +1324,33 @@ export const AdminSimulationScreen = () => {
               {/* Time */}
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Execution Time (24h format, HH:MM)</Text>
+                <View style={[styles.daySelectorRow, { marginBottom: 8 }]}>
+                  {(['17:00', '18:00', '19:00', '20:00', '21:00', '22:00'] as const).map((time) => (
+                    <TouchableOpacity
+                      key={time}
+                      style={[styles.dayPill, scheduleTime === time && styles.dayPillSelected]}
+                      onPress={() => setScheduleTime(time)}
+                    >
+                      <Text style={[styles.dayPillText, scheduleTime === time && styles.dayPillTextSelected]}>
+                        {time}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
                 <TextInput
                   style={styles.input}
-                  placeholder="e.g. 19:00"
+                  placeholder="Or type a custom time, e.g. 19:30"
                   placeholderTextColor="#666"
+                  keyboardType="numeric"
                   value={scheduleTime}
-                  onChangeText={setScheduleTime}
+                  onChangeText={(text) => {
+                    // Auto-insert the colon so "1930" becomes "19:30"
+                    const digits = text.replace(/[^0-9]/g, '');
+                    const formatted = digits.length >= 3
+                      ? `${digits.slice(0, 2)}:${digits.slice(2, 4)}`
+                      : digits;
+                    setScheduleTime(formatted);
+                  }}
                   maxLength={5}
                 />
                 <Text style={styles.helperText}>
@@ -1920,5 +1966,37 @@ const styles = StyleSheet.create({
   actionBtnDisabled: {
     backgroundColor: '#2A2A2A',
     opacity: 0.5,
+  },
+  locationLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  manualCoordsToggle: {
+    color: '#FF00CC',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  locationSetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(0, 255, 204, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 204, 0.4)',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+  },
+  locationSetText: {
+    color: '#00FFCC',
+    fontSize: 14,
+  },
+  locationHintText: {
+    color: '#666',
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginBottom: 8,
   },
 });

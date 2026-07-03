@@ -139,7 +139,7 @@ export const AdminAICuratorScreen = () => {
       }
     } catch (error) {
       console.warn('Error getting place details:', error);
-      Toast.show({ type: 'error', text1: 'Lookup Failed', text2: 'Could not fetch details from Google Maps.' });
+      Alert.alert('Lookup Failed', 'Could not fetch details from Google Maps.');
     }
   };
 

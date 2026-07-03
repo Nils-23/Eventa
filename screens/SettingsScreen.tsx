@@ -105,18 +105,10 @@ export const SettingsScreen = () => {
     try {
       await unhideUser(user.uid, targetUserId);
       setHiddenUsers(hiddenUsers.filter((id) => id !== targetUserId));
-      Toast.show({
-        type: 'success',
-        text1: 'User Unhidden',
-        text2: 'Content from this user will now be visible.'
-      });
+      Alert.alert('User Unhidden', 'Content from this user will now be visible.');
     } catch (error) {
       console.warn("Failed to unhide user:", error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to unhide user.'
-      });
+      Alert.alert('Error', 'Failed to unhide user.');
     }
   };
 

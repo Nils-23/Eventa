@@ -118,7 +118,7 @@ export const AdminReferralsScreen = () => {
 
   const handleCreateCreator = async () => {
     if (!newCreatorId || !newCreatorName || !newCreatorCode) {
-      Toast.show({ type: 'error', text1: 'Missing Fields', text2: 'Please fill in all fields.' });
+      Alert.alert('Missing Fields', 'Please fill in all fields.');
       return;
     }
 
@@ -143,7 +143,7 @@ export const AdminReferralsScreen = () => {
       setNewCreatorCode('');
     } catch (error) {
       console.error("Error creating creator:", error);
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to create creator.' });
+      Alert.alert('Error', 'Failed to create creator.');
     }
   };
 
