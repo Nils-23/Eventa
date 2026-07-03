@@ -12,7 +12,8 @@ import { grantCertificationBadge, revokeCertificationBadge } from '../services/a
 
 export const AdminDashboardScreen = () => {
   const navigation = useNavigation<any>();
-  const { isSimulationRunning, setIsSimulationRunning } = useAppStore();
+  const isSimulationRunning = useAppStore((s) => s.isSimulationRunning);
+  const setIsSimulationRunning = useAppStore((s) => s.setIsSimulationRunning);
   const [liveUserCount, setLiveUserCount] = useState<number>(0);
   const [pendingReportsCount, setPendingReportsCount] = useState<number>(0);
   const [isSimulationRunningState, setIsSimulationRunningState] = useState(true);

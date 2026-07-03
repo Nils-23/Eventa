@@ -116,7 +116,7 @@ const BottleIcon = ({ bottle, isUnlocked, size = 80 }: { bottle: Bottle; isUnloc
 
 // ─── Screen Component ────────────────────────────────────────────────────────
 export const AchievementsScreen = () => {
-  const { user } = useAppStore();
+  const user = useAppStore((s) => s.user);
   const navigation = useNavigation();
   const [unlockedIds, setUnlockedIds] = useState<string[]>([]);
   const [unlockedBottles, setUnlockedBottles] = useState<string[]>([]);

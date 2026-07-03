@@ -53,7 +53,11 @@ export const useAppStore = create<AppState>((set) => ({
   pendingVenueAction: null,
   setPendingVenueAction: (pendingVenueAction) => set({ pendingVenueAction }),
   unreadChatCount: 0,
-  setUnreadChatCount: (unreadChatCount) => set({ unreadChatCount }),
+  // Bail out when the count is unchanged: this setter is called on a 15s interval
+  // and on every chat snapshot, and an unconditional set() re-renders every
+  // store subscriber even when nothing changed.
+  setUnreadChatCount: (unreadChatCount) =>
+    set((state) => (state.unreadChatCount === unreadChatCount ? state : { unreadChatCount })),
   lastViewedChats: {},
   setLastViewedChats: (lastViewedChats) => set({ lastViewedChats }),
   updateLastViewedChat: (venueId) => set((state) => {

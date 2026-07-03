@@ -24,7 +24,7 @@ export const ChatListScreen = () => {
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [selectedVenue, setSelectedVenue] = useState<{ id: string; name: string } | null>(null);
 
-  const { user } = useAppStore();
+  const user = useAppStore((s) => s.user);
   const insets = useSafeAreaInsets();
 
   useEffect(() => {

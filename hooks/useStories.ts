@@ -8,7 +8,7 @@ import { prefetchStoriesMedia } from '../utils/mediaCache';
 export const useStories = () => {
   const [stories, setStories] = useState<StoryData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { hiddenUsers } = useAppStore();
+  const hiddenUsers = useAppStore((s) => s.hiddenUsers);
 
   useEffect(() => {
     // Only fetch stories where expires_at is greater than current time

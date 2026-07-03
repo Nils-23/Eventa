@@ -180,7 +180,9 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   onStoriesEnd,
 }) => {
   const insets = useSafeAreaInsets();
-  const { user, hiddenUsers, setHiddenUsers } = useAppStore();
+  const user = useAppStore((s) => s.user);
+  const hiddenUsers = useAppStore((s) => s.hiddenUsers);
+  const setHiddenUsers = useAppStore((s) => s.setHiddenUsers);
 
   const [shouldRender, setShouldRender] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);

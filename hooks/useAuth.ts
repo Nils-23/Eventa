@@ -5,7 +5,13 @@ import { auth, firestore } from '../services/firebase';
 import { useAppStore } from './useAppStore';
 
 export const useAuth = () => {
-  const { setUser, setIsLoading, setIsAdmin, setHasAgreedToTerms, setHiddenUsers } = useAppStore();
+  // Setters are stable references in zustand — selecting them individually
+  // means this hook never re-renders its host (App) on store changes.
+  const setUser = useAppStore((s) => s.setUser);
+  const setIsLoading = useAppStore((s) => s.setIsLoading);
+  const setIsAdmin = useAppStore((s) => s.setIsAdmin);
+  const setHasAgreedToTerms = useAppStore((s) => s.setHasAgreedToTerms);
+  const setHiddenUsers = useAppStore((s) => s.setHiddenUsers);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {

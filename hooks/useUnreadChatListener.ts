@@ -7,7 +7,10 @@ import { useAppStore } from './useAppStore';
 import { useLiveVenues } from './useLiveVenues';
 
 export const useUnreadChatListener = () => {
-  const { user, lastViewedChats, setLastViewedChats, setUnreadChatCount } = useAppStore();
+  const user = useAppStore((s) => s.user);
+  const lastViewedChats = useAppStore((s) => s.lastViewedChats);
+  const setLastViewedChats = useAppStore((s) => s.setLastViewedChats);
+  const setUnreadChatCount = useAppStore((s) => s.setUnreadChatCount);
   const { venues } = useLiveVenues();
 
   const latestMessagesRef = useRef<Record<string, { timestamp: number; userId: string }>>({});

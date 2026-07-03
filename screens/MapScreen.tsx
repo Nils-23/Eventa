@@ -258,7 +258,13 @@ export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
   const { venues, heatPoints } = useLiveVenues();
-  const { user, selectedMapVenue, setSelectedMapVenue, isAdmin, pendingVenueAction, setPendingVenueAction, unreadChatCount } = useAppStore();
+  const user = useAppStore((s) => s.user);
+  const selectedMapVenue = useAppStore((s) => s.selectedMapVenue);
+  const setSelectedMapVenue = useAppStore((s) => s.setSelectedMapVenue);
+  const isAdmin = useAppStore((s) => s.isAdmin);
+  const pendingVenueAction = useAppStore((s) => s.pendingVenueAction);
+  const setPendingVenueAction = useAppStore((s) => s.setPendingVenueAction);
+  const unreadChatCount = useAppStore((s) => s.unreadChatCount);
   const { stories } = useStories();
   const navigation = useNavigation<any>();
   const isFocused = useIsFocused();
@@ -305,9 +311,11 @@ export const MapScreen = () => {
   const [showRawPoints, setShowRawPoints] = useState(false);
 
   const handleRegionChange = async (newRegion: Region) => {
-    // Briefly force marker tracking so they redraw correctly if OS garbage collected them during intense panning
-    setTrackMarkerChanges(true);
-    setTimeout(() => setTrackMarkerChanges(false), 2000);
+    // NOTE: do NOT toggle tracksViewChanges here. Rasterized marker bitmaps are
+    // repositioned natively by Google Maps during pan/zoom; re-enabling tracking
+    // on every camera move forced all markers to re-rasterize every frame for
+    // 2 seconds after each gesture, saturating the UI thread and making every
+    // touch in the app feel delayed.
 
     // Determine new zoom level
     let newZoom = 14;
@@ -375,6 +383,17 @@ export const MapScreen = () => {
     }, [isMapReady])
   );
 
+  // Markers only look different when a venue appears/moves or gains/loses stories
+  // (pin color). Distance/count updates from Firebase produce a new venues array
+  // every few seconds without changing any pixel — keying the effect below on this
+  // signature (instead of array identity) avoids constantly re-rasterizing markers.
+  const markerVisualSignature = useMemo(() => {
+    const storyVenueIds = new Set(stories.map((s) => s.venue_id));
+    return venues
+      .map((v) => `${v.id}:${storyVenueIds.has(v.id) ? 1 : 0}:${v.latitude},${v.longitude}`)
+      .join('|');
+  }, [venues, stories]);
+
   useEffect(() => {
     // Never toggle tracking while unfocused: the toggle-off would capture blank marker
     // bitmaps (venues/stories keep updating from Firebase while the user is on other tabs).
@@ -383,7 +402,7 @@ export const MapScreen = () => {
     setTrackMarkerChanges(true);
     const timer = setTimeout(() => setTrackMarkerChanges(false), 2000);
     return () => clearTimeout(timer);
-  }, [venues, stories, isFocused]);
+  }, [markerVisualSignature, isFocused]);
 
   useEffect(() => {
     if (selectedMapVenue && mapRef.current && isMapReady) {

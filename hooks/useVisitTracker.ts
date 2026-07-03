@@ -7,7 +7,7 @@ import { checkAndUnlockAchievements } from '../services/achievementService';
 import { getMonthlyPointsKey } from '../services/userService';
 
 export const useVisitTracker = () => {
-  const { user } = useAppStore();
+  const user = useAppStore((s) => s.user);
   const { venues } = useLiveVenues();
   
   // We use refs to avoid triggering unnecessary effect runs and spamming Firestore

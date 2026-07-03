@@ -358,9 +358,12 @@ function computeLiveData(
       continue;
     }
 
+    // Quantize to 10m: metre-level precision made every GPS jitter produce a
+    // "changed" venues array (areVenuesEqual compares distanceKm), cascading
+    // re-renders and map-marker re-rasterization app-wide for no visible change.
     const distanceKm =
       userLat !== null && userLng !== null
-        ? Math.round(haversineMeters(userLat, userLng, venue.latitude, venue.longitude)) / 1000
+        ? Math.round(haversineMeters(userLat, userLng, venue.latitude, venue.longitude) / 10) * 10 / 1000
         : null;
 
     const resolvedImageUrl = venue.customImageUrl || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id];

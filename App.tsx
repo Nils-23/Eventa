@@ -79,7 +79,9 @@ export default function App() {
     return () => subscription.remove();
   }, []);
 
-  const { user, isLoading, hasAgreedToTerms } = useAppStore();
+  const user = useAppStore((s) => s.user);
+  const isLoading = useAppStore((s) => s.isLoading);
+  const hasAgreedToTerms = useAppStore((s) => s.hasAgreedToTerms);
 
   if (isLoading || hasCompletedOnboarding === null) {
     return (

@@ -40,7 +40,7 @@ const VenueCard = ({
   const color = isUpcoming ? '#666666' : item.activityColor;
   const isTop = index < 3 && !isUpcoming;
   const navigation = useNavigation<any>();
-  const { setSelectedMapVenue } = useAppStore();
+  const setSelectedMapVenue = useAppStore((s) => s.setSelectedMapVenue);
 
   const onPressIn = () =>
     Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, speed: 30 }).start();

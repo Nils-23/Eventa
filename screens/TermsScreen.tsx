@@ -26,7 +26,7 @@ export const TermsScreen = () => {
   const [isAgreeing, setIsAgreeing] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
-  const { setHasAgreedToTerms } = useAppStore();
+  const setHasAgreedToTerms = useAppStore((s) => s.setHasAgreedToTerms);
   const viewOnly = route.params?.viewOnly === true;
 
   const handleAgree = async () => {

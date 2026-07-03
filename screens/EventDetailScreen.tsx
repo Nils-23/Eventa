@@ -25,7 +25,7 @@ export const EventDetailScreen = () => {
   const route = useRoute();
   const insets = useSafeAreaInsets();
   const { event } = route.params as { event: LiveVenue };
-  const { setSelectedMapVenue } = useAppStore();
+  const setSelectedMapVenue = useAppStore((s) => s.setSelectedMapVenue);
   const [isChatVisible, setIsChatVisible] = useState(false);
 
   const isOngoing = event.startDate ? Date.now() >= event.startDate : false;

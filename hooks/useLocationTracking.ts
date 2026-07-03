@@ -45,7 +45,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: TaskManager.T
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 export const useLocationTracking = () => {
-  const { user } = useAppStore();
+  const user = useAppStore((s) => s.user);
 
   useEffect(() => {
     if (!user) return;

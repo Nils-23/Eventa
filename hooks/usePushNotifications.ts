@@ -21,7 +21,11 @@ Notifications.setNotificationHandler({
 
 export function usePushNotifications() {
   const [expoPushToken, setExpoPushToken] = useState<string>('');
-  const { user, setSelectedMapVenue, pendingVenueId, setPendingVenueId, setPendingVenueAction } = useAppStore();
+  const user = useAppStore((s) => s.user);
+  const setSelectedMapVenue = useAppStore((s) => s.setSelectedMapVenue);
+  const pendingVenueId = useAppStore((s) => s.pendingVenueId);
+  const setPendingVenueId = useAppStore((s) => s.setPendingVenueId);
+  const setPendingVenueAction = useAppStore((s) => s.setPendingVenueAction);
   const navigation = useNavigation<any>();
   const { venues, scheduledVenues, isLoading } = useLiveVenues();
   const venuesRef = useRef(venues);

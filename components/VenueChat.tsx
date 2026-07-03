@@ -219,7 +219,11 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   const [selectedStoryForViewer, setSelectedStoryForViewer] = useState<any[]>([]);
   const [isStoryViewerVisible, setIsStoryViewerVisible] = useState(false);
   
-  const { user, hiddenUsers, setHiddenUsers, isAdmin, updateLastViewedChat } = useAppStore();
+  const user = useAppStore((s) => s.user);
+  const hiddenUsers = useAppStore((s) => s.hiddenUsers);
+  const setHiddenUsers = useAppStore((s) => s.setHiddenUsers);
+  const isAdmin = useAppStore((s) => s.isAdmin);
+  const updateLastViewedChat = useAppStore((s) => s.updateLastViewedChat);
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);

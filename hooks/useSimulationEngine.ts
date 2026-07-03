@@ -81,7 +81,8 @@ function getEventStrengthMultiplier(venue: any): number {
 }
 
 export const useSimulationEngine = () => {
-  const { isSimulationRunning, isAdmin } = useAppStore();
+  const isSimulationRunning = useAppStore((s) => s.isSimulationRunning);
+  const isAdmin = useAppStore((s) => s.isAdmin);
   const simulatedUsersRef = useRef<any[]>([]);
   const MY_SIMULATOR_ID = useRef(`sim_client_${Date.now()}_${Math.floor(Math.random() * 100000)}`);
   

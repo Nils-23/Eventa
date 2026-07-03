@@ -49,7 +49,9 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   const [shouldRender, setShouldRender] = useState(false);
   const [latestMessages, setLatestMessages] = useState<Record<string, { username: string; message: string; timestamp: number; userId?: string }>>({});
   const [loadingChats, setLoadingChats] = useState(true);
-  const { hiddenUsers, lastViewedChats, user } = useAppStore();
+  const hiddenUsers = useAppStore((s) => s.hiddenUsers);
+  const lastViewedChats = useAppStore((s) => s.lastViewedChats);
+  const user = useAppStore((s) => s.user);
 
   const panResponder = useRef(
     PanResponder.create({

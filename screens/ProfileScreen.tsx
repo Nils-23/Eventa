@@ -15,7 +15,7 @@ import { ACHIEVEMENTS } from '../services/achievementService';
 import * as Icons from 'lucide-react-native';
 
 export const ProfileScreen = () => {
-  const { user } = useAppStore();
+  const user = useAppStore((s) => s.user);
   const { stories } = useStories();
   const [isViewerVisible, setIsViewerVisible] = useState(false);
   const [username, setUsername] = useState<string>('Loading...');

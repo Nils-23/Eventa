@@ -17,7 +17,10 @@ export const SettingsScreen = () => {
   const [hiddenUsernames, setHiddenUsernames] = useState<Record<string, string>>({});
   const [loadingHiddenUsers, setLoadingHiddenUsers] = useState(false);
 
-  const { user, hiddenUsers, setHiddenUsers, isAdmin } = useAppStore();
+  const user = useAppStore((s) => s.user);
+  const hiddenUsers = useAppStore((s) => s.hiddenUsers);
+  const setHiddenUsers = useAppStore((s) => s.setHiddenUsers);
+  const isAdmin = useAppStore((s) => s.isAdmin);
 
   const handleReport = async () => {
     const url = 'mailto:support@eventas.live?subject=Report%20Issue&body=Please%20describe%20your%20issue%20here...';
