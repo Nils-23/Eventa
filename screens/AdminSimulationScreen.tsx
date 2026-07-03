@@ -134,6 +134,7 @@ export const AdminSimulationScreen = () => {
   }, [venues]);
   
   // New Venue State
+  const [newEventName, setNewEventName] = useState('');
   const [newVenueName, setNewVenueName] = useState('');
   const [newVenueLat, setNewVenueLat] = useState('');
   const [newVenueLng, setNewVenueLng] = useState('');
@@ -311,6 +312,11 @@ export const AdminSimulationScreen = () => {
   };
 
   const handleCreateVenue = async () => {
+    if (newVenueType === 'Event' && !newEventName.trim()) {
+      Toast.show({ type: 'error', text1: 'Missing Event Name', text2: 'Please fill in the event name.' });
+      return;
+    }
+
     if (!newVenueName || !newVenueLat || !newVenueLng || !newVenueDesc) {
       Toast.show({ type: 'error', text1: 'Missing Fields', text2: 'Please fill in all basic fields.' });
       return;
@@ -363,8 +369,10 @@ export const AdminSimulationScreen = () => {
       const parsedCapacity = parseInt(newVenueMaxCapacity, 10);
       const cap = (!isNaN(parsedCapacity) && parsedCapacity > 0) ? parsedCapacity : getDefaultCapacity(newVenueType);
 
+      const addedName = newVenueType === 'Event' ? newEventName.trim() : newVenueName.trim();
+
       const venueData: any = {
-        name: newVenueName,
+        name: addedName,
         latitude: lat,
         longitude: lng,
         description: newVenueDesc,
@@ -374,9 +382,10 @@ export const AdminSimulationScreen = () => {
         maxCapacity: cap
       };
 
-      
-      if (newVenueAddress) {
-        venueData.address = newVenueAddress;
+      if (newVenueType === 'Event') {
+        venueData.address = newVenueName.trim();
+      } else if (newVenueAddress) {
+        venueData.address = newVenueAddress.trim();
       }
       
       if (newVenueGoogleImageUrl) {
@@ -399,9 +408,14 @@ export const AdminSimulationScreen = () => {
 
       await setDoc(venueRef, venueData);
 
-      Toast.show({ type: 'success', text1: 'Venue Created', text2: `${newVenueName} has been added.` });
+      Toast.show({ 
+        type: 'success', 
+        text1: newVenueType === 'Event' ? 'Event Created' : 'Venue Created', 
+        text2: `${addedName} has been added.` 
+      });
       setIsModalVisible(false);
       setNewVenueName('');
+      setNewEventName('');
       setNewVenueLat('');
       setNewVenueLng('');
       setNewVenueDesc('');
@@ -950,8 +964,21 @@ export const AdminSimulationScreen = () => {
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={{ paddingBottom: 16 }}
             >
+              {newVenueType === 'Event' && (
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Event Name</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. Blankets & Wine, Thrift Social..."
+                    placeholderTextColor="#666"
+                    value={newEventName}
+                    onChangeText={setNewEventName}
+                  />
+                </View>
+              )}
+
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Venue Name</Text>
+                <Text style={styles.label}>{newVenueType === 'Event' ? 'Venue Name (used for Google Maps & Address)' : 'Venue Name'}</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="Search venue on Google Maps..."

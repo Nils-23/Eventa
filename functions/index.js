@@ -2705,17 +2705,18 @@ async function curateNairobiEvents(apiKeyInput = null) {
   return { success: true, count: newEventsCount };
 }
 
-exports.curateEventsWithClaudeScheduled = functions.pubsub
-  .schedule('0 9 1 * *')
-  .timeZone('Africa/Nairobi')
-  .onRun(async (context) => {
-    try {
-      await curateNairobiEvents();
-    } catch (err) {
-      console.error('[Curator] Scheduled curate failed:', err);
-    }
-    return null;
-  });
+// Automatic monthly run to find events is disabled. Curator and cleanup runs are triggered manually by ADMIN via the Admin Dashboard.
+// exports.curateEventsWithClaudeScheduled = functions.pubsub
+//   .schedule('0 9 1 * *')
+//   .timeZone('Africa/Nairobi')
+//   .onRun(async (context) => {
+//     try {
+//       await curateNairobiEvents();
+//     } catch (err) {
+//       console.error('[Curator] Scheduled curate failed:', err);
+//     }
+//     return null;
+//   });
 
 exports.curateEventsWithClaudeCallable = functions.https.onCall(async (data, context) => {
   if (!context.auth) {

@@ -197,7 +197,7 @@ export const TermsScreen = () => {
         <Text style={styles.paragraph}>
           If you need help or want to report serious issues, contact:
         </Text>
-        <Text style={styles.emailText}>support@eventas.app</Text>
+        <Text style={styles.emailText}>support@eventas.live</Text>
       </ScrollView>
 
       {/* Action Footer (Only visible if not view-only) */}
