@@ -432,9 +432,9 @@ export const AdminSimulationScreen = () => {
       setSuggestions([]);
       setShowManualCoords(false);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating venue:', error);
-      Alert.alert('Error', 'Failed to create new venue.');
+      Alert.alert('Error', `Failed to create new venue: ${error.message || error}`);
     } finally {
       setIsUploadingCustomImage(false);
     }
@@ -558,9 +558,9 @@ export const AdminSimulationScreen = () => {
       setScheduleDayOfWeek('Mon');
       setScheduleTime('');
       setScheduleMediaUri(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Save Schedule Error:', error);
-      Alert.alert('Failed to Save', 'Could not create recurring story schedule.');
+      Alert.alert('Failed to Save', `Could not create recurring story schedule: ${error.message || error}`);
     } finally {
       setIsSavingSchedule(false);
     }
