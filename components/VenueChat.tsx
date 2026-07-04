@@ -1196,7 +1196,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                           }
                         }}
                       >
-                        <Trash2 color="#FF3333" size={16} style={{ marginRight: 8 }} />
+                        <Trash2 color="#FF0055" size={16} style={{ marginRight: 8 }} />
                         <Text style={styles.deleteOptionText}>Delete Message</Text>
                       </TouchableOpacity>
                     </>
@@ -1232,8 +1232,8 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                           }
                         }}
                       >
-                        <Icons.UserX color="#FF3366" size={16} style={{ marginRight: 8 }} />
-                        <Text style={[styles.deleteOptionText, { color: '#FF3366' }]}>Hide User</Text>
+                        <Icons.UserX color="#FF0055" size={16} style={{ marginRight: 8 }} />
+                        <Text style={[styles.deleteOptionText, { color: '#FF0055' }]}>Hide User</Text>
                       </TouchableOpacity>
                     </>
                   )}
@@ -1396,7 +1396,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   suggestionChip: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1A1A',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 20,
@@ -1416,7 +1416,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#333',
     alignItems: 'center',
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1A1A',
   },
   textInput: {
     flex: 1,
@@ -1451,7 +1451,7 @@ const styles = StyleSheet.create({
   },
   reactionPopup: {
     flexDirection: 'row',
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1A1A',
     borderRadius: 30,
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -1486,7 +1486,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   deleteOptionText: {
-    color: '#FF3333',
+    color: '#FF0055',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1684,7 +1684,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   stickerPickerPanel: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1A1A',
     borderTopWidth: 1,
     borderTopColor: '#333',
     paddingVertical: 12,

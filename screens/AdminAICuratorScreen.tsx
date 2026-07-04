@@ -638,7 +638,7 @@ export const AdminAICuratorScreen = () => {
                         <Text style={styles.actionPillTextEdit}>Edit</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.actionPillReject} onPress={() => handleRejectCurated(item)}>
-                        <Trash2 color="#FF3366" size={14} />
+                        <Trash2 color="#FF0055" size={14} />
                         <Text style={styles.actionPillTextReject}>Reject</Text>
                       </TouchableOpacity>
                     </View>
@@ -653,7 +653,7 @@ export const AdminAICuratorScreen = () => {
                         <Text style={styles.actionPillTextEdit}>Edit</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.actionPillReject} onPress={() => handleRejectCleanup(item)}>
-                        <Trash2 color="#FF3366" size={14} />
+                        <Trash2 color="#FF0055" size={14} />
                         <Text style={styles.actionPillTextReject}>Remove</Text>
                       </TouchableOpacity>
                     </View>
@@ -932,7 +932,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   eventCard: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1A1A',
     borderColor: '#333',
     borderWidth: 1,
     borderRadius: 16,
@@ -1086,13 +1086,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     backgroundColor: 'rgba(255, 51, 102, 0.1)',
-    borderColor: '#FF3366',
+    borderColor: '#FF0055',
     borderWidth: 1,
     paddingVertical: 10,
     borderRadius: 10,
   },
   actionPillTextReject: {
-    color: '#FF3366',
+    color: '#FF0055',
     fontWeight: '700',
     fontSize: 12,
   },
@@ -1147,7 +1147,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   modalCancelText: {
-    color: '#FF3366',
+    color: '#FF0055',
     fontSize: 15,
     fontWeight: '600',
   },

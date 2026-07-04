@@ -289,7 +289,7 @@ export const AdminReportsScreen = () => {
       case 'venue':
         return <MapPin color="#FFCC00" size={16} />;
       case 'user_hidden':
-        return <UserX color="#FF3366" size={16} />;
+        return <UserX color="#FF0055" size={16} />;
     }
   };
 
@@ -312,7 +312,7 @@ export const AdminReportsScreen = () => {
         case 'chat': return '#00FFCC';
         case 'post': return '#FF00CC';
         case 'venue': return '#FFCC00';
-        case 'user_hidden': return '#FF3366';
+        case 'user_hidden': return '#FF0055';
         default: return '#FFF';
       }
     };
@@ -387,7 +387,7 @@ export const AdminReportsScreen = () => {
                       style={[styles.actionButton, styles.removeButton]}
                       onPress={() => handleRemoveUser(item)}
                     >
-                      <Trash2 color="#FF3366" size={16} />
+                      <Trash2 color="#FF0055" size={16} />
                       <Text style={styles.removeText}>Remove Creator</Text>
                     </TouchableOpacity>
                   </>
@@ -399,7 +399,7 @@ export const AdminReportsScreen = () => {
                   style={[styles.actionButton, styles.removeButton]}
                   onPress={() => handleRemoveContent(item)}
                 >
-                  <Trash2 color="#FF3366" size={16} />
+                  <Trash2 color="#FF0055" size={16} />
                   <Text style={styles.removeText}>Remove Content</Text>
                 </TouchableOpacity>
 
@@ -591,7 +591,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 51, 102, 0.1)',
   },
   removeText: {
-    color: '#FF3366',
+    color: '#FF0055',
     fontSize: 12,
     fontWeight: '600',
   },

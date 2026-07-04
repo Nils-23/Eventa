@@ -46,7 +46,7 @@ const SLIDES: Slide[] = [
     headline: 'Rep Your Nightlife\nReputation',
     description: 'Unlock exclusive achievements for attending venues, claim badges, and climb the local leaderboard.',
     IconComponent: Trophy,
-    color: '#FF3366', // Rose Pink
+    color: '#FF0055', // Rose Pink
   },
 ];
 

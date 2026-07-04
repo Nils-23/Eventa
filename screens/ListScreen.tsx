@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,9 @@ import {
   Animated,
   ScrollView,
   TextInput,
+  RefreshControl,
 } from 'react-native';
+import { theme } from '../config/theme';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Flame, Navigation, Users, Search, Calendar } from 'lucide-react-native';
 import { useLiveVenues, LiveVenue as VenueWithDensity } from '../hooks/useLiveVenues';
@@ -126,7 +128,7 @@ const VenueCard = ({
 
         {/* Right: activity badge */}
         {isUpcoming ? (
-          <View style={[styles.badge, { backgroundColor: '#22222215', borderColor: '#33333360' }]}>
+          <View style={[styles.badge, { backgroundColor: '#2A2A2A15', borderColor: '#33333360' }]}>
             <Calendar color="#666" size={11} style={{ marginBottom: 4 }} />
             <Text style={[styles.badgeLabel, { color: '#666' }]}>UPCOMING</Text>
           </View>
@@ -155,6 +157,15 @@ export const ListScreen = () => {
   const { venues, scheduledVenues, isLoading } = useLiveVenues();
   const [selectedFilter, setSelectedFilter] = useState<'All' | 'Club' | 'Bar' | 'Activity' | 'Event'>('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Rankings stream in live via Firebase listeners, so there is nothing to
+  // re-fetch — the gesture exists because users expect it. A short spin
+  // acknowledges the pull; by the time it ends the list reflects latest data.
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 700);
+  }, []);
 
   const combinedVenues = [...venues, ...scheduledVenues];
 
@@ -165,7 +176,7 @@ export const ListScreen = () => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
+      <StatusBar barStyle="light-content" backgroundColor="#121212" />
 
       {/* Header */}
       <View style={styles.header}>
@@ -237,6 +248,15 @@ export const ListScreen = () => {
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.accent}
+              colors={[theme.accent]}
+              progressBackgroundColor={theme.surface}
+            />
+          }
         />
       )}
     </SafeAreaView>
@@ -245,15 +265,15 @@ export const ListScreen = () => {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container:    { flex: 1, backgroundColor: '#0A0A0A' },
+  container:    { flex: 1, backgroundColor: '#121212' },
   header:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 24, paddingTop: 20, paddingBottom: 16 },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#131313',
+    backgroundColor: '#1A1A1A',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#232323',
+    borderColor: '#2A2A2A',
     marginHorizontal: 24,
     marginBottom: 16,
     paddingHorizontal: 12,
@@ -301,13 +321,13 @@ const styles = StyleSheet.create({
   list:         { paddingHorizontal: 16, paddingBottom: 40 },
   sep:          { height: 8 },
   card: {
-    backgroundColor: '#131313',
+    backgroundColor: '#1A1A1A',
     borderRadius: 16,
     padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#232323',
+    borderColor: '#2A2A2A',
     gap: 12,
   },
   rankCol:   { alignItems: 'center', width: 32 },
@@ -333,6 +353,6 @@ const styles = StyleSheet.create({
   emptyText:   { color: '#444', fontSize: 16 },
   cardUpcoming: {
     opacity: 0.55,
-    borderColor: '#1e1e1e',
+    borderColor: '#1A1A1A',
   },
 });

@@ -52,7 +52,7 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#131313',
+    backgroundColor: '#1A1A1A',
     padding: 16,
     borderRadius: 16,
     width: '90%',

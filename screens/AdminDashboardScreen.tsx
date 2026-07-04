@@ -188,7 +188,7 @@ export const AdminDashboardScreen = () => {
               </View>
               {pendingReportsCount > 0 && (
                 <View style={[styles.liveIndicator, { backgroundColor: 'rgba(255, 0, 85, 0.2)' }]}>
-                  <Text style={[styles.liveText, { color: '#FF3366' }]}>{pendingReportsCount} Pending</Text>
+                  <Text style={[styles.liveText, { color: '#FF0055' }]}>{pendingReportsCount} Pending</Text>
                 </View>
               )}
             </View>
@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   cardDisabled: {
-    backgroundColor: '#161616',
+    backgroundColor: '#1A1A1A',
     borderRadius: 16,
     padding: 24,
     borderWidth: 1,

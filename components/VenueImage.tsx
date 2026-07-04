@@ -75,11 +75,11 @@ export const VenueImage: React.FC<VenueImageProps> = ({
 const styles = StyleSheet.create({
   container: {
     position: 'relative',
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1A1A',
     overflow: 'hidden',
   },
   thumbnailContainer: {
-    backgroundColor: '#131313',
+    backgroundColor: '#1A1A1A',
   },
   image: {
     width: '100%',

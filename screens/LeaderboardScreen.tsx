@@ -225,8 +225,8 @@ export const LeaderboardScreen = () => {
   const renderUserRow = ({ item, index }: { item: LeaderboardUser; index: number }) => {
     const isTop3 = index < 3;
     let rankColor = '#888888';
-    let cardBorderColor = '#232323';
-    let cardBgColor = '#131313';
+    let cardBorderColor = '#2A2A2A';
+    let cardBgColor = '#1A1A1A';
     let glowStyle = {};
 
     if (index === 0) {
@@ -510,7 +510,7 @@ export const LeaderboardScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#121212',
   },
   header: {
     flexDirection: 'row',
@@ -534,7 +534,7 @@ const styles = StyleSheet.create({
   timerPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#161616',
+    backgroundColor: '#1A1A1A',
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -591,11 +591,11 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#131313',
+    backgroundColor: '#1A1A1A',
     borderRadius: 16,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#232323',
+    borderColor: '#2A2A2A',
     gap: 12,
   },
   rankCol: {
@@ -689,7 +689,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#161616',
+    backgroundColor: '#1A1A1A',
     borderWidth: 1,
     borderColor: '#2A2A2A',
     justifyContent: 'center',
@@ -698,7 +698,7 @@ const styles = StyleSheet.create({
   standingPanel: {
     backgroundColor: '#111111',
     borderTopWidth: 1,
-    borderTopColor: '#222222',
+    borderTopColor: '#2A2A2A',
     paddingHorizontal: 20,
     paddingTop: 14,
     paddingBottom: 24,
@@ -730,7 +730,7 @@ const styles = StyleSheet.create({
   },
   standingDivider: {
     height: 1,
-    backgroundColor: '#222222',
+    backgroundColor: '#2A2A2A',
     marginVertical: 4,
   },
   rankNumSmall: {
@@ -799,7 +799,7 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#121212',
-    borderColor: '#222222',
+    borderColor: '#2A2A2A',
     borderWidth: 1,
     borderRadius: 24,
     width: '100%',
@@ -816,7 +816,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#222222',
+    borderBottomColor: '#2A2A2A',
     paddingBottom: 16,
     marginBottom: 16,
   },

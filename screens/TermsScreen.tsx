@@ -216,10 +216,10 @@ export const TermsScreen = () => {
               activeOpacity={0.8}
             >
               {isSigningOut ? (
-                <ActivityIndicator color="#FF3366" size="small" />
+                <ActivityIndicator color="#FF0055" size="small" />
               ) : (
                 <>
-                  <LogOut color="#FF3366" size={18} style={styles.btnIcon} />
+                  <LogOut color="#FF0055" size={18} style={styles.btnIcon} />
                   <Text style={styles.signOutText}>Cancel</Text>
                 </>
               )}
@@ -355,7 +355,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 51, 102, 0.05)',
   },
   signOutText: {
-    color: '#FF3366',
+    color: '#FF0055',
     fontSize: 15,
     fontWeight: '600',
   },

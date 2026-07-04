@@ -148,7 +148,7 @@ export const SettingsScreen = () => {
           onPress={() => setIsHiddenUsersModalVisible(true)}
         >
           <View style={styles.rowItemLeft}>
-            <UserX color="#FF3366" size={20} />
+            <UserX color="#FF0055" size={20} />
             <Text style={styles.rowText}>Hidden Users</Text>
           </View>
         </TouchableOpacity>

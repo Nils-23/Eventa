@@ -1,9 +1,10 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import * as Location from 'expo-location';
-import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform, AppState } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform, AppState, Animated, PanResponder } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Flag, MessageSquare } from 'lucide-react-native';
+import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Flag, MessageSquare, Users, Navigation as NavigationIcon } from 'lucide-react-native';
+import { theme } from '../config/theme';
 import { createReport } from '../services/reportService';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
 import * as ImagePicker from 'expo-image-picker';
@@ -309,6 +310,46 @@ export const MapScreen = () => {
   const [isDebugMode, setIsDebugMode] = useState(false);
   const [showHeatmapOverlay, setShowHeatmapOverlay] = useState(true);
   const [showRawPoints, setShowRawPoints] = useState(false);
+
+  // ─── Venue card entrance + swipe-down dismiss ────────────────────────
+  const cardTranslateY = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (selectedMapVenue) {
+      cardTranslateY.setValue(320);
+      Animated.spring(cardTranslateY, {
+        toValue: 0,
+        useNativeDriver: true,
+        friction: 9,
+        tension: 70,
+      }).start();
+    }
+  }, [selectedMapVenue, cardTranslateY]);
+
+  const cardPanResponder = useRef(
+    PanResponder.create({
+      // Claim only clear downward drags so taps and inner buttons keep working
+      onMoveShouldSetPanResponder: (_, g) => g.dy > 10 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderMove: (_, g) => {
+        if (g.dy > 0) cardTranslateY.setValue(g.dy);
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 80 || g.vy > 1.2) {
+          Animated.timing(cardTranslateY, { toValue: 420, duration: 160, useNativeDriver: true }).start(() => {
+            useAppStore.getState().setSelectedMapVenue(null);
+          });
+        } else {
+          Animated.spring(cardTranslateY, { toValue: 0, useNativeDriver: true, friction: 9 }).start();
+        }
+      },
+    })
+  ).current;
+
+  // The stored selection is a snapshot from tap-time; re-resolve it against the
+  // live venues list so the card's count/activity stay current while open.
+  const cardVenue = selectedMapVenue
+    ? venues.find((v) => v.id === selectedMapVenue.id) ?? selectedMapVenue
+    : null;
 
   const handleRegionChange = async (newRegion: Region) => {
     // NOTE: do NOT toggle tracksViewChanges here. Rasterized marker bitmaps are
@@ -923,23 +964,31 @@ export const MapScreen = () => {
       )}
 
       {/* LiveVenue Info Overlay Card */}
-      {selectedMapVenue && (
-        <TouchableOpacity 
-          activeOpacity={selectedMapVenue.type === 'Event' ? 0.95 : 1}
-          style={[styles.venueInfoCard, { bottom: insets.bottom + 20 }]}
+      {selectedMapVenue && cardVenue && (
+        <Animated.View
+          style={[
+            styles.venueInfoCard,
+            { bottom: insets.bottom + 20, transform: [{ translateY: cardTranslateY }] },
+          ]}
+          {...cardPanResponder.panHandlers}
+        >
+        <TouchableOpacity
+          activeOpacity={cardVenue.type === 'Event' ? 0.95 : 1}
           onPress={() => {
-            if (selectedMapVenue.type === 'Event') {
-              navigation.navigate('EventDetail', { event: selectedMapVenue });
+            if (cardVenue.type === 'Event') {
+              navigation.navigate('EventDetail', { event: cardVenue });
             }
           }}
         >
           {/* Top Banner Image with themed filter */}
           <View style={styles.cardImageContainer}>
             <VenueImage
-              venue={selectedMapVenue}
+              venue={cardVenue}
               style={styles.cardImage}
               isBanner={true}
             />
+            {/* Swipe-down affordance */}
+            <View style={styles.cardGrabber} />
             {/* Report Button overlaying the image */}
             <TouchableOpacity
               style={styles.reportCardButtonOverlay}
@@ -957,9 +1006,39 @@ export const MapScreen = () => {
           </View>
 
           <View style={styles.cardContent}>
-            <Text style={styles.venueCardTitle} numberOfLines={1}>{selectedMapVenue.name}</Text>
-            <Text style={styles.venueCardAddress} numberOfLines={1}>{selectedMapVenue.address || 'Nairobi, Kenya'}</Text>
-            <Text style={styles.venueCardDescription} numberOfLines={2}>{selectedMapVenue.description}</Text>
+            <Text style={styles.venueCardTitle} numberOfLines={1}>{cardVenue.name}</Text>
+            <Text style={styles.venueCardAddress} numberOfLines={1}>{cardVenue.address || 'Nairobi, Kenya'}</Text>
+
+            {/* Live activity — the core signal, surfaced on the card itself */}
+            <View style={styles.activityRow}>
+              <View
+                style={[
+                  styles.activityChip,
+                  { backgroundColor: `${cardVenue.activityColor}18`, borderColor: `${cardVenue.activityColor}60` },
+                ]}
+              >
+                <View style={[styles.activityDot, { backgroundColor: cardVenue.activityColor }]} />
+                <Text style={[styles.activityChipText, { color: cardVenue.activityColor }]}>
+                  {cardVenue.activityLevel === 'None' ? 'QUIET' : cardVenue.activityLevel.toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.activityMeta}>
+                <Users color={theme.textSecondary} size={13} />
+                <Text style={styles.activityMetaText}>{cardVenue.userCount} here now</Text>
+              </View>
+              {cardVenue.distanceKm !== null && (
+                <View style={styles.activityMeta}>
+                  <NavigationIcon color={theme.textSecondary} size={12} />
+                  <Text style={styles.activityMetaText}>
+                    {cardVenue.distanceKm < 1
+                      ? `${Math.round(cardVenue.distanceKm * 1000)}m`
+                      : `${cardVenue.distanceKm.toFixed(1)}km`}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <Text style={styles.venueCardDescription} numberOfLines={2}>{cardVenue.description}</Text>
 
             <View style={styles.cardActionRow}>
               <TouchableOpacity
@@ -986,6 +1065,7 @@ export const MapScreen = () => {
             </View>
           </View>
         </TouchableOpacity>
+        </Animated.View>
       )}
 
       <View style={[styles.controlsContainer, { bottom: insets.bottom + 120 }]}>
@@ -1213,6 +1293,51 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  cardGrabber: {
+    position: 'absolute',
+    top: 8,
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.55)',
+    zIndex: 2,
+  },
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  activityChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  activityDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  activityChipText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  activityMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  activityMetaText: {
+    color: theme.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
   },
   cardContent: {
     padding: 16,

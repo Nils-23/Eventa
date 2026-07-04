@@ -27,6 +27,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { LiveVenuesProvider } from './contexts/LiveVenuesContext';
 import { useVersionCheck } from './hooks/useVersionCheck';
 import { UpdatePromptModal } from './components/UpdatePromptModal';
+import { theme } from './config/theme';
 
 
 // Initialize Firebase (will be evaluated once)
@@ -84,9 +85,11 @@ export default function App() {
   const hasAgreedToTerms = useAppStore((s) => s.hasAgreedToTerms);
 
   if (isLoading || hasCompletedOnboarding === null) {
+    // theme.background matches the native splash color exactly so the
+    // splash → loading → app handoff is one continuous dark sequence
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FAFAFA' }}>
-        <ActivityIndicator size="large" color="#000000" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.background }}>
+        <ActivityIndicator size="large" color={theme.accent} />
       </View>
     );
   }
@@ -98,7 +101,7 @@ export default function App() {
           <Stack.Navigator
             screenOptions={{
               headerShown: false,
-              contentStyle: { backgroundColor: '#121212' },
+              contentStyle: { backgroundColor: theme.background },
               gestureEnabled: true,
               fullScreenGestureEnabled: true,
             }}

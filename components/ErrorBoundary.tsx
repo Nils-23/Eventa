@@ -71,7 +71,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
       // Default graceful recovery screen
       return (
         <View style={styles.container}>
-          <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
+          <StatusBar barStyle="light-content" backgroundColor="#121212" />
           <View style={styles.content}>
             <View style={styles.iconContainer}>
               <Text style={styles.icon}>⚡</Text>
@@ -95,7 +95,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#121212',
     justifyContent: 'center',
     alignItems: 'center',
   },

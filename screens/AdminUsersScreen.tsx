@@ -442,7 +442,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#161616',
+    backgroundColor: '#1A1A1A',
   },
   bottleExpanderOpen: {
     borderBottomWidth: 1,

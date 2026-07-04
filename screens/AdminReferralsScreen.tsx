@@ -449,7 +449,7 @@ export const AdminReferralsScreen = () => {
                         style={styles.deleteButton}
                         onPress={() => handleDeleteCreator(creator)}
                       >
-                        <X size={14} color="#FF3333" />
+                        <X size={14} color="#FF0055" />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -504,7 +504,7 @@ export const AdminReferralsScreen = () => {
                         </Text>
                         {log.reason && (
                           <View style={styles.fraudAlert}>
-                            <AlertTriangle size={14} color="#FF3333" />
+                            <AlertTriangle size={14} color="#FF0055" />
                             <Text style={styles.fraudText}>Reason: {log.reason}</Text>
                           </View>
                         )}
@@ -1059,7 +1059,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#00FFCC',
   },
   statusInvalid: {
-    backgroundColor: '#FF3333',
+    backgroundColor: '#FF0055',
   },
   statusPending: {
     backgroundColor: '#FFCC00',
@@ -1085,7 +1085,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   fraudText: {
-    color: '#FF3333',
+    color: '#FF0055',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -1180,7 +1180,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   simFlowCard: {
-    backgroundColor: '#222222',
+    backgroundColor: '#2A2A2A',
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,

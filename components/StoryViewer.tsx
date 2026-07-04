@@ -928,7 +928,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                       style={styles.removeButtonInline}
                       onPress={handleRemoveStory}
                     >
-                      <Trash2 color="#FF3B30" size={16} style={{ marginRight: 6 }} />
+                      <Trash2 color="#FF0055" size={16} style={{ marginRight: 6 }} />
                       <Text style={styles.removeButtonText}>Remove Story</Text>
                     </Pressable>
                   )
@@ -1143,7 +1143,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
   },
   removeButtonText: {
-    color: '#FF3B30',
+    color: '#FF0055',
     fontSize: 14,
     fontWeight: '600',
   },

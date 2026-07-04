@@ -78,7 +78,7 @@ export const UpdatePromptModal: React.FC<UpdatePromptModalProps> = ({
           >
             {/* Top decorative glow */}
             <LinearGradient
-              colors={isForced ? ['#FF3B30', 'transparent'] : ['#00FFCC', 'transparent']}
+              colors={isForced ? ['#FF0055', 'transparent'] : ['#00FFCC', 'transparent']}
               style={styles.glowAccent}
               start={{ x: 0.5, y: 0 }}
               end={{ x: 0.5, y: 1 }}
@@ -91,7 +91,7 @@ export const UpdatePromptModal: React.FC<UpdatePromptModalProps> = ({
                 isForced ? styles.iconCircleForced : styles.iconCircleFlexible
               ]}>
                 {isForced ? (
-                  <AlertTriangle color="#FF3B30" size={32} />
+                  <AlertTriangle color="#FF0055" size={32} />
                 ) : (
                   <Sparkles color="#00FFCC" size={32} />
                 )}
@@ -135,7 +135,7 @@ export const UpdatePromptModal: React.FC<UpdatePromptModalProps> = ({
             <View style={styles.buttonContainer}>
               <TouchableOpacity onPress={handleUpdate} activeOpacity={0.85}>
                 <LinearGradient
-                  colors={isForced ? ['#FF3B30', '#C30010'] : ['#00FFCC', '#00B3FF']}
+                  colors={isForced ? ['#FF0055', '#C30010'] : ['#00FFCC', '#00B3FF']}
                   style={styles.updateButton}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}

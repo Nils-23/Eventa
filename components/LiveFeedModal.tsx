@@ -380,7 +380,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   feedCardUnread: {
-    borderLeftColor: '#FF3B30',
+    borderLeftColor: '#FF0055',
   },
   cardHeader: {
     flexDirection: 'row',

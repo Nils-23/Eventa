@@ -1498,7 +1498,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   deleteButton: {
-    backgroundColor: '#FF3333',
+    backgroundColor: '#FF0055',
     padding: 8,
     borderRadius: 8,
     justifyContent: 'center',
@@ -1804,7 +1804,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   scheduleDeleteButton: {
-    backgroundColor: '#FF3333',
+    backgroundColor: '#FF0055',
     padding: 8,
     borderRadius: 6,
   },
@@ -1882,7 +1882,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   searchInput: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1A1A',
     borderWidth: 1,
     borderColor: '#333',
     borderRadius: 8,
@@ -1897,7 +1897,7 @@ const styles = StyleSheet.create({
     marginVertical: 24,
   },
   card: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1A1A',
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
@@ -1959,7 +1959,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   clearKeyBtnText: {
-    color: '#FF3366',
+    color: '#FF0055',
     fontWeight: '700',
     fontSize: 13,
   },

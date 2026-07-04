@@ -12,8 +12,8 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Calendar, Navigation, MapPin, Share as ShareIcon, Ticket, Clock, Info, MessageSquare } from 'lucide-react-native';
-import { LiveVenue } from '../hooks/useLiveVenues';
+import { ArrowLeft, Calendar, Navigation, MapPin, Share as ShareIcon, Ticket, Clock, Info, MessageSquare, Users } from 'lucide-react-native';
+import { LiveVenue, useLiveVenues } from '../hooks/useLiveVenues';
 import { VenueImage } from '../components/VenueImage';
 import { VenueChat } from '../components/VenueChat';
 import { useAppStore } from '../hooks/useAppStore';
@@ -24,9 +24,14 @@ export const EventDetailScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
   const insets = useSafeAreaInsets();
-  const { event } = route.params as { event: LiveVenue };
+  const { event: eventParam } = route.params as { event: LiveVenue };
   const setSelectedMapVenue = useAppStore((s) => s.setSelectedMapVenue);
   const [isChatVisible, setIsChatVisible] = useState(false);
+
+  // The route param is a snapshot from navigation time; re-resolve against the
+  // live venues list so attendance stays current while this screen is open.
+  const { venues } = useLiveVenues();
+  const event = venues.find((v) => v.id === eventParam.id) ?? eventParam;
 
   const isOngoing = event.startDate ? Date.now() >= event.startDate : false;
 
@@ -167,6 +172,25 @@ export const EventDetailScreen = () => {
             </View>
           </View>
 
+          {/* Live Activity Card — only meaningful once the event has started */}
+          {isOngoing && (
+            <View style={[styles.card, { borderColor: `${event.activityColor}40`, borderWidth: 1 }]}>
+              <View style={styles.cardRow}>
+                <View style={[styles.iconContainer, { backgroundColor: `${event.activityColor}20` }]}>
+                  <Users color={event.activityColor} size={20} />
+                </View>
+                <View style={styles.cardTextContainer}>
+                  <Text style={[styles.cardTitle, { color: event.activityColor }]}>
+                    {event.userCount > 0 ? `${event.userCount} people here now` : 'Quiet right now'}
+                  </Text>
+                  <Text style={styles.cardSubtitle}>
+                    {event.activityLevel === 'None' ? 'Be the first to show up' : `Activity level: ${event.activityLevel}`}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )}
+
           {/* Ticket Card (If available) */}
           {(event.ticketLink || event.price) && (
             <View style={[styles.card, { borderColor: 'rgba(255, 0, 204, 0.3)', borderWidth: 1 }]}>
@@ -215,7 +239,7 @@ export const EventDetailScreen = () => {
           <Text style={[styles.primaryButtonText, { color: '#00FFCC' }]}>Live Chat</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.primaryButton, { flex: 1 }]} onPress={handleViewOnMap}>
-          <MapPin color="#0A0A0A" size={20} strokeWidth={2.5} style={{ marginRight: 8 }} />
+          <MapPin color="#121212" size={20} strokeWidth={2.5} style={{ marginRight: 8 }} />
           <Text style={styles.primaryButtonText}>View Map</Text>
         </TouchableOpacity>
       </View>
@@ -226,7 +250,7 @@ export const EventDetailScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#121212',
   },
   heroContainer: {
     width: '100%',
@@ -307,17 +331,17 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
     marginTop: -20, // Overlap the hero slightly
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#121212',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
   },
   card: {
-    backgroundColor: '#161616',
+    backgroundColor: '#1A1A1A',
     borderRadius: 16,
     padding: 20,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#222222',
+    borderColor: '#2A2A2A',
   },
   cardRow: {
     flexDirection: 'row',
@@ -348,7 +372,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: '#222222',
+    backgroundColor: '#2A2A2A',
     marginVertical: 16,
     marginLeft: 64, // Align with text
   },
@@ -361,7 +385,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   smallMapButtonText: {
-    color: '#0A0A0A',
+    color: '#121212',
     fontSize: 12,
     fontWeight: '800',
     marginLeft: 4,
@@ -392,7 +416,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: '#222222',
+    borderTopColor: '#2A2A2A',
   },
   primaryButton: {
     backgroundColor: '#00FFCC',
@@ -408,7 +432,7 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   primaryButtonText: {
-    color: '#0A0A0A',
+    color: '#121212',
     fontSize: 16,
     fontWeight: '800',
     letterSpacing: 0.5,
