@@ -3,9 +3,16 @@ import { User } from 'firebase/auth';
 import { LiveVenue } from './useLiveVenues';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+export interface UserCoords {
+  latitude: number;
+  longitude: number;
+}
+
 interface AppState {
   hasInitialized: boolean;
   setInitialized: (value: boolean) => void;
+  userLocation: UserCoords | null;
+  setUserLocation: (coords: UserCoords | null) => void;
   user: User | null;
   setUser: (user: User | null) => void;
   isLoading: boolean;
@@ -34,6 +41,19 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   hasInitialized: false,
   setInitialized: (value) => set({ hasInitialized: value }),
+  userLocation: null,
+  // Bail out when the position hasn't moved: the shared watcher fires on a 15s
+  // heartbeat even when stationary, and an unconditional set() re-renders every
+  // store subscriber for no visible change.
+  setUserLocation: (coords) =>
+    set((state) =>
+      state.userLocation &&
+      coords &&
+      state.userLocation.latitude === coords.latitude &&
+      state.userLocation.longitude === coords.longitude
+        ? state
+        : { userLocation: coords }
+    ),
   user: null,
   setUser: (user) => set({ user }),
   isLoading: true,

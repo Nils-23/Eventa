@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import * as Location from 'expo-location';
 import { collection, onSnapshot, query, doc, getDoc } from 'firebase/firestore';
 import { ref } from 'firebase/database';
@@ -7,10 +7,12 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth, firestore, realtimeDB } from '../services/firebase';
 import { resolveVenueImages } from '../utils/venueImageUtils';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAppStore } from '../hooks/useAppStore';
 
 
 // ─── Types (re-exported so consumers don't need to change) ────────────────────
 export type ActivityLevel = 'None' | 'Low' | 'Medium' | 'High' | 'Crazy';
+export type VenueTrend = 'rising' | 'falling' | 'stable';
 
 export interface LiveVenue {
   id: string;
@@ -34,6 +36,9 @@ export interface LiveVenue {
   activityLevel: ActivityLevel;
   activityColor: string;
   distanceKm: number | null;
+  // Whether the crowd grew/shrank vs 10–35 minutes ago; assigned in processData
+  // from the rolling count history (absent on cache-restored venues).
+  trend?: VenueTrend;
   hidden?: boolean;
   overrideDate?: string;
 }
@@ -83,6 +88,19 @@ const STALE_MS = 2 * 60 * 60 * 1000; // 2 hours (real users)
 const SIM_STALE_MS = 10 * 60 * 1000;
 const REFRESH_RATE_MS = 2000;
 
+// Heat normalization: weights are scaled to 0..1 against the busiest venue so
+// the full gradient renders (hottest venue = red core, everything else spreads
+// down the spectrum). The floor stops a quiet afternoon from painting a
+// 10-person bar red just because it happens to be the daily maximum.
+const HEAT_REF_FLOOR = 50;
+
+// Trend detection: sample each venue's count at most once a minute, keep 35
+// minutes of history, and compare against the oldest sample that is at least
+// 10 minutes old.
+const TREND_SAMPLE_MS = 60 * 1000;
+const TREND_WINDOW_MS = 35 * 60 * 1000;
+const TREND_MIN_AGE_MS = 10 * 60 * 1000;
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6_371_000;
@@ -127,6 +145,7 @@ function areVenuesEqual(a: LiveVenue[], b: LiveVenue[]): boolean {
     if (
       va.id !== vb.id ||
       va.userCount !== vb.userCount ||
+      va.trend !== vb.trend ||
       va.activityLevel !== vb.activityLevel ||
       va.distanceKm !== vb.distanceKm ||
       va.imageUrl !== vb.imageUrl ||
@@ -311,16 +330,30 @@ function computeLiveData(
   const realCountsMap: Record<string, number> = {};
   const simCountsMap: Record<string, number> = {};
 
+  // Heat contribution decays linearly with the age of the last location ping,
+  // so hot zones visibly cool down as people leave instead of holding 1am
+  // intensity until the hard staleness cliff evicts them.
+  const heatWeightMap: Record<string, number> = {};
+  const addHeat = (venueId: string, loc: RawLocation, staleMs: number) => {
+    const decay = 1 - (now - loc.timestamp) / staleMs;
+    if (decay > 0) {
+      heatWeightMap[venueId] = (heatWeightMap[venueId] || 0) + decay;
+    }
+  };
+
   for (const loc of realActiveLocs) {
-    if (loc.venueId) {
-      realCountsMap[loc.venueId] = (realCountsMap[loc.venueId] || 0) + 1;
-    } else {
+    let venueId = loc.venueId;
+    if (!venueId) {
       for (const venue of venues) {
         if (haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS) {
-          realCountsMap[venue.id] = (realCountsMap[venue.id] || 0) + 1;
+          venueId = venue.id;
           break;
         }
       }
+    }
+    if (venueId) {
+      realCountsMap[venueId] = (realCountsMap[venueId] || 0) + 1;
+      addHeat(venueId, loc, STALE_MS);
     }
   }
 
@@ -332,16 +365,17 @@ function computeLiveData(
         venueId = parts.slice(1, -2).join('_');
       }
     }
-
-    if (venueId) {
-      simCountsMap[venueId] = (simCountsMap[venueId] || 0) + 1;
-    } else {
+    if (!venueId) {
       for (const venue of venues) {
         if (haversineMeters(venue.latitude, venue.longitude, loc.latitude, loc.longitude) <= VENUE_RADIUS_METERS) {
-          simCountsMap[venue.id] = (simCountsMap[venue.id] || 0) + 1;
+          venueId = venue.id;
           break;
         }
       }
+    }
+    if (venueId) {
+      simCountsMap[venueId] = (simCountsMap[venueId] || 0) + 1;
+      addHeat(venueId, loc, SIM_STALE_MS);
     }
   }
 
@@ -402,27 +436,36 @@ function computeLiveData(
       distanceKm,
     });
 
-    if (userCount > 0) {
-      hashStr += `${venue.id}:${userCount};`;
-      
-      // Add a single high-precision heatmap point centered on the venue
-      heatPoints.push({ 
-        latitude: venue.latitude, 
-        longitude: venue.longitude, 
-        weight: userCount
+    const heatWeight = heatWeightMap[venue.id] || 0;
+    if (heatWeight > 0) {
+      // Raw decayed weight for now; normalized to 0..1 below once the max is known
+      heatPoints.push({
+        latitude: venue.latitude,
+        longitude: venue.longitude,
+        weight: heatWeight,
       });
     }
   }
 
-  // 3. Global Density Calibration Anchor Point
-  // Add a hidden anchor point with high weight (e.g. 120) at a remote coordinate (0, 0)
-  // to cap the maximum normalization scale. This prevents low-occupancy venues
-  // from reaching the density required for a red core.
+  // Normalize heat to 0..1 against the busiest venue (see HEAT_REF_FLOOR).
+  // Weights are quantized to 0.05 steps: decay advances on every recompute, and
+  // an ever-changing weight would push a new points array (and a native tile
+  // cache wipe) across the bridge every 2 seconds for no visible change.
   if (heatPoints.length > 0) {
+    const maxHeat = heatPoints.reduce((max, p) => Math.max(max, p.weight), HEAT_REF_FLOOR);
+    for (const p of heatPoints) {
+      p.weight = Math.max(0.05, Math.round((p.weight / maxHeat) * 20) / 20);
+      hashStr += `${p.latitude},${p.longitude}:${p.weight};`;
+    }
+
+    // Calibration anchor: a max-weight point that pins the KDE normalization
+    // scale, so a lone low-weight venue can't be auto-normalized up to a red
+    // core. Parked at the south pole and kept permanently off-screen by the
+    // map's pan boundaries (see MapScreen's onMapReady).
     heatPoints.push({
       latitude: -85,
       longitude: 0,
-      weight: 120
+      weight: 1,
     });
   }
 
@@ -437,6 +480,10 @@ interface LiveVenuesContextValue {
   heatPoints: HeatPoint[];
   isLoading: boolean;
   scheduledVenues: LiveVenue[];
+  // Idempotently starts the single shared GPS watcher. Screens that request
+  // location permission at runtime call this after a grant, since the watcher
+  // can't start while permission is still denied.
+  ensureLocationWatch: () => void;
 }
 
 const LiveVenuesContext = createContext<LiveVenuesContextValue>({
@@ -444,6 +491,7 @@ const LiveVenuesContext = createContext<LiveVenuesContextValue>({
   heatPoints: [],
   isLoading: true,
   scheduledVenues: [],
+  ensureLocationWatch: () => {},
 });
 
 export const useLiveVenuesContext = () => useContext(LiveVenuesContext);
@@ -483,6 +531,10 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const locationsRef = useRef<Record<string, RawLocation>>({});
   const simLocationsRef = useRef<Record<string, RawLocation>>({});
   const userPosRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
+  const locationSubRef = useRef<Location.LocationSubscription | null>(null);
+  const locationWatchPendingRef = useRef(false);
+  // Rolling per-venue count samples used to derive the rising/falling trend
+  const countHistoryRef = useRef<Record<string, { t: number; count: number }[]>>({});
   const simConfigRef = useRef({ enabled: true, threshold: 100 });
   const hasRealLocsLoadedRef = useRef(false);
   const hasSimLocsLoadedRef = useRef(false);
@@ -536,6 +588,28 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         resolvedImages
       );
 
+      // Attach the crowd trend: compare each venue's count against the oldest
+      // history sample that is 10–35 minutes old. Needs a meaningful jump in
+      // both absolute (≥3 people) and relative (≥20%) terms to leave 'stable'.
+      const nowT = Date.now();
+      for (const v of result.venues) {
+        const hist = countHistoryRef.current[v.id] ?? (countHistoryRef.current[v.id] = []);
+        if (hist.length === 0 || nowT - hist[hist.length - 1].t >= TREND_SAMPLE_MS) {
+          hist.push({ t: nowT, count: v.userCount });
+        }
+        while (hist.length > 0 && nowT - hist[0].t > TREND_WINDOW_MS) {
+          hist.shift();
+        }
+        const past = hist.find((s) => nowT - s.t >= TREND_MIN_AGE_MS);
+        let trend: VenueTrend = 'stable';
+        if (past) {
+          const threshold = Math.max(3, past.count * 0.2);
+          if (v.userCount - past.count >= threshold) trend = 'rising';
+          else if (past.count - v.userCount >= threshold) trend = 'falling';
+        }
+        v.trend = trend;
+      }
+
       setVenues((prev) => {
         if (areVenuesEqual(prev, result.venues)) {
           return prev;
@@ -584,6 +658,43 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }, REFRESH_RATE_MS);
   };
 
+  // Single shared GPS watcher: this provider consumes it for distance/heat
+  // recomputes and mirrors coords into the app store for screens (MapScreen).
+  // Idempotent — safe to call from anywhere, including after a late permission
+  // grant; a no-op if the watch is already running or permission is denied.
+  const ensureLocationWatch = useCallback(() => {
+    if (locationSubRef.current || locationWatchPendingRef.current) return;
+    locationWatchPendingRef.current = true;
+    (async () => {
+      try {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const sub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 20 },
+          (loc) => {
+            userPosRef.current = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+            useAppStore.getState().setUserLocation({
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+            });
+            requestRecalculate();
+          }
+        );
+        if (locationSubRef.current) {
+          // Another caller won the race while we awaited — keep theirs
+          sub.remove();
+        } else {
+          locationSubRef.current = sub;
+        }
+      } catch (e) {
+        console.warn('[LiveVenuesContext] Location watch error:', e);
+      } finally {
+        locationWatchPendingRef.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     // Wait for Firebase Auth to resolve before attaching any listeners
     const unsubAuth = onAuthStateChanged(auth, (user) => {
@@ -623,22 +734,8 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         })
         .catch((e) => console.warn('[LiveVenuesContext] Failed to load sim config:', e));
 
-      // 1. User location watcher
-      let locationSub: Location.LocationSubscription | null = null;
-      Location.getForegroundPermissionsAsync()
-        .then(({ status }) => {
-          if (status !== 'granted') return;
-          return Location.watchPositionAsync(
-            { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 20 },
-            (loc) => {
-              userPosRef.current = { lat: loc.coords.latitude, lng: loc.coords.longitude };
-              requestRecalculate();
-            }
-          ).then((sub) => {
-            locationSub = sub;
-          });
-        })
-        .catch((e) => console.warn('[LiveVenuesContext] Location watch error:', e));
+      // 1. User location watcher (shared app-wide via the store)
+      ensureLocationWatch();
 
       // 2. Venues listener
       const unsubVenues = onSnapshot(
@@ -686,7 +783,10 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       // Store cleanup functions to be called when auth changes or component unmounts
       return () => {
-        if (locationSub) locationSub.remove();
+        if (locationSubRef.current) {
+          locationSubRef.current.remove();
+          locationSubRef.current = null;
+        }
         unsubVenues();
         unsubLocs();
         unsubSimLocs();
@@ -707,7 +807,8 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     heatPoints,
     isLoading,
     scheduledVenues,
-  }), [venues, heatPoints, isLoading, scheduledVenues]);
+    ensureLocationWatch,
+  }), [venues, heatPoints, isLoading, scheduledVenues, ensureLocationWatch]);
 
   return (
     <LiveVenuesContext.Provider value={contextValue}>

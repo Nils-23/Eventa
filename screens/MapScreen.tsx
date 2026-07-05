@@ -1,9 +1,9 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform, AppState, Animated, PanResponder } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Marker, Region, Heatmap } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Marker, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Flag, MessageSquare, Users, Navigation as NavigationIcon } from 'lucide-react-native';
+import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Flag, MessageSquare, Users, Navigation as NavigationIcon, TrendingUp, TrendingDown } from 'lucide-react-native';
 import { theme } from '../config/theme';
 import { createReport } from '../services/reportService';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
@@ -255,11 +255,24 @@ const StableHeatmap = React.memo(
   }
 );
 
+// Default to a lively city area for now
+const INITIAL_CAMERA = {
+  center: {
+    latitude: -1.286389,
+    longitude: 36.817223,
+  },
+  pitch: 30, // Slight tilt for 3D/2D hybrid perspective
+  heading: 0,
+  altitude: 12000,
+  zoom: 12.2, // Wide city view
+};
+
 export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
-  const { venues, heatPoints } = useLiveVenues();
+  const { venues, heatPoints, ensureLocationWatch } = useLiveVenues();
   const user = useAppStore((s) => s.user);
+  const userLocation = useAppStore((s) => s.userLocation);
   const selectedMapVenue = useAppStore((s) => s.selectedMapVenue);
   const setSelectedMapVenue = useAppStore((s) => s.setSelectedMapVenue);
   const isAdmin = useAppStore((s) => s.isAdmin);
@@ -275,29 +288,6 @@ export const MapScreen = () => {
   // off; if that capture happened while this screen was hidden, the bitmap is blank
   // and the pin becomes invisible. Remounting forces a fresh draw while visible.
   const [focusEpoch, setFocusEpoch] = useState(0);
-
-  // ─── Zoom tracking ───────────────────────────────────────────────
-  // We track the current rounded zoom level so we can convert screen-pixel sizes to
-  // geo-accurate meter radii. This fixes the zoom-in issue (GitHub #371):
-  // fixed-meter circles balloon on screen as you zoom in, but pixel-based
-  // circles stay a constant visual size at all zoom levels.
-  const [discreteZoom, setDiscreteZoom] = useState(14);
-
-  const scaledPoints = useMemo(() => {
-    // Boost base intensity and scale it up exponentially with zoom level
-    // to maintain the red core visibility as you zoom in.
-    const zoomScale = 4.5 * Math.pow(1.65, Math.max(0, discreteZoom - 12));
-    return heatPoints.map((pt) => ({
-      ...pt,
-      weight: pt.weight * zoomScale,
-    }));
-  }, [heatPoints, discreteZoom]);
-
-
-
-
-
-  const [userLocation, setUserLocation] = useState<Location.LocationObjectCoords | null>(null);
 
   const [isViewerVisible, setIsViewerVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -350,49 +340,6 @@ export const MapScreen = () => {
   const cardVenue = selectedMapVenue
     ? venues.find((v) => v.id === selectedMapVenue.id) ?? selectedMapVenue
     : null;
-
-  const handleRegionChange = async (newRegion: Region) => {
-    // NOTE: do NOT toggle tracksViewChanges here. Rasterized marker bitmaps are
-    // repositioned natively by Google Maps during pan/zoom; re-enabling tracking
-    // on every camera move forced all markers to re-rasterize every frame for
-    // 2 seconds after each gesture, saturating the UI thread and making every
-    // touch in the app feel delayed.
-
-    // Determine new zoom level
-    let newZoom = 14;
-    if (mapRef.current) {
-      try {
-        const cam = await mapRef.current.getCamera();
-        if (cam && typeof cam.zoom === 'number') {
-          newZoom = Math.max(1, Math.min(20, cam.zoom));
-        }
-      } catch (err) {
-        console.warn('[MAP-DEBUG] Failed to get camera zoom:', err);
-        if (newRegion.longitudeDelta > 0) {
-          newZoom = Math.max(1, Math.min(20, Math.log2(360 / newRegion.longitudeDelta)));
-        }
-      }
-    } else if (newRegion.longitudeDelta > 0) {
-      newZoom = Math.max(1, Math.min(20, Math.log2(360 / newRegion.longitudeDelta)));
-    }
-
-    const newDiscreteZoom = Math.round(newZoom);
-    if (newDiscreteZoom !== discreteZoom) {
-      setDiscreteZoom(newDiscreteZoom);
-    }
-  };
-
-  // Default to a lively city area for now
-  const [camera, setCamera] = useState({
-    center: {
-      latitude: -1.286389,
-      longitude: 36.817223,
-    },
-    pitch: 30, // Slight tilt for 3D/2D hybrid perspective
-    heading: 0,
-    altitude: 12000,
-    zoom: 12.2, // Wide city view
-  });
 
   // Effect to stop marker tracking after mount to boost performance
   const [trackMarkerChanges, setTrackMarkerChanges] = useState(true);
@@ -480,7 +427,6 @@ export const MapScreen = () => {
 
   useEffect(() => {
     let isMounted = true;
-    let intervalId: NodeJS.Timeout;
 
     (async () => {
       try {
@@ -497,12 +443,15 @@ export const MapScreen = () => {
           return;
         }
 
-        let location = await Location.getCurrentPositionAsync({
+        const location = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
 
         if (isMounted) {
-          setUserLocation(location.coords);
+          useAppStore.getState().setUserLocation({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          });
           mapRef.current?.animateCamera({
             center: {
               latitude: location.coords.latitude,
@@ -514,32 +463,9 @@ export const MapScreen = () => {
           }, { duration: 2000 });
         }
 
-        // Auto refresh location every 15 seconds
-        intervalId = setInterval(async () => {
-          try {
-            // Check permission again in case it was revoked
-            const perm = await Location.getForegroundPermissionsAsync();
-            if (perm.status !== 'granted') {
-              clearInterval(intervalId);
-              return;
-            }
-
-            let newLocation = await Location.getCurrentPositionAsync({
-              accuracy: Location.Accuracy.Balanced,
-            });
-            if (isMounted) {
-              setUserLocation(newLocation.coords);
-            }
-          } catch (e: any) {
-            // Graceful handling of permission errors without spamming the console
-            if (e?.message?.includes('permission')) {
-              clearInterval(intervalId);
-            } else {
-              console.warn("Error auto-refreshing location:", e);
-            }
-          }
-        }, 15000);
-
+        // Ongoing updates come from the app-wide shared watcher (via the store).
+        // It couldn't start if permission was only granted just now, so kick it.
+        ensureLocationWatch();
       } catch (error) {
         console.warn("Could not start location tracking:", error);
       }
@@ -547,11 +473,8 @@ export const MapScreen = () => {
 
     return () => {
       isMounted = false;
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
     };
-  }, []);
+  }, [ensureLocationWatch]);
 
   const centerMap = async () => {
     try {
@@ -876,12 +799,16 @@ export const MapScreen = () => {
         </TouchableOpacity>
       </View>
 
+      {/* NOTE: no onRegionChangeComplete handler, and never toggle
+          tracksViewChanges from camera moves — rasterized marker bitmaps are
+          repositioned natively during pan/zoom, and re-rasterizing on every
+          gesture saturates the UI thread (app-wide tap latency regression). */}
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
         provider={PROVIDER_GOOGLE}
         customMapStyle={DARK_MAP_STYLE}
-        initialCamera={camera}
+        initialCamera={INITIAL_CAMERA}
         showsUserLocation={true}
         showsMyLocationButton={false}
         showsCompass={false}
@@ -894,23 +821,49 @@ export const MapScreen = () => {
         loadingIndicatorColor="#00FFCC"
         pitchEnabled={true}
         rotateEnabled={true}
-        minZoomLevel={3}
-        maxZoomLevel={18}
-        onRegionChangeComplete={handleRegionChange}
-        onMapReady={() => setIsMapReady(true)}
+        minZoomLevel={5}
+        maxZoomLevel={20}
+        onMapReady={() => {
+          // Pan boundaries (generously covering Africa) keep the heatmap's
+          // south-pole calibration anchor (see LiveVenuesContext) permanently
+          // off-screen, together with minZoomLevel above.
+          mapRef.current?.setMapBoundaries(
+            { latitude: 25, longitude: 65 },
+            { latitude: -40, longitude: -25 }
+          );
+          setIsMapReady(true);
+        }}
       >
         {/* ── Native Heatmap (KDE blending) ──────────────────────────────
              Uses react-native-maps's native Heatmap implementation which supports
              seamless blending and KDE (Kernel Density Estimation).
              Wrapped in StableHeatmap to prevent native tile cache wipe on
-             unrelated parent re-renders (notifications, location, etc).       */}
-        {/* Dynamically scale radius based on zoom level to keep geographic size constant and keep intensity strong */}
+             unrelated parent re-renders (notifications, location, etc).
+             Weights arrive pre-normalized to 0..1 (LiveVenuesContext), so the
+             points array only changes when a venue's heat band actually moves.
+             Radius is a fixed screen-pixel size (Android caps at 50). */}
         {showHeatmapOverlay && (
           <StableHeatmap
-            points={scaledPoints}
+            points={heatPoints}
             radius={Platform.OS === 'android' ? 50 : 90}
           />
         )}
+        {/* Debug: expose the exact points feeding the heatmap (anchor excluded) */}
+        {isDebugMode && showRawPoints && heatPoints
+          .filter((p) => p.latitude > -60)
+          .map((p, i) => (
+            <Marker
+              key={`heatpt_${i}`}
+              coordinate={{ latitude: p.latitude, longitude: p.longitude }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              tracksViewChanges={false}
+              zIndex={300}
+            >
+              <View style={styles.rawHeatDot} collapsable={false}>
+                <Text style={styles.rawHeatDotText}>{p.weight.toFixed(2)}</Text>
+              </View>
+            </Marker>
+          ))}
         {/* LiveVenue markers */}
         {renderedMarkers}
       </MapView>
@@ -930,7 +883,7 @@ export const MapScreen = () => {
             <Text style={styles.debugText}>[ {showHeatmapOverlay ? 'X' : ' '} ] KDE Heatmap Matrix</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setShowRawPoints(!showRawPoints)}>
-            <Text style={styles.debugText}>[ {showRawPoints ? 'X' : ' '} ] Expose Raw Firebase Nodes</Text>
+            <Text style={styles.debugText}>[ {showRawPoints ? 'X' : ' '} ] Show Heat Point Weights</Text>
           </TouchableOpacity>
           <Text style={styles.debugText}>Active Heat LiveVenues: {heatPoints.length}</Text>
         </View>
@@ -1034,6 +987,18 @@ export const MapScreen = () => {
                       ? `${Math.round(cardVenue.distanceKm * 1000)}m`
                       : `${cardVenue.distanceKm.toFixed(1)}km`}
                   </Text>
+                </View>
+              )}
+              {cardVenue.trend === 'rising' && (
+                <View style={styles.activityMeta}>
+                  <TrendingUp color="#4CD964" size={13} />
+                  <Text style={[styles.activityMetaText, styles.trendRisingText]}>Heating up</Text>
+                </View>
+              )}
+              {cardVenue.trend === 'falling' && (
+                <View style={styles.activityMeta}>
+                  <TrendingDown color="#FF9500" size={13} />
+                  <Text style={[styles.activityMetaText, styles.trendFallingText]}>Winding down</Text>
                 </View>
               )}
             </View>
@@ -1232,6 +1197,19 @@ const styles = StyleSheet.create({
     marginVertical: 4,
     fontFamily: 'monospace',
   },
+  rawHeatDot: {
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    borderWidth: 1,
+    borderColor: '#FF00CC',
+  },
+  rawHeatDotText: {
+    color: '#FF00CC',
+    fontSize: 10,
+    fontFamily: 'monospace',
+  },
   // Removed fuzzy markerGlow and storyRing to improve pin quality and clarity per user request
   uploadOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1307,8 +1285,15 @@ const styles = StyleSheet.create({
   activityRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 12,
     marginBottom: 10,
+  },
+  trendRisingText: {
+    color: '#4CD964',
+  },
+  trendFallingText: {
+    color: '#FF9500',
   },
   activityChip: {
     flexDirection: 'row',
