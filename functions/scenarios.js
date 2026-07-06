@@ -68,6 +68,27 @@ const SCENARIOS = [
     description: 'One person is complaining about bouncer attitude or long gate lines.',
     keywords: ['bouncer', 'gate', 'line', 'queue', 'id', 'security', 'entry', 'attitude', 'bribe', 'bouncers'],
     roles: ['victim', 'crew_member']
+  },
+  {
+    type: 'new_in_town',
+    title: 'New In Town',
+    description: 'One person just moved to Nairobi or is visiting; others welcome them and trade recommendations.',
+    keywords: ['new', 'moved', 'town', 'nairobi', 'visiting', 'around', 'staying', 'recommend', 'spots', 'area', 'live', 'welcome'],
+    roles: ['newcomer', 'local']
+  },
+  {
+    type: 'post_work',
+    title: 'Post-Work Decompress',
+    description: 'People are decompressing after work — comparing how rough the week has been and how long they can stay out.',
+    keywords: ['work', 'office', 'boss', 'tomorrow', 'meeting', 'tired', 'week', 'deadline', 'shift', 'hustle', 'salary', 'monday'],
+    roles: ['drained', 'energizer']
+  },
+  {
+    type: 'song_id',
+    title: 'What Song Is This?',
+    description: 'Someone is trying to figure out the song playing; others help or roast their music knowledge.',
+    keywords: ['song', 'track', 'name', 'shazam', 'artist', 'tune', 'playing', 'heard', 'playlist', 'banger', 'remix'],
+    roles: ['searcher', 'know_it_all']
   }
 ];
 
@@ -82,6 +103,9 @@ function getCoreStanceForScenario(type) {
     case 'broke_night': return 'You are low on cash/broke tonight. You want to hang out but worry about high drink prices.';
     case 'vibe_check': return 'You feel the crowd tonight is too preppy, stuck-up, or showing off. Contrast it with better vibes.';
     case 'bouncer_drama': return 'You just had bouncer attitude at the gate or got delayed in the bouncer line. Express annoyance.';
+    case 'new_in_town': return 'You just moved to Nairobi (or are visiting) and barely know anyone or any spots. Ask genuine questions about the area, the people, and where else is good.';
+    case 'post_work': return 'You came straight from work and you are drained. Talk about how rough the week has been and how you cannot stay out too late.';
+    case 'song_id': return 'A song is playing that you half-recognize and it is bugging you. Try to figure out the name/artist, ask if anyone knows it.';
     default: return '';
   }
 }
@@ -97,11 +121,14 @@ function getSecondaryStanceForScenario(type) {
     case 'broke_night': return 'Offer to buy them a drink or tell them not to worry, you got them covered.';
     case 'vibe_check': return 'Disagree with the critic! Say the vibe is great and people are friendly/having fun.';
     case 'bouncer_drama': return 'Give gate tips or laugh it off, saying the bouncers are always like that.';
+    case 'new_in_town': return 'You know Nairobi well. Welcome the newcomer warmly — ask where they are staying, recommend a spot or two, make them feel at home.';
+    case 'post_work': return 'You are trying to keep the energy up. Sympathize about work but convince people one more drink or one more hour is worth it.';
+    case 'song_id': return 'You know your music. Help identify the song (or tease them for not knowing it), mention the artist or where you first heard it.';
     default: return '';
   }
 }
 
-const STRANGER_OK_SCENARIOS = ['music_skeptic', 'from_home', 'lost_inside', 'first_timer', 'food_run', 'broke_night', 'vibe_check', 'bouncer_drama'];
+const STRANGER_OK_SCENARIOS = ['music_skeptic', 'from_home', 'lost_inside', 'first_timer', 'food_run', 'broke_night', 'vibe_check', 'bouncer_drama', 'new_in_town', 'post_work', 'song_id'];
 
 module.exports = {
   SCENARIOS,

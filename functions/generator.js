@@ -93,44 +93,115 @@ function getCleanedFirstWord(text, username, personaName) {
   return words[0] || '';
 }
 
+const GLOBAL_SLANG = ['fire', 'mid', 'ate', 'no cap', 'fr', 'lowkey', 'highkey', 'slay', 'cooked', 'sheesh', 'locked in', 'pull up', 'iykyk', 'sus', "it's giving", "that's so real", "not me", "the way"];
+const KENYAN_MARKERS = ['wueh', 'ati', 'surely', 'woiye', 'aki', 'buda', 'boss', 'fam', 'bruv', 'kindly', 'imagine'];
+
+function sampleFrom(arr, n) {
+  const copy = [...arr];
+  const out = [];
+  while (out.length < n && copy.length > 0) {
+    out.push(copy.splice(Math.floor(Math.random() * copy.length), 1)[0]);
+  }
+  return out;
+}
+
+// Most messages carry zero slang; the rest carry exactly one item.
+// A slang budget, not a quota — stacked slang is what reads as botty.
 function rollLanguageMode() {
-  const r = Math.random();
-  if (r < 0.45) return 'english_dominant';
-  if (r < 0.80) return 'mixed_light';
-  return 'mixed_heavy';
+  return Math.random() < 0.55 ? 'plain' : 'one_item';
 }
 
 function rollEmoji() {
   return Math.random() > 0.5;
 }
 
-const getBaseStyle = (venueName) => 
-  `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. ` +
-  `You must write EXACTLY like young Kenyan Gen Z text online. ` +
-  `Use natural English texting style (lowercase, brief, relaxed). ` +
-  `\n\nSTYLE RULES:\n` +
-  `- Do NOT use retired Sheng words (do NOT say: fiti, noma, poa, moto, maze, sawa).\n` +
-  `- Use a mix of global Gen Z slang and thin Kenyan-English discourse markers. Do NOT sound like a generic American TikToker.\n` +
-  `- Global Gen Z slang to draw from naturally: fire, mid, ate, no cap, fr, lowkey, highkey, vibe, slay, cooked, sheesh, locked in, pull up, iykyk, sus, "it's giving", "that's so real", "not me", "the way".\n` +
-  `- Kenyan-English markers to weave in occasionally (aim for about 1 marker per message to keep it Nairobi): wueh (or weuh), ati, surely, woiye (or woi), aki, "me I...", buda, boss, bro, fam, bruv, kindly, imagine.\n` +
-  `\nEXAMPLES OF GOOD AND BAD STYLE:\n` +
-  `- BAD (Too American/Generic): "no cap that's bussin fr fr" (no Kenyan flavor)\n` +
-  `- BAD (Too old Sheng register): "hii place iko fiti sana maze" (uses retired Sheng words)\n` +
-  `- GOOD: "wueh the DJ ate, no cap"\n` +
-  `- GOOD: "me I'm not leaving the house for mid music"\n` +
-  `- GOOD: "ati entry is how much, surely"\n` +
-  `- GOOD: "aki this queue is cooked, imagine"\n` +
-  `- GOOD: "buda, pull up, the vibe is fire"\n`;
+const WEEKDAY_ENERGY = {
+  Mon: `It is a Monday night — most people have work tomorrow. The mood is a quiet weeknight: relaxed drinks, catching up, winding down early. Nobody is raving. Do NOT talk like it is a big party night.`,
+  Tue: `It is a Tuesday night — a slow weeknight. People are out for chill drinks and conversation, not a party. Keep the energy low-key and do NOT talk like it is a weekend.`,
+  Wed: `It is a Wednesday — midweek. A few after-work drinks, easy conversation, nothing wild. Do NOT talk like it is a weekend night out.`,
+  Thu: `It is a Thursday — the warm-up night. Decent energy, people easing into the weekend, but most are still holding back for Friday.`,
+  Fri: `It is Friday night — the weekend has started and the energy is high.`,
+  Sat: `It is Saturday night — the biggest night out of the week.`,
+  Sun: `It is a Sunday — wind-down vibes. People are out for a chilled last drink, already thinking about Monday. Do NOT talk like it is a big party night.`
+};
 
-const RULES = 
+function getEnergyInstruction(dayAndTime) {
+  const wd = (dayAndTime || '').trim().slice(0, 3);
+  const energy = WEEKDAY_ENERGY[wd];
+  return energy ? `\nTONIGHT'S ENERGY: ${energy}\n` : '';
+}
+
+function isWeeknightVibe(dayAndTime) {
+  const wd = (dayAndTime || '').trim().slice(0, 3);
+  return ['Mon', 'Tue', 'Wed', 'Sun'].includes(wd);
+}
+
+// Rotating example pool — Haiku imitates examples far more than rules, so the
+// registers here must cover quiet nights, genuine questions, and fragments,
+// not just party talk. 4 are sampled per prompt. Examples marked directed:true
+// address people mid-conversation and are excluded when opening an empty chat.
+const EXAMPLE_POOL = [
+  { text: `"wueh the DJ ate"` },
+  { text: `"me I'm not leaving the house for mid music"` },
+  { text: `"ati entry is how much"` },
+  { text: `"anyone else here or is it just me"` },
+  { text: `"this week has been long, I needed this"` },
+  { text: `"first time here, is it always like this?"`, directed: true },
+  { text: `"the fries here are actually good"` },
+  { text: `"lol same"`, directed: true },
+  { text: `"who's watching the match tomorrow"` },
+  { text: `"traffic on waiyaki way was mad, just got here"` },
+  { text: `"it's quiet but the music is decent"` },
+  { text: `"work tomorrow is going to hurt"` },
+  { text: `"you guys from around here?"`, directed: true },
+  { text: `"they played my song and I wasn't ready"` },
+  { text: `"kinda dead rn but it might pick up"` }
+];
+
+const getBaseStyle = (venueName, isOpener = false) => {
+  const pool = isOpener ? EXAMPLE_POOL.filter(e => !e.directed) : EXAMPLE_POOL;
+  return (
+    `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. ` +
+    `You must write EXACTLY like young Kenyan Gen Z text online. ` +
+    `Use natural English texting style (lowercase, brief, relaxed). ` +
+    `\n\nSTYLE RULES:\n` +
+    `- Most real texts have NO slang at all — just say the thing plainly. NEVER use more than one slang word or Kenyan marker in a message, and never stack two together.\n` +
+    `- Do NOT use retired Sheng words (do NOT say: fiti, noma, poa, moto, maze, sawa).\n` +
+    `- Do NOT sound like a generic American TikToker.\n` +
+    `\nEXAMPLES OF THE REGISTER (match the feel, do NOT copy or reuse these):\n` +
+    sampleFrom(pool, 4).map(e => `- GOOD: ${e.text}\n`).join('') +
+    `- BAD (slang stacked, too American): "no cap that's bussin fr fr"\n` +
+    `- BAD (old Sheng register): "hii place iko fiti sana maze"\n`
+  );
+};
+
+const getRules = (isOpener = false) =>
   `\nRULES: ` +
-  `(1) Write ONE COMPLETE short line (~8 words max). It must be a finished thought. Never stop mid-sentence. ` +
+  `(1) Write ONE short text message — a single line, usually under 10 words. Very short is fine (${isOpener ? '"so quiet rn", "finally out"' : '"lol same", "facts"'}). NEVER write a paragraph or multiple sentences. It must be a finished thought — never stop mid-sentence. ` +
   `(2) No hashtags. (3) No line breaks. ` +
   `(4) Be extremely casual, like texting a friend. ` +
   `(5) Do NOT start with 'yo', 'yoo', 'ayo', 'bro', or 'buda'. Most messages should open mid-thought, with no greeting/filler word at all — just say the thing.\n`;
 
-function enforceCeiling(text, username, personaName, intentType = 'default', history = '') {
-  return cleanPersonaMessageText(text, username, personaName, intentType, history);
+// Persona voice card: the stable texting identity stored on the persona doc.
+// Same card every night → the same persona texts the same way next weekend.
+function buildVoiceCard(voice) {
+  if (!voice) return '';
+  const lines = [];
+  if (Array.isArray(voice.slang) && voice.slang.length > 0) {
+    lines.push(`- Your go-to slang (the ONLY slang you ever use): ${voice.slang.map(s => `"${s}"`).join(', ')}.`);
+  }
+  if (voice.quirk) {
+    lines.push(`- Your texting quirk: ${voice.quirk}.`);
+  }
+  if (Array.isArray(voice.interests) && voice.interests.length > 0) {
+    lines.push(`- About you: ${voice.interests.join('; ')}. Bring these up only when it fits the conversation naturally.`);
+  }
+  if (lines.length === 0) return '';
+  return `\nYOUR TEXTING IDENTITY (this is how YOU always text — stay consistent with it):\n${lines.join('\n')}\n`;
+}
+
+function enforceCeiling(text, username, personaName, intentType = 'default', history = '', voice = null) {
+  return cleanPersonaMessageText(text, username, personaName, intentType, history, voice);
 }
 
 const personaStyles = {
@@ -208,7 +279,7 @@ function endsWithConnectorOrComma(text) {
   return false;
 }
 
-function cleanPersonaMessageText(text, username, personaName, intentType = 'default', history = '') {
+function cleanPersonaMessageText(text, username, personaName, intentType = 'default', history = '', voice = null) {
   if (!text) return '';
 
   // 1. Strip any emoji the model produced
@@ -262,61 +333,87 @@ function cleanPersonaMessageText(text, username, personaName, intentType = 'defa
   cleaned = cleaned.replace(realNamePattern, 'buda');
 
   let body = cleaned;
-  
-  // Clean dangling endings (never cut mid-word or end on connector/comma)
+
+  // Clean dangling endings (never cut mid-word or end on connector/comma).
+  // No minimum length: short messages ("facts", "lol same") are the most
+  // natural thing in a group chat — never pad them.
   body = cleanDanglingEndings(body);
 
-  // Enforce minimum 20 characters by appending Kenyan/Gen Z fillers
-  bodyArr = [...body];
-  if (bodyArr.length < 20) {
-    const fillers = [" wueh", " aki", " surely", " vibe", " fr fr", " no cap", " boss", " bro"];
-    let fillerIdx = 0;
-    while (bodyArr.length < 20) {
-      const fillerChars = [...fillers[fillerIdx % fillers.length]];
-      bodyArr = bodyArr.concat(fillerChars);
-      fillerIdx++;
-    }
-    body = bodyArr.join('');
-  }
-
-  // Clean dangling endings final check
-  body = cleanDanglingEndings(body);
-
-  // 2. Decide whether to append a reaction emoji (~35% chance)
-  const appendEmoji = Math.random() < 0.35;
-  if (appendEmoji) {
-    const tone = getToneFromMessage(body);
-    const toneEmojiMap = {
-      funny: '😂',
-      savage: '💀',
-      overwhelmed: '😭',
-      wholesome: '🥹',
-      curious: '👀'
-    };
-    
-    const lastEmojis = getLastEmojisFromHistory(history);
-    const allReactionEmojis = ['😂', '💀', '😭', '🥹', '👀'];
-    
-    let chosenEmoji = tone ? toneEmojiMap[tone] : null;
-    
-    if (!chosenEmoji || lastEmojis.includes(chosenEmoji)) {
-      const filtered = allReactionEmojis.filter(emo => !lastEmojis.includes(emo));
-      if (filtered.length > 0) {
-        // Find the emoji in the filtered set with the lowest representation in globalEmojiCounts
-        filtered.sort((a, b) => (globalEmojiCounts[a] || 0) - (globalEmojiCounts[b] || 0));
-        chosenEmoji = filtered[0];
-      } else {
-        chosenEmoji = allReactionEmojis[0];
-      }
-    }
-    
-    // Update global stat count
-    globalEmojiCounts[chosenEmoji] = (globalEmojiCounts[chosenEmoji] || 0) + 1;
-    
-    body = `${body} ${chosenEmoji}`;
+  // 2. Append a reaction emoji according to the persona's own emoji habit,
+  // so the same persona has the same emoji signature every night.
+  if (voice && voice.emojiStyle) {
+    body = appendVoiceEmoji(body, voice);
+  } else {
+    body = appendBalancedEmoji(body, history);
   }
 
   return body;
+}
+
+function appendVoiceEmoji(body, voice) {
+  const style = voice.emojiStyle;
+  if (style === 'none') return body;
+  const freq = voice.emojiFreq !== undefined ? voice.emojiFreq : 0.25;
+  if (Math.random() >= freq) return body;
+
+  if ((style === 'signature' || style === 'stacked') && voice.signatureEmoji) {
+    const emoji = style === 'stacked' ? voice.signatureEmoji + voice.signatureEmoji : voice.signatureEmoji;
+    return `${body} ${emoji}`;
+  }
+
+  // 'rare' (or missing signature): tone-mapped pick
+  const tone = getToneFromMessage(body);
+  const toneEmojiMap = { funny: '😂', savage: '💀', overwhelmed: '😭', wholesome: '🥹', curious: '👀' };
+  return `${body} ${tone ? toneEmojiMap[tone] : '😂'}`;
+}
+
+// Legacy fallback for personas without a voice card (~35% chance, globally balanced)
+function appendBalancedEmoji(body, history) {
+  if (Math.random() >= 0.35) return body;
+
+  const tone = getToneFromMessage(body);
+  const toneEmojiMap = {
+    funny: '😂',
+    savage: '💀',
+    overwhelmed: '😭',
+    wholesome: '🥹',
+    curious: '👀'
+  };
+
+  const lastEmojis = getLastEmojisFromHistory(history);
+  const allReactionEmojis = ['😂', '💀', '😭', '🥹', '👀'];
+
+  let chosenEmoji = tone ? toneEmojiMap[tone] : null;
+
+  if (!chosenEmoji || lastEmojis.includes(chosenEmoji)) {
+    const filtered = allReactionEmojis.filter(emo => !lastEmojis.includes(emo));
+    if (filtered.length > 0) {
+      // Find the emoji in the filtered set with the lowest representation in globalEmojiCounts
+      filtered.sort((a, b) => (globalEmojiCounts[a] || 0) - (globalEmojiCounts[b] || 0));
+      chosenEmoji = filtered[0];
+    } else {
+      chosenEmoji = allReactionEmojis[0];
+    }
+  }
+
+  // Update global stat count
+  globalEmojiCounts[chosenEmoji] = (globalEmojiCounts[chosenEmoji] || 0) + 1;
+
+  return `${body} ${chosenEmoji}`;
+}
+
+// Last line of defense against paragraphs: validated texts are already ≤50
+// chars, but the fallback path (all retries failed) can carry anything the
+// model produced. Trim to one clause, never mid-word.
+function hardTrimToOneLine(text) {
+  let t = text.replace(/[\r\n]+/g, ' ').trim();
+  if ([...t].length <= 60) return t;
+  const sentenceMatch = t.match(/^.{10,59}[.!?]/);
+  if (sentenceMatch) return sentenceMatch[0];
+  t = [...t].slice(0, 60).join('');
+  const lastSpace = t.lastIndexOf(' ');
+  if (lastSpace > 10) t = t.slice(0, lastSpace);
+  return cleanDanglingEndings(t);
 }
 
 async function callAnthropicHaiku(apiKey, userPrompt, config = {}) {
@@ -367,6 +464,7 @@ function getForbiddenTopicWord(history, exemptWords = []) {
     'ni', 'na', 'n', 'ya', 'wa', 'kwa', 'i', 'you', 'we', 'they', 'me', 'my', 'your', 'our', 
     'he', 'she', 'him', 'her', 'was', 'were', 'are', 'am', 'be', 'have', 'has', 'had', 
     'do', 'does', 'did', 'go', 'went', 'gone', 'but', 'so', 'if', 'or', 'as', 'an', 'with',
+    'here', 'there', 'just', 'got', 'now', 'tonight',
     'sana', 'noma', 'fiti', 'maze', 'buda', 'msee', 'vibe', 'vibes', 'hapa', 'leo',
     'wueh', 'weuh', 'ati', 'surely', 'woiye', 'woi', 'aki', 'kindly', 'imagine', 'fire', 'mid', 'slay', 'cooked', 'sus'
   ]);
@@ -421,15 +519,22 @@ function getHandlesFromHistory(history) {
   return Array.from(handles);
 }
 
+// Weekend nights lean on venue talk and hype; weeknights lean on genuine
+// conversation — icebreakers, life outside tonight, checking in on people.
 const INTENTS = [
-  { type:'venue_talk', weight:4, hint:'comment on the PLACE — the DJ/music, a drink, the lighting, the bathroom line, the bouncer. an observation, not a question.' },
-  { type:'banter',     weight:3, hint:'tease/roast another person in the chat by @handle. playful, light.' },
-  { type:'reply',      weight:3, hint:'react to the LAST message but you MAY pivot the topic — do not just repeat it.' },
-  { type:'cosign',     weight:2, hint:'agree/hype what someone said. short. "facts", "exactly msee".' },
-  { type:'hype',       weight:2, hint:'react to the vibe, be specific. never just "its lit".' },
-  { type:'tangent',    weight:2, hint:'slightly off-topic — hungry, traffic, an outfit, someone running late.' },
-  { type:'question',   weight:2, hint:'ask something NOT about money/entry — what they think, where they are, who they came with.' },
-  { type:'logistics',  weight:1, hint:'one practical detail. use SPARINGLY.' },
+  { type:'venue_talk', wWeekend:4, wWeeknight:2, hint:'comment on the PLACE — the DJ/music, a drink, the lighting, the bathroom line, the bouncer. an observation, not a question.' },
+  { type:'banter',     wWeekend:3, wWeeknight:2, hint:'tease/roast another person in the chat by @handle. playful, light.' },
+  { type:'reply',      wWeekend:3, wWeeknight:3, hint:'react to the LAST message but you MAY pivot the topic — do not just repeat it.' },
+  { type:'cosign',     wWeekend:2, wWeeknight:2, hint:'agree/hype what someone said. short. "facts", "exactly msee".' },
+  { type:'hype',       wWeekend:2, wWeeknight:1, hint:'react to the vibe, be specific. never just "its lit".' },
+  { type:'tangent',    wWeekend:2, wWeeknight:2, hint:'slightly off-topic — hungry, traffic, an outfit, someone running late.' },
+  { type:'question',   wWeekend:2, wWeeknight:2, hint:'ask something NOT about money/entry — what they think, where they are, who they came with.' },
+  { type:'logistics',  wWeekend:1, wWeeknight:1, hint:'one practical detail. use SPARINGLY.' },
+  { type:'icebreaker', wWeekend:1, wWeeknight:3, hint:'start a genuine conversation about the PEOPLE, not the venue — "first time here?", "you guys from around?", "who came solo?". friendly and real, no slang needed.',
+    openerHint:'throw an open question into the empty chat, directed at no one specific — "anyone here yet?", "anyone been here before?". Do NOT talk as if people are already chatting with you.' },
+  { type:'life_talk',  wWeekend:1, wWeeknight:4, hint:'talk about life outside tonight — work tomorrow, how the week is going, a match, a show, a new song, plans for the weekend. draw on YOUR interests if you have them.' },
+  { type:'check_in',   wWeekend:1, wWeeknight:2, hint:'genuinely ask how someone\'s night or week is going. warm and simple.',
+    openerHint:'ask an open "how is everyone\'s night going" style question — light, aimed at no one specific.' },
 ];
 
 async function generateMessage(context) {
@@ -440,18 +545,38 @@ async function generateMessage(context) {
     throw new Error('Anthropic API key is not configured.');
   }
 
-  // 1. Sample one intent per generateMessage call (seeded RNG so harness runs are reproducible)
+  // 1. Resolve dayAndTime / daypart first — intent weights and tonight's
+  // energy both depend on which night of the week it actually is.
+  const nowForDay = new Date();
+  const currentWeekday = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Africa/Nairobi' }).format(nowForDay);
+  let dayAndTime = daypart;
+  if (dayAndTime) {
+    const dp = dayAndTime.toLowerCase();
+    if (dp === 'morning') dayAndTime = `${currentWeekday} at 9AM`;
+    else if (dp === 'afternoon') dayAndTime = `${currentWeekday} at 3PM`;
+    else if (dp === 'evening') dayAndTime = `${currentWeekday} at 8PM`;
+    else if (dp === 'night') dayAndTime = `${currentWeekday} at 11PM`;
+  } else {
+    const hourLabel = nowForDay.getHours() > 12 ? `${nowForDay.getHours() - 12}PM` : nowForDay.getHours() === 12 ? '12PM' : `${nowForDay.getHours()}AM`;
+    dayAndTime = `${currentWeekday} at ${hourLabel}`;
+  }
+
+  const isWeeknight = isWeeknightVibe(dayAndTime);
+  const energyInstruction = getEnergyInstruction(dayAndTime);
+
+  // 2. Sample one intent per generateMessage call, weighted for tonight
   const isHistoryEmpty = !history || history.trim() === '' || history.trim() === 'No recent messages.';
   const isAmbient = context.tier === 'ambient';
   const availableIntents = isHistoryEmpty || isAmbient
     ? INTENTS.filter(i => i.type !== 'reply' && i.type !== 'banter' && i.type !== 'cosign')
     : INTENTS;
 
-  const totalWeight = availableIntents.reduce((sum, i) => sum + i.weight, 0);
+  const intentWeight = (i) => (isWeeknight ? i.wWeeknight : i.wWeekend);
+  const totalWeight = availableIntents.reduce((sum, i) => sum + intentWeight(i), 0);
   let r = Math.random() * totalWeight;
   let sampledIntent = null;
   for (const intent of availableIntents) {
-    r -= intent.weight;
+    r -= intentWeight(intent);
     if (r <= 0) {
       sampledIntent = intent;
       break;
@@ -461,30 +586,17 @@ async function generateMessage(context) {
     sampledIntent = availableIntents[0];
   }
 
-  // Resolve dayAndTime / daypart
-  let dayAndTime = daypart;
-  if (dayAndTime) {
-    const dp = dayAndTime.toLowerCase();
-    if (dp === 'morning') dayAndTime = 'Sat at 9AM';
-    else if (dp === 'afternoon') dayAndTime = 'Sat at 3PM';
-    else if (dp === 'evening') dayAndTime = 'Sat at 8PM';
-    else if (dp === 'night') dayAndTime = 'Sat at 11PM';
-  } else {
-    const now = new Date();
-    const hourLabel = now.getHours() > 12 ? `${now.getHours() - 12}PM` : now.getHours() === 12 ? '12PM' : `${now.getHours()}AM`;
-    const weekdayLabel = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Africa/Nairobi' }).format(now);
-    dayAndTime = `${weekdayLabel} at ${hourLabel}`;
-  }
-
+  const personaVoice = (persona && persona.voice) || null;
   const langMode = rollLanguageMode();
 
   let langInstruction = '';
-  if (langMode === 'english_dominant') {
-    langInstruction = `\nFor THIS message: write in natural casual English texting style (optionally a global Gen Z slang word, but NO Sheng words). Keep it extremely brief.\n`;
-  } else if (langMode === 'mixed_light') {
-    langInstruction = `\nFor THIS message: write in casual English texting style, naturally weaving in exactly ONE Kenyan-English marker (e.g. wueh, ati, surely, woiye, aki, buda, boss, bro, kindly, imagine) or "me I...". Keep it extremely brief.\n`;
+  if (langMode === 'plain') {
+    langInstruction = `\nFor THIS message: plain casual English texting — NO slang words and NO Kenyan markers this time, just say the thing like a normal text. Keep it extremely brief.\n`;
   } else {
-    langInstruction = `\nFor THIS message: write in casual English texting style, weaving in exactly ONE Kenyan-English marker AND one global Gen Z slang word (e.g., "wueh the DJ ate, no cap" or "buda this place is lowkey cooked"). Keep it extremely brief.\n`;
+    const slangOptions = (personaVoice && Array.isArray(personaVoice.slang) && personaVoice.slang.length > 0)
+      ? personaVoice.slang
+      : [...sampleFrom(KENYAN_MARKERS, 1), ...sampleFrom(GLOBAL_SLANG, 1)];
+    langInstruction = `\nFor THIS message: casual English texting, weaving in AT MOST one slang item — one of YOUR words: ${slangOptions.map(s => `"${s}"`).join(' or ')}. Only if it fits naturally; never force it, never use two. Keep it extremely brief.\n`;
   }
 
   const emojiInstruction = (variant === 'ambient' || variant === 'ambient_seeding')
@@ -551,7 +663,8 @@ async function generateMessage(context) {
       }
       intentInstruction = `\nInstruction for this message: ${hint}\n`;
     } else {
-      intentInstruction = `\nInstruction for this message: ${sampledIntent.hint}\n`;
+      const hint = (isHistoryEmpty && sampledIntent.openerHint) ? sampledIntent.openerHint : sampledIntent.hint;
+      intentInstruction = `\nInstruction for this message: ${hint}\n`;
     }
   }
 
@@ -571,11 +684,14 @@ async function generateMessage(context) {
 
   let relationshipInstruction = '';
   if (context.isStranger) {
-    relationshipInstruction = 
+    const strangerExamples = isHistoryEmpty
+      ? `- Sound open, curious, and inclusive — but nobody has texted yet, so keep questions open-ended and aimed at no one specific (e.g. "anyone here yet?").\n`
+      : `- Sound open, curious, and inclusive. E.g., ask: "first time here?", "who else came solo?", "you guys know each other or just met?".\n`;
+    relationshipInstruction =
       `\nRELATIONSHIP STATUS: STRANGERS MEETING FOR THE FIRST TIME\n` +
       `- You do NOT know the other people in this chat. You just arrived at ${venueName} or are thinking of coming.\n` +
       `- You have NO shared history with anyone here. Never say "remember when", "you always", or roast/tease anyone about their past behavior/habits.\n` +
-      `- Sound open, curious, and inclusive. E.g., ask: "first time here?", "who else came solo?", "you guys know each other or just met?".\n` +
+      strangerExamples +
       `- Banter must stay light and friendly (teasing the DJ, the line, the drinks, or the moment), NOT familiar roasting.\n`;
   } else if (context.friendUsername) {
     relationshipInstruction = 
@@ -589,30 +705,42 @@ async function generateMessage(context) {
       `- Sound open, friendly, and inclusive. React to the venue together.\n`;
   }
 
+  const voiceCard = buildVoiceCard(personaVoice);
+
   if (variant === 'ambient' || variant === 'ambient_seeding') {
     prompt =
-      getBaseStyle(venueName) +
+      getBaseStyle(venueName, isHistoryEmpty) +
       `Your personality: ${personaStyles[pType] || personaStyles.hype}\n` +
-      RULES +
+      voiceCard +
+      getRules(isHistoryEmpty) +
       langInstruction +
       emojiInstruction +
+      energyInstruction +
       crowdInstruction +
       relationshipInstruction +
       intentInstruction +
       topicNegationInstruction +
       scenarioInstruction +
-      `\nThis is a GROUP CHAT — read what others just said and CONTINUE the conversation. ` +
-      `React to the last message, answer a question someone asked, or build on the topic. Do NOT post a random unrelated statement.\n` +
-      `\nIt is ${dayAndTime}. Recent chat:\n${history || 'No recent messages.'}\n` +
-      `Write ONE message as ${personaName} that flows from the conversation above. Return ONLY the raw message text.`;
+      (isHistoryEmpty
+        ? `\nTHE CHAT IS EMPTY — you are posting the FIRST message tonight. Nobody has said anything yet:\n` +
+          `- Do NOT text as if you are mid-conversation with people. No "you guys...", no replying to things nobody said.\n` +
+          `- Write a true opener: an observation about the place or your night, a thought thrown into the void, or an open question directed at no one specific ("anyone here yet?").\n` +
+          `\nIt is ${dayAndTime}.\n` +
+          `Write ONE opening message as ${personaName}. Return ONLY the raw message text.`
+        : `\nThis is a GROUP CHAT — read what others just said and CONTINUE the conversation. ` +
+          `React to the last message, answer a question someone asked, or build on the topic. Do NOT post a random unrelated statement.\n` +
+          `\nIt is ${dayAndTime}. Recent chat:\n${history}\n` +
+          `Write ONE message as ${personaName} that flows from the conversation above. Return ONLY the raw message text.`);
   } else if (variant === 'dm' || variant === 'dm_reply') {
     const cleanSenderName = (context.senderName || 'EventGoer').toLowerCase().includes('nils') ? 'VibeGoer' : (context.senderName || 'EventGoer');
     const senderMsg = context.senderMessage || '';
     prompt =
       getBaseStyle(venueName) +
-      RULES +
+      voiceCard +
+      getRules() +
       langInstruction +
       emojiInstruction +
+      energyInstruction +
       crowdInstruction +
       relationshipInstruction +
       scenarioInstruction +
@@ -626,9 +754,11 @@ async function generateMessage(context) {
     const origMsg = context.originalMessage || '';
     prompt =
       getBaseStyle(venueName) +
-      RULES +
+      voiceCard +
+      getRules() +
       langInstruction +
       emojiInstruction +
+      energyInstruction +
       relationshipInstruction +
       scenarioInstruction +
       `\nIt is ${dayAndTime}. @${cleanReactingName} reacted ${emoji} to your message: "${origMsg}".\n` +
@@ -688,7 +818,7 @@ async function generateMessage(context) {
       }
       
       // Opener validation
-      const candidateCleaned = enforceCeiling(text, personaUsername, personaName, sampledIntent.type, history || '');
+      const candidateCleaned = enforceCeiling(text, personaUsername, personaName, sampledIntent.type, history || '', personaVoice);
       const firstW = getCleanedFirstWord(candidateCleaned, personaUsername, personaName);
       
       const isBanned = BANNED_OPENERS.has(firstW);
@@ -737,7 +867,10 @@ async function generateMessage(context) {
     }
   }
 
-  const finalCleaned = enforceCeiling(finalMessage, personaUsername, personaName, sampledIntent.type, history || '');
+  // Fallback texts skipped length validation — never let a paragraph through
+  finalMessage = hardTrimToOneLine(finalMessage);
+
+  const finalCleaned = enforceCeiling(finalMessage, personaUsername, personaName, sampledIntent.type, history || '', personaVoice);
   
   // Track selected opener
   const actualFirstW = getCleanedFirstWord(finalCleaned, personaUsername, personaName);

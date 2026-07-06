@@ -551,7 +551,7 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                 senderName: cleanSenderName,
                 senderMessage: messageData.message || '',
                 tier: venueTier,
-                crowdLevel: CROWD_LEVEL_BY_TIER[getVenueCrowdTier(venueForTier, allVenues)],
+                crowdLevel: getCrowdLevelForNight(getVenueCrowdTier(venueForTier, allVenues), weekdayLabel),
                 role: role,
                 stance: stance,
                 location: location,
@@ -844,6 +844,14 @@ function selectChatVenuesForNight(allVenues, seedStr, weekday, nowMs = Date.now(
 }
 
 const CROWD_LEVEL_BY_TIER = { hot: 'packed', medium: 'busy', low: 'quiet' };
+
+// Weekday-aware crowd level for persona prompts: even the "hottest" venue in
+// town is not wall-to-wall packed on a Monday. Only Fri/Sat can read as packed.
+function getCrowdLevelForNight(tier, weekday) {
+  if (['Fri', 'Sat'].includes(weekday)) return CROWD_LEVEL_BY_TIER[tier];
+  if (['Thu', 'Sun'].includes(weekday)) return { hot: 'busy', medium: 'busy', low: 'quiet' }[tier];
+  return { hot: 'busy', medium: 'quiet', low: 'quiet' }[tier]; // Mon-Wed
+}
 
 function getDynamicTargetCount(venue, allVenues) {
   const now = new Date();
@@ -2370,7 +2378,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
         history: last5Messages,
         daypart: dayAndTime,
         tier: venueTier,
-        crowdLevel: CROWD_LEVEL_BY_TIER[targetCrowdTier],
+        crowdLevel: getCrowdLevelForNight(targetCrowdTier, weekday),
         role: role,
         stance: stance,
         location: location,
