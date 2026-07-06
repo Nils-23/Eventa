@@ -344,13 +344,8 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
         return type === 'CLUB' || type === 'BAR';
       });
       
-    const totalSimCap = ['Fri', 'Sat'].includes(dateInfo.weekday) ? 4 : 2;
-    const selectedVenuesForNight = seededShuffle(allVenues, seedStr).slice(0, totalSimCap);
-    
-    const numDeep = ['Fri', 'Sat'].includes(dateInfo.weekday) 
-      ? (seededRandom(seedStr, 999) < 0.5 ? 1 : 2) 
-      : 0;
-      
+    const { selected: selectedVenuesForNight, numDeep } = selectChatVenuesForNight(allVenues, seedStr, dateInfo.weekday);
+
     let venueTier = null;
     const simIndex = selectedVenuesForNight.findIndex(v => v.id === venueId);
     if (simIndex !== -1) {
@@ -546,6 +541,7 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                 }
               }
 
+              const venueForTier = allVenues.find(v => v.id === venueId) || { id: venueId, ...venueSnap.data() };
               let replyText = await generateMessage({
                 variant: 'dm',
                 persona: selectedPersona,
@@ -555,6 +551,7 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                 senderName: cleanSenderName,
                 senderMessage: messageData.message || '',
                 tier: venueTier,
+                crowdLevel: CROWD_LEVEL_BY_TIER[getVenueCrowdTier(venueForTier, allVenues)],
                 role: role,
                 stance: stance,
                 location: location,
@@ -783,13 +780,70 @@ function getDefaultCapacity(type) {
   }
 }
 
-function getVenueHash(id) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = id.charCodeAt(i) + ((hash << 5) - hash);
+// ── Rotating hot-venue ranking ────────────────────────────────────────────
+// Which venue is "hot" reshuffles every 3h slot via a seeded random draw per
+// (venue, slot). Deterministic, so the app client and all functions agree on
+// the same hot venue at any moment, but the winner changes slot to slot and
+// never repeats a fixed daily pattern. Base popularity keeps a 30% pull so
+// well-known venues trend hot slightly more often.
+const HOT_ROTATION_SLOT_MS = 3 * 60 * 60 * 1000;
+
+function seededUnitRandom(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h << 5) - h + str.charCodeAt(i);
+    h |= 0;
   }
-  return Math.abs(hash);
+  h = Math.imul(h ^ (h >>> 16), 2246822507);
+  h = Math.imul(h ^ (h >>> 13), 3266489909);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
 }
+
+function getRotatingHotScore(venue, nowMs = Date.now()) {
+  const slot = Math.floor(nowMs / HOT_ROTATION_SLOT_MS);
+  const base = venue.simPopularityScore !== undefined ? venue.simPopularityScore : 0.5;
+  const roll = seededUnitRandom(`${venue.id}|hot|${slot}`);
+  return 0.3 * base + 0.7 * roll;
+}
+
+function getVenueCrowdTier(venue, allVenues, nowMs = Date.now()) {
+  let tier = 'low';
+  if (allVenues && Array.isArray(allVenues)) {
+    const categoryVenues = allVenues.filter(v => v.type === venue.type);
+    if (categoryVenues.length > 0) {
+      const sorted = [...categoryVenues].sort(
+        (a, b) => getRotatingHotScore(b, nowMs) - getRotatingHotScore(a, nowMs)
+      );
+      const rankIndex = sorted.findIndex(v => v.id === venue.id);
+      if (rankIndex !== -1) {
+        const percentile = rankIndex / sorted.length;
+        if (percentile < 0.10) {
+          tier = 'hot';
+        } else if (percentile < 0.40) {
+          tier = 'medium';
+        }
+      }
+    }
+  }
+  return tier;
+}
+
+// Chat follows the crowd: persona conversations happen at the venues currently
+// ranking hottest, so the busiest-looking venues are also the ones talking.
+function selectChatVenuesForNight(allVenues, seedStr, weekday, nowMs = Date.now()) {
+  const totalSimCap = ['Fri', 'Sat'].includes(weekday) ? 4 : 2;
+  const ranked = [...allVenues].sort(
+    (a, b) => getRotatingHotScore(b, nowMs) - getRotatingHotScore(a, nowMs)
+  );
+  const selected = ranked.slice(0, totalSimCap);
+  const numDeep = ['Fri', 'Sat'].includes(weekday)
+    ? (seededRandom(seedStr, 999) < 0.5 ? 1 : 2)
+    : 0;
+  return { selected, numDeep };
+}
+
+const CROWD_LEVEL_BY_TIER = { hot: 'packed', medium: 'busy', low: 'quiet' };
 
 function getDynamicTargetCount(venue, allVenues) {
   const now = new Date();
@@ -815,38 +869,8 @@ function getDynamicTargetCount(venue, allVenues) {
   }
 
   // Determine tier within category (Default: 10% hot, 30% medium, 60% low)
-  let tier = 'low';
-  if (allVenues && Array.isArray(allVenues)) {
-    const categoryVenues = allVenues.filter(v => v.type === venue.type);
-    if (categoryVenues.length > 0) {
-      const sorted = [...categoryVenues].sort((a, b) => {
-        const scoreA = a.simPopularityScore !== undefined ? a.simPopularityScore : 0.5;
-        const scoreB = b.simPopularityScore !== undefined ? b.simPopularityScore : 0.5;
-        
-        const nowMs = Date.now();
-        const cycleTime = (nowMs / (8 * 60 * 60 * 1000)) * 2 * Math.PI;
-        
-        const rotA = Math.sin(cycleTime + getVenueHash(a.id)) * 0.3; // range: -0.3 to +0.3
-        const rotB = Math.sin(cycleTime + getVenueHash(b.id)) * 0.3;
-        
-        const finalA = Math.max(0.0, Math.min(1.0, scoreA + rotA));
-        const finalB = Math.max(0.0, Math.min(1.0, scoreB + rotB));
-        
-        return finalB - finalA;
-      });
-      const rankIndex = sorted.findIndex(v => v.id === venue.id);
-      if (rankIndex !== -1) {
-        const percentile = rankIndex / sorted.length;
-        if (percentile < 0.10) {
-          tier = 'hot';
-        } else if (percentile < 0.40) {
-          tier = 'medium';
-        } else {
-          tier = 'low';
-        }
-      }
-    }
-  }
+  // Ranking reshuffles randomly every 3h slot — see getRotatingHotScore.
+  const tier = getVenueCrowdTier(venue, allVenues);
 
   const isNightlifePeak = (day, hr) => {
     if (hr >= 21) {
@@ -2090,12 +2114,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
 
 
 
-  const totalSimCap = ['Fri', 'Sat'].includes(weekday) ? 4 : 2;
-  const selectedVenuesForNight = seededShuffle(allVenues, seedStr).slice(0, totalSimCap);
-
-  const numDeep = ['Fri', 'Sat'].includes(weekday)
-    ? (seededRandom(seedStr, 999) < 0.5 ? 1 : 2)
-    : 0;
+  const { selected: selectedVenuesForNight, numDeep } = selectChatVenuesForNight(allVenues, seedStr, weekday, nowMs);
 
   // Track simulated venue tiers
   const simulatedVenueTiers = {};
@@ -2206,12 +2225,20 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
 
   // ── 6. Process each selected persona ────────────────────────────────────
   for (const persona of selectedPersonas) {
-    // Pick a venue this persona would visit (prefer their preferred types) from activeVenues pool
+    // Pick a venue this persona would visit (prefer their preferred types) from activeVenues pool,
+    // weighted toward venues currently showing bigger crowds so chat lands where people are.
     const preferredVenues = activeVenues.filter(
       (v) => persona.preferredVenueTypes && persona.preferredVenueTypes.includes(v.type)
     );
     const venuePool = preferredVenues.length > 0 ? preferredVenues : activeVenues;
-    const targetVenue = venuePool[Math.floor(Math.random() * venuePool.length)];
+    const tierWeights = { hot: 6, medium: 3, low: 1 };
+    const weightedPool = venuePool.map((v) => ({ v, w: tierWeights[getVenueCrowdTier(v, allVenues, nowMs)] || 1 }));
+    let venueRoll = Math.random() * weightedPool.reduce((sum, x) => sum + x.w, 0);
+    let targetVenue = weightedPool[0].v;
+    for (const { v, w } of weightedPool) {
+      venueRoll -= w;
+      if (venueRoll <= 0) { targetVenue = v; break; }
+    }
 
     // ── a. Cooldown check ──────────────────────────────────────────────────
     const cooldownId = `${persona.id}_${targetVenue.id}`;
@@ -2246,7 +2273,12 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
     // ── c. Real user activity — adjust reply probability ──────────────────
     const isPeakWindow = activityWindow.window === 'peak_night' || activityWindow.window === 'mid_week_night';
     const realUserActive = await hasRecentRealUserActivity(targetVenue.id, REAL_USER_WINDOW_MIN);
-    const replyChance = isPeakWindow ? (Math.random() * 0.2 + 0.7) : (realUserActive ? 0.70 : 0.30);
+    let replyChance = isPeakWindow ? (Math.random() * 0.2 + 0.7) : (realUserActive ? 0.70 : 0.30);
+    // Quiet venues chat less — keep the chatter where the crowd is
+    const targetCrowdTier = getVenueCrowdTier(targetVenue, allVenues, nowMs);
+    if (targetCrowdTier === 'low' && !realUserActive) {
+      replyChance *= 0.5;
+    }
     if (Math.random() > replyChance) {
       console.log(`[Persona] @${persona.username} rolled below ${replyChance * 100}% chance for ${targetVenue.name}. Skipping.`);
       continue;
@@ -2338,6 +2370,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
         history: last5Messages,
         daypart: dayAndTime,
         tier: venueTier,
+        crowdLevel: CROWD_LEVEL_BY_TIER[targetCrowdTier],
         role: role,
         stance: stance,
         location: location,

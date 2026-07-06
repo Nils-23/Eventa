@@ -47,12 +47,20 @@ function moveLocation(currentLat: number, currentLon: number, centerLat: number,
   return { latitude, longitude };
 }
 
-function getVenueHash(id: string): number {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = id.charCodeAt(i) + ((hash << 5) - hash);
+// Seeded per-(venue, 3h-slot) random draw — same scheme as LiveVenuesContext
+// and functions/index.js, so every surface rotates hot venues in sync.
+const HOT_ROTATION_SLOT_MS = 3 * 60 * 60 * 1000;
+
+function seededUnitRandom(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h << 5) - h + str.charCodeAt(i);
+    h |= 0;
   }
-  return Math.abs(hash);
+  h = Math.imul(h ^ (h >>> 16), 2246822507);
+  h = Math.imul(h ^ (h >>> 13), 3266489909);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
 }
 
 // Automatic Event Strength
@@ -271,9 +279,11 @@ export const useSimulationEngine = () => {
       const profile = getProfile(v);
       const baseFactor = getStableBaseFactor(v.id, profile.popularityPrior);
 
-      // Slow 8h rotation so the "hot" venue of the moment shifts through the week (±15%)
-      const cycleTime = (nowMs / (8 * 60 * 60 * 1000)) * 2 * Math.PI;
-      const rotation = 1 + 0.15 * Math.sin(cycleTime + getVenueHash(v.id));
+      // Random per-3h-slot rotation (0.5x–1.7x): strong enough to hand the
+      // "hot venue" crown to a different venue each slot, instead of the
+      // heavy-tailed base factor keeping one leader hot all night.
+      const rotationSlot = Math.floor(nowMs / HOT_ROTATION_SLOT_MS);
+      const rotation = 0.5 + 1.2 * seededUnitRandom(`${v.id}|hot|${rotationSlot}`);
 
       // Real activity signal: stories posted at this venue draw a modest extra crowd
       const recentStoriesCount = rawStories.filter(s => s.venue_id === v.id).length;

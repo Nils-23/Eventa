@@ -173,6 +173,32 @@ export function getDefaultCapacity(type?: 'Club' | 'Bar' | 'Activity' | 'Event')
   }
 }
 
+// ── Rotating hot-venue ranking ────────────────────────────────────────────
+// Mirrors functions/index.js exactly: which venue is "hot" reshuffles every
+// 3h slot via a seeded random draw per (venue, slot). Deterministic, so the
+// client and cloud functions always agree on the same hot venue, but the
+// winner rotates slot to slot instead of one venue staying hot all night.
+const HOT_ROTATION_SLOT_MS = 3 * 60 * 60 * 1000;
+
+function seededUnitRandom(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h << 5) - h + str.charCodeAt(i);
+    h |= 0;
+  }
+  h = Math.imul(h ^ (h >>> 16), 2246822507);
+  h = Math.imul(h ^ (h >>> 13), 3266489909);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+export function getRotatingHotScore(venue: RawVenue, nowMs: number = Date.now()): number {
+  const slot = Math.floor(nowMs / HOT_ROTATION_SLOT_MS);
+  const base = venue.simPopularityScore !== undefined ? venue.simPopularityScore : 0.5;
+  const roll = seededUnitRandom(`${venue.id}|hot|${slot}`);
+  return 0.3 * base + 0.7 * roll;
+}
+
 export function getDynamicTargetCount(venue: RawVenue, allVenues?: RawVenue[]): number {
   const now = new Date();
   const nairobiParts = new Intl.DateTimeFormat('en-US', {
@@ -201,11 +227,9 @@ export function getDynamicTargetCount(venue: RawVenue, allVenues?: RawVenue[]): 
   if (allVenues && Array.isArray(allVenues)) {
     const categoryVenues = allVenues.filter(v => v.type === venue.type);
     if (categoryVenues.length > 0) {
-      const sorted = [...categoryVenues].sort((a, b) => {
-        const scoreA = a.simPopularityScore !== undefined ? a.simPopularityScore : 0.5;
-        const scoreB = b.simPopularityScore !== undefined ? b.simPopularityScore : 0.5;
-        return scoreB - scoreA;
-      });
+      const sorted = [...categoryVenues].sort(
+        (a, b) => getRotatingHotScore(b) - getRotatingHotScore(a)
+      );
       const rankIndex = sorted.findIndex(v => v.id === venue.id);
       if (rankIndex !== -1) {
         const percentile = rankIndex / sorted.length;

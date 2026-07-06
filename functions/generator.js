@@ -491,6 +491,20 @@ async function generateMessage(context) {
     ? `Do NOT use any emoji this time.\n`
     : `No emoji this time.\n`;
 
+  // Ground the message in how busy the venue currently looks in the app,
+  // so chat energy matches the crowd count users see on the map.
+  let crowdInstruction = '';
+  if (context.crowdLevel === 'packed') {
+    crowdInstruction = `\nCROWD RIGHT NOW: ${venueName} is PACKED — one of the busiest spots in town tonight. ` +
+      `Your message can ride that energy (full dance floor, queue outside, hard to move). NEVER describe it as quiet or dead.\n`;
+  } else if (context.crowdLevel === 'busy') {
+    crowdInstruction = `\nCROWD RIGHT NOW: decent crowd at ${venueName}, steadily filling up. ` +
+      `Good vibe but not madness — do NOT describe it as either packed wall-to-wall or empty.\n`;
+  } else if (context.crowdLevel === 'quiet') {
+    crowdInstruction = `\nCROWD RIGHT NOW: ${venueName} is still quiet — only a few people in. ` +
+      `Keep the energy lowkey: early scouting, wondering who else is coming, waiting for it to fill up. Do NOT describe a packed party.\n`;
+  }
+
   let prompt = '';
   const personaName = persona.name || 'EventGoer';
   const personaUsername = persona.username || 'EventGoer';
@@ -582,6 +596,7 @@ async function generateMessage(context) {
       RULES +
       langInstruction +
       emojiInstruction +
+      crowdInstruction +
       relationshipInstruction +
       intentInstruction +
       topicNegationInstruction +
@@ -598,6 +613,7 @@ async function generateMessage(context) {
       RULES +
       langInstruction +
       emojiInstruction +
+      crowdInstruction +
       relationshipInstruction +
       scenarioInstruction +
       `\nIt is ${dayAndTime}. @${cleanSenderName} just said directly to you: "${senderMsg}".\n` +
