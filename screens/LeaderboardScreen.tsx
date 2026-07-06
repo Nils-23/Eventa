@@ -348,18 +348,7 @@ export const LeaderboardScreen = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Top reward promo card */}
-      <View style={styles.promoCard}>
-        <View style={styles.promoIconWrap}>
-          <Wine color="#FFD700" size={26} />
-        </View>
-        <View style={styles.promoContent}>
-          <Text style={styles.promoTitle}>Monthly Legend Prize</Text>
-          <Text style={styles.promoDesc}>
-            Finish at Rank #1 this month to win a premium bottle 🍾 of your choice (Hennessy, Jameson, or Martell).
-          </Text>
-        </View>
-      </View>
+
 
       {loading ? (
         <View style={styles.centerContainer}>
@@ -547,40 +536,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  promoCard: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 215, 0, 0.08)',
-    borderColor: 'rgba(255, 215, 0, 0.2)',
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
-    marginHorizontal: 24,
-    marginBottom: 20,
-    alignItems: 'center',
-    gap: 16,
-  },
-  promoIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255, 215, 0, 0.12)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  promoContent: {
-    flex: 1,
-  },
-  promoTitle: {
-    color: '#FFD700',
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  promoDesc: {
-    color: '#CCCCCC',
-    fontSize: 12,
-    lineHeight: 18,
-  },
+
   list: {
     paddingHorizontal: 24,
     paddingBottom: 40,

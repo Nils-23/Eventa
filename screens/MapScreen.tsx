@@ -3,7 +3,7 @@ import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform, AppState, Animated, PanResponder } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Heatmap } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, X, Flag, MessageSquare, Users, Navigation as NavigationIcon, TrendingUp, TrendingDown } from 'lucide-react-native';
+import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, Flag, MessageSquare, Users, Navigation as NavigationIcon, TrendingUp, TrendingDown } from 'lucide-react-native';
 import { theme } from '../config/theme';
 import { createReport } from '../services/reportService';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
@@ -949,13 +949,6 @@ export const MapScreen = () => {
             >
               <Flag color="#FFF" size={16} />
             </TouchableOpacity>
-            {/* Close Button overlaying the image */}
-            <TouchableOpacity
-              style={styles.closeCardButtonOverlay}
-              onPress={() => setSelectedMapVenue(null)}
-            >
-              <X color="#FFF" size={18} />
-            </TouchableOpacity>
           </View>
 
           <View style={styles.cardContent}>
@@ -1248,22 +1241,10 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  closeCardButtonOverlay: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    zIndex: 2,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   reportCardButtonOverlay: {
     position: 'absolute',
     top: 12,
-    right: 52,
+    right: 12,
     zIndex: 2,
     width: 32,
     height: 32,
