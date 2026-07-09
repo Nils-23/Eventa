@@ -204,14 +204,24 @@ export interface ProfilableVenue {
   expirationDate?: number;
 }
 
+// A text-matched profile may not contradict the venue's declared type: a Bar
+// whose description says "live music" must stay a Bar (cap 50, quiet Tuesdays),
+// not become a concert venue (cap 150, packed all week).
+function profileMatchesType(profileKey: string, venueType?: string): boolean {
+  const t = (venueType || '').toUpperCase();
+  if (!TYPE_DEFAULTS[t]) return true; // no/unknown declared type — trust the text
+  return PROFILES[profileKey].baseType.toUpperCase() === t;
+}
+
 /** Infer the profile key for a venue from stored field → keywords → coarse type. */
 export function inferProfileKey(venue: ProfilableVenue): string {
-  if (venue.venueProfile && PROFILES[venue.venueProfile]) {
+  if (venue.venueProfile && PROFILES[venue.venueProfile] &&
+      profileMatchesType(venue.venueProfile, venue.type)) {
     return venue.venueProfile;
   }
   const text = `${venue.name || ''} ${venue.description || ''}`.toLowerCase();
   for (const { pattern, profile } of MATCHERS) {
-    if (pattern.test(text)) return profile;
+    if (pattern.test(text) && profileMatchesType(profile, venue.type)) return profile;
   }
   const typeDefault = TYPE_DEFAULTS[(venue.type || '').toUpperCase()];
   return typeDefault || 'generic_unknown';

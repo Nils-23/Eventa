@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
-  ActivityIndicator, FlatList,
+  ActivityIndicator, FlatList, ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, BadgeCheck, Wine, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react-native';
@@ -25,9 +25,12 @@ const BOTTLE_META: Record<BottleId, { label: string; color: string; emoji: strin
   bottle_martell:  { label: 'Martell',  color: '#6AAFFF', emoji: '🍾' },
 };
 
+type UserCategory = 'all' | 'certified' | 'legends' | 'suspended' | 'personas';
+
 export const AdminUsersScreen = () => {
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState('');
+  const [category, setCategory] = useState<UserCategory>('all');
   const [users, setUsers] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   // Track which user rows have the bottle panel expanded
@@ -121,9 +124,36 @@ export const AdminUsersScreen = () => {
     });
   };
 
+  const matchesCategory = (u: any, cat: UserCategory): boolean => {
+    switch (cat) {
+      case 'certified': return u.isPersona !== true && !!u.unlockedAchievements?.includes('cert_1');
+      case 'legends': return u.isPersona !== true && BOTTLE_IDS.some(b => u.unlockedBottles?.includes(b));
+      case 'suspended': return u.isPersona !== true && u.suspended === true;
+      case 'personas': return u.isPersona === true;
+      default: return u.isPersona !== true;
+    }
+  };
+
+  const categoryCounts: Record<UserCategory, number> = {
+    all: users.filter(u => matchesCategory(u, 'all')).length,
+    certified: users.filter(u => matchesCategory(u, 'certified')).length,
+    legends: users.filter(u => matchesCategory(u, 'legends')).length,
+    suspended: users.filter(u => matchesCategory(u, 'suspended')).length,
+    personas: users.filter(u => matchesCategory(u, 'personas')).length,
+  };
+
   const filteredUsers = users.filter(u =>
-    u.username?.toLowerCase().includes(searchQuery.toLowerCase())
+    u.username?.toLowerCase().includes(searchQuery.toLowerCase()) &&
+    matchesCategory(u, category)
   );
+
+  const CATEGORY_TABS: { key: UserCategory; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'certified', label: 'Certified' },
+    { key: 'legends', label: 'Legends' },
+    { key: 'suspended', label: 'Suspended' },
+    { key: 'personas', label: 'Personas' },
+  ];
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -146,6 +176,32 @@ export const AdminUsersScreen = () => {
             autoCapitalize="none"
           />
         </View>
+
+        {/* Category filter chips */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.categoryScroll}
+          contentContainerStyle={styles.categoryRow}
+        >
+          {CATEGORY_TABS.map(({ key, label }) => {
+            const isActive = category === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                style={[styles.categoryChip, isActive && styles.categoryChipActive]}
+                onPress={() => setCategory(key)}
+              >
+                <Text
+                  style={[styles.categoryChipText, isActive && styles.categoryChipTextActive]}
+                  numberOfLines={1}
+                >
+                  {label} ({categoryCounts[key]})
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
         {loadingUsers ? (
           <ActivityIndicator size="large" color="#FFD700" style={{ marginTop: 40 }} />
@@ -327,6 +383,38 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#333',
+  },
+  categoryScroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+    marginBottom: 16,
+  },
+  categoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  categoryChip: {
+    justifyContent: 'center',
+    height: 32,
+    flexShrink: 0,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  categoryChipActive: {
+    backgroundColor: 'rgba(255, 215, 0, 0.12)',
+    borderColor: '#FFD700',
+  },
+  categoryChipText: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  categoryChipTextActive: {
+    color: '#FFD700',
   },
 
   // ── User card ──────────────────────────────────────────────────────────────

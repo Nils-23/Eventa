@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, Image, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, Plus, Save, X, UploadCloud, Trash2, Calendar, Clock, Play, Pause, Film, Key, Sparkles, Check } from 'lucide-react-native';
+import { ArrowLeft, Users, Plus, Save, X, UploadCloud, Trash2, Calendar, Clock, Play, Pause, Film, Key, Sparkles, Check, Pencil } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useLiveVenues, LiveVenue as Venue } from '../hooks/useLiveVenues';
 import { firestore, storage, functions } from '../services/firebase';
@@ -18,6 +18,8 @@ export const AdminSimulationScreen = () => {
   const navigation = useNavigation();
   const { venues, scheduledVenues = [], isLoading } = useLiveVenues();
   const [isModalVisible, setIsModalVisible] = useState(false);
+  const [editingVenue, setEditingVenue] = useState<Venue | null>(null);
+  const [activeTab, setActiveTab] = useState<'venues' | 'upcoming' | 'stories' | 'settings'>('venues');
   const [editingCounts, setEditingCounts] = useState<Record<string, string>>({});
   const [editingCapacities, setEditingCapacities] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,6 +28,7 @@ export const AdminSimulationScreen = () => {
   // Anthropic API Key States
   const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [isAnthropicKeySaved, setIsAnthropicKeySaved] = useState(false);
+  const [personaLeaderboard, setPersonaLeaderboard] = useState(true);
 
   useEffect(() => {
     const docRef = doc(firestore, 'settings', 'simulation');
@@ -39,12 +42,31 @@ export const AdminSimulationScreen = () => {
           setAnthropicApiKey('');
           setIsAnthropicKeySaved(false);
         }
+        setPersonaLeaderboard(data.personaLeaderboard !== false);
       }
     }, (error) => {
       console.warn("Failed to listen to simulation settings:", error);
     });
     return () => unsubscribe();
   }, []);
+
+  const handleTogglePersonaLeaderboard = async (value: boolean) => {
+    try {
+      await setDoc(doc(firestore, 'settings', 'simulation'), {
+        personaLeaderboard: value
+      }, { merge: true });
+      Toast.show({
+        type: 'success',
+        text1: value ? 'Personas on Leaderboard' : 'Personas Hidden',
+        text2: value
+          ? 'Personas will keep earning monthly points.'
+          : 'Personas stop earning points from the next cycle.'
+      });
+    } catch (err) {
+      console.error(err);
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to update persona leaderboard setting.' });
+    }
+  };
 
   const handleSaveAnthropicKey = async () => {
     if (!anthropicApiKey.trim()) {
@@ -143,6 +165,10 @@ export const AdminSimulationScreen = () => {
   const [newVenueType, setNewVenueType] = useState<'Club' | 'Bar' | 'Activity' | 'Event'>('Club');
   const [newVenueExpiration, setNewVenueExpiration] = useState('');
   const [newVenueStartDate, setNewVenueStartDate] = useState('');
+  const [newVenueStartTime, setNewVenueStartTime] = useState('');
+  const [newVenueEndTime, setNewVenueEndTime] = useState('');
+  const [newVenuePrice, setNewVenuePrice] = useState('');
+  const [newVenueTicketLink, setNewVenueTicketLink] = useState('');
   const [newVenueAddress, setNewVenueAddress] = useState('');
   const [newVenueGoogleImageUrl, setNewVenueGoogleImageUrl] = useState('');
   const [customImageUri, setCustomImageUri] = useState<string | null>(null);
@@ -309,6 +335,87 @@ export const AdminSimulationScreen = () => {
     return getDownloadURL(uploadTask.ref);
   };
 
+  const resetVenueForm = () => {
+    setIsModalVisible(false);
+    setEditingVenue(null);
+    setNewVenueName('');
+    setNewEventName('');
+    setNewVenueLat('');
+    setNewVenueLng('');
+    setNewVenueDesc('');
+    setNewVenueType('Club');
+    setNewVenueExpiration('');
+    setNewVenueStartDate('');
+    setNewVenueStartTime('');
+    setNewVenueEndTime('');
+    setNewVenuePrice('');
+    setNewVenueTicketLink('');
+    setNewVenueAddress('');
+    setNewVenueGoogleImageUrl('');
+    setCustomImageUri(null);
+    setNewVenueMaxCapacity('');
+    setSuggestions([]);
+    setShowManualCoords(false);
+  };
+
+  const timestampToDateString = (ts?: number) => {
+    if (!ts) return '';
+    // Nairobi-local date, so a 1am event doesn't display as the previous day
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date(ts));
+  };
+
+  const timestampToTimeString = (ts?: number) => {
+    if (!ts) return '';
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Nairobi', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(ts));
+  };
+
+  const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+  // "1930" → "19:30" while typing
+  const formatTimeInput = (text: string) => {
+    const digits = text.replace(/[^0-9]/g, '');
+    return digits.length >= 3 ? `${digits.slice(0, 2)}:${digits.slice(2, 4)}` : digits;
+  };
+
+  // Combine a YYYY-MM-DD date and an HH:MM time into a Nairobi-local timestamp.
+  // The event page displays these back in Nairobi time, so what the admin
+  // types is exactly what users see.
+  const combineDateTime = (dateStr: string, timeStr: string, fallbackTime: string) => {
+    const t = TIME_REGEX.test(timeStr) ? timeStr : fallbackTime;
+    return new Date(`${dateStr}T${t}:00+03:00`);
+  };
+
+  const handleOpenEdit = (venue: Venue) => {
+    setEditingVenue(venue);
+    if (venue.type === 'Event') {
+      // Events store the event name in `name` and the physical venue name in `address`
+      setNewEventName(venue.name);
+      setNewVenueName(venue.address || '');
+    } else {
+      setNewEventName('');
+      setNewVenueName(venue.name);
+    }
+    setNewVenueAddress(venue.address || '');
+    setNewVenueType(venue.type || 'Club');
+    setNewVenueLat(String(venue.latitude ?? ''));
+    setNewVenueLng(String(venue.longitude ?? ''));
+    setNewVenueDesc(venue.description || '');
+    setNewVenueMaxCapacity(venue.maxCapacity ? String(venue.maxCapacity) : '');
+    setNewVenueStartDate(timestampToDateString(venue.startDate));
+    setNewVenueExpiration(timestampToDateString(venue.expirationDate));
+    setNewVenueStartTime(venue.type === 'Event' ? timestampToTimeString(venue.startDate) : '');
+    setNewVenueEndTime(venue.type === 'Event' ? timestampToTimeString(venue.expirationDate) : '');
+    setNewVenuePrice(venue.price || '');
+    setNewVenueTicketLink(venue.ticketLink || '');
+    setNewVenueGoogleImageUrl(venue.googleImageUrl || '');
+    setCustomImageUri(venue.customImageUrl || null);
+    setSuggestions([]);
+    setShowManualCoords(false);
+    setIsModalVisible(true);
+  };
+
   const handleCreateVenue = async () => {
     if (newVenueType === 'Event' && !newEventName.trim()) {
       Alert.alert('Missing Event Name', 'Please fill in the event name.');
@@ -330,9 +437,29 @@ export const AdminSimulationScreen = () => {
       return;
     }
 
+    // Times are optional; when provided they must be valid, and they anchor
+    // the exact times users see on the event page (Nairobi time).
+    if (newVenueType === 'Event') {
+      if (newVenueStartTime && !TIME_REGEX.test(newVenueStartTime)) {
+        Alert.alert('Invalid Start Time', 'Use 24-hour format (HH:MM), e.g. 19:00.');
+        return;
+      }
+      if (newVenueEndTime && !TIME_REGEX.test(newVenueEndTime)) {
+        Alert.alert('Invalid End Time', 'Use 24-hour format (HH:MM), e.g. 23:00.');
+        return;
+      }
+    }
+
     let expirationDate = null;
     if (newVenueExpiration) {
-      const parsedDate = new Date(newVenueExpiration);
+      // Events end at the entered end time; anything without a time stays
+      // visible through the end of its final day.
+      const endFallback = '23:59';
+      const parsedDate = combineDateTime(
+        newVenueExpiration,
+        newVenueType === 'Event' ? newVenueEndTime : '',
+        endFallback
+      );
       if (isNaN(parsedDate.getTime())) {
         Alert.alert('Invalid Date', 'Please use YYYY-MM-DD format.');
         return;
@@ -342,7 +469,14 @@ export const AdminSimulationScreen = () => {
 
     let startDate = null;
     if ((newVenueType === 'Activity' || newVenueType === 'Event') && newVenueStartDate) {
-      const parsedDate = new Date(newVenueStartDate);
+      // Events without an entered start time default to 19:00 — never a
+      // nonsense 3:00 AM on the event page.
+      const startFallback = newVenueType === 'Event' ? '19:00' : '00:00';
+      const parsedDate = combineDateTime(
+        newVenueStartDate,
+        newVenueType === 'Event' ? newVenueStartTime : '',
+        startFallback
+      );
       if (isNaN(parsedDate.getTime())) {
         Alert.alert('Invalid Date', 'Please use YYYY-MM-DD format for Start Date.');
         return;
@@ -350,7 +484,7 @@ export const AdminSimulationScreen = () => {
       startDate = parsedDate.getTime();
 
       if (expirationDate && startDate > expirationDate) {
-        Alert.alert('Invalid Dates', 'Start Date cannot be after Expiration Date.');
+        Alert.alert('Invalid Dates', 'Start Date/Time cannot be after the End Date/Time.');
         return;
       }
     }
@@ -366,9 +500,10 @@ export const AdminSimulationScreen = () => {
     setIsUploadingCustomImage(true);
 
     try {
-      const newVenueId = `venue_${Date.now()}`;
-      const venueRef = doc(firestore, 'venues', newVenueId);
-      
+      const isEditing = !!editingVenue;
+      const venueId = isEditing ? editingVenue.id : `venue_${Date.now()}`;
+      const venueRef = doc(firestore, 'venues', venueId);
+
       const parsedCapacity = parseInt(newVenueMaxCapacity, 10);
       const cap = (!isNaN(parsedCapacity) && parsedCapacity > 0) ? parsedCapacity : getDefaultCapacity(newVenueType);
 
@@ -380,8 +515,6 @@ export const AdminSimulationScreen = () => {
         longitude: lng,
         description: newVenueDesc.trim(),
         type: newVenueType,
-        simulatedUsersCount: 0,
-        isOverride: false,
         maxCapacity: cap
       };
 
@@ -389,52 +522,71 @@ export const AdminSimulationScreen = () => {
         venueData.address = newVenueName.trim();
       } else if (newVenueAddress) {
         venueData.address = newVenueAddress.trim();
+      } else if (isEditing) {
+        venueData.address = null;
       }
-      
+
       if (newVenueGoogleImageUrl) {
         venueData.googleImageUrl = newVenueGoogleImageUrl;
       }
 
-      // If a custom image was selected by the admin, upload it to storage
+      // Custom thumbnail: a non-http URI is a freshly picked local file that needs uploading;
+      // an http(s) URI is the already-stored image and can be kept as-is.
       if (customImageUri) {
-        const downloadUrl = await uploadVenueThumbnail(customImageUri, newVenueId);
-        venueData.customImageUrl = downloadUrl;
+        if (customImageUri.startsWith('http')) {
+          venueData.customImageUrl = customImageUri;
+        } else {
+          const downloadUrl = await uploadVenueThumbnail(customImageUri, venueId);
+          venueData.customImageUrl = downloadUrl;
+        }
+      } else if (isEditing && editingVenue.customImageUrl) {
+        venueData.customImageUrl = null;
       }
-      
+
       if (expirationDate) {
         venueData.expirationDate = expirationDate;
+      } else if (isEditing && editingVenue.expirationDate) {
+        venueData.expirationDate = null;
       }
 
       if (startDate) {
         venueData.startDate = startDate;
+      } else if (isEditing && editingVenue.startDate) {
+        venueData.startDate = null;
       }
 
-      await setDoc(venueRef, venueData);
+      // Ticket info (shown on the event page)
+      if (newVenuePrice.trim()) {
+        venueData.price = newVenuePrice.trim();
+      } else if (isEditing && editingVenue.price) {
+        venueData.price = null;
+      }
+      if (newVenueTicketLink.trim()) {
+        venueData.ticketLink = newVenueTicketLink.trim();
+      } else if (isEditing && editingVenue.ticketLink) {
+        venueData.ticketLink = null;
+      }
 
-      Toast.show({ 
-        type: 'success', 
-        text1: newVenueType === 'Event' ? 'Event Created' : 'Venue Created', 
-        text2: `${addedName} has been added.` 
+      if (isEditing) {
+        await updateDoc(venueRef, venueData);
+      } else {
+        venueData.simulatedUsersCount = 0;
+        venueData.isOverride = false;
+        await setDoc(venueRef, venueData);
+      }
+
+      Toast.show({
+        type: 'success',
+        text1: isEditing
+          ? (newVenueType === 'Event' ? 'Event Updated' : 'Venue Updated')
+          : (newVenueType === 'Event' ? 'Event Created' : 'Venue Created'),
+        text2: isEditing ? `${addedName} has been saved.` : `${addedName} has been added.`
       });
-      setIsModalVisible(false);
-      setNewVenueName('');
-      setNewEventName('');
-      setNewVenueLat('');
-      setNewVenueLng('');
-      setNewVenueDesc('');
-      setNewVenueType('Club');
-      setNewVenueExpiration('');
-      setNewVenueStartDate('');
-      setNewVenueAddress('');
-      setNewVenueGoogleImageUrl('');
-      setCustomImageUri(null);
-      setNewVenueMaxCapacity('');
-      setSuggestions([]);
-      setShowManualCoords(false);
+      resetVenueForm();
 
     } catch (error: any) {
-      console.error('Error creating venue:', error);
-      Alert.alert('Error', `Failed to create new venue: ${error.message || error}`);
+      console.error('Error saving venue:', error);
+      Alert.alert('Error', `Failed to save venue: ${error.message || error}`);
     } finally {
       setIsUploadingCustomImage(false);
     }
@@ -645,7 +797,41 @@ export const AdminSimulationScreen = () => {
         </TouchableOpacity>
       </View>
 
+      {/* Category Tabs */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabBarScroll}
+        contentContainerStyle={styles.tabBar}
+      >
+        {([
+          { key: 'venues', label: 'Venues', icon: Users, count: venues.length },
+          { key: 'upcoming', label: 'Upcoming', icon: Calendar, count: scheduledVenues.length },
+          { key: 'stories', label: 'Stories', icon: Clock, count: recurringStories.length },
+          { key: 'settings', label: 'Settings', icon: Key, count: null },
+        ] as const).map(({ key, label, icon: TabIcon, count }) => {
+          const isActive = activeTab === key;
+          return (
+            <TouchableOpacity
+              key={key}
+              style={[styles.tabPill, isActive && styles.tabPillActive]}
+              onPress={() => setActiveTab(key)}
+            >
+              <TabIcon color={isActive ? '#FF00CC' : '#888'} size={14} />
+              <Text
+                style={[styles.tabPillText, isActive && styles.tabPillTextActive]}
+                numberOfLines={1}
+              >
+                {label}{count !== null && count > 0 ? ` (${count})` : ''}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
       <ScrollView contentContainerStyle={styles.content}>
+        {activeTab === 'venues' && (
+        <>
         <View style={styles.sectionHeader}>
           <Users color="#FF00CC" size={20} />
           <Text style={styles.sectionTitle}>Simulated Users Control</Text>
@@ -653,40 +839,6 @@ export const AdminSimulationScreen = () => {
         <Text style={styles.sectionSubtitle}>
           Adjust the number of simulated users for each venue. Changes will reflect in real-time.
         </Text>
-
-        {/* Anthropic API Key Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Key color="#00FFCC" size={18} />
-            <Text style={styles.cardTitle}>Anthropic API Key</Text>
-          </View>
-          <Text style={styles.cardDesc}>
-            Configure the Anthropic API Key used for automatic persona interactions and curator cleaning jobs.
-          </Text>
-
-          <View style={styles.keyInputRow}>
-            <TextInput
-              style={[styles.keyInputText, { flex: 1, marginBottom: 0 }]}
-              placeholder="Paste Anthropic API Key (sk-ant-)..."
-              placeholderTextColor="#666"
-              secureTextEntry={isAnthropicKeySaved}
-              value={anthropicApiKey}
-              onChangeText={setAnthropicApiKey}
-              editable={!isAnthropicKeySaved}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            {isAnthropicKeySaved ? (
-              <TouchableOpacity style={styles.clearKeyBtn} onPress={handleClearAnthropicKey}>
-                <Text style={styles.clearKeyBtnText}>Clear</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.saveKeyBtn} onPress={handleSaveAnthropicKey}>
-                <Text style={styles.saveKeyBtnText}>Save</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
 
         {/* Search Bar */}
         <View style={styles.searchContainer}>
@@ -720,14 +872,22 @@ export const AdminSimulationScreen = () => {
                     <Text style={styles.venueType}>Type: {venue.type}</Text>
                   )}
                 </View>
-                <TouchableOpacity 
-                  style={styles.deleteButton}
-                  onPress={() => handleDeleteVenue(venue)}
-                >
-                  <Trash2 color="#FFF" size={16} />
-                </TouchableOpacity>
+                <View style={styles.venueHeaderActions}>
+                  <TouchableOpacity
+                    style={styles.editButton}
+                    onPress={() => handleOpenEdit(venue)}
+                  >
+                    <Pencil color="#FFF" size={16} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.deleteButton}
+                    onPress={() => handleDeleteVenue(venue)}
+                  >
+                    <Trash2 color="#FFF" size={16} />
+                  </TouchableOpacity>
+                </View>
               </View>
-              
+
               <View style={styles.venueActionRow}>
                 <View style={{ flex: 1, gap: 8, minWidth: 180 }}>
                   <View style={styles.countModifier}>
@@ -808,15 +968,13 @@ export const AdminSimulationScreen = () => {
           ))
         )}
 
-        {/* Divider */}
-        {filteredScheduledVenues.length > 0 && (
-          <View style={styles.sectionDivider} />
+        </>
         )}
 
-        {/* Scheduled Future Events Section */}
-        {filteredScheduledVenues.length > 0 && (
+        {/* Scheduled Future Events Tab */}
+        {activeTab === 'upcoming' && (
           <>
-            <View style={[styles.sectionHeader, { marginTop: 24 }]}>
+            <View style={styles.sectionHeader}>
               <Calendar color="#00FFCC" size={20} />
               <Text style={[styles.sectionTitle, { color: '#00FFCC' }]}>Scheduled Upcoming Events</Text>
             </View>
@@ -824,11 +982,25 @@ export const AdminSimulationScreen = () => {
               These events are scheduled for a future date and are currently hidden from public maps/lists.
             </Text>
 
-            {filteredScheduledVenues.map(venue => {
+            <View style={styles.searchContainer}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search upcoming events..."
+                placeholderTextColor="#888"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoCapitalize="none"
+              />
+            </View>
+
+            {filteredScheduledVenues.length === 0 ? (
+              <Text style={styles.noVenuesText}>No upcoming scheduled events.</Text>
+            ) : (
+              filteredScheduledVenues.map(venue => {
               const startDateStr = venue.startDate ? new Date(venue.startDate).toLocaleDateString() : 'N/A';
               const endDateStr = venue.expirationDate ? new Date(venue.expirationDate).toLocaleDateString() : 'N/A';
               return (
-                <View key={venue.id} style={styles.venueCard}>
+                <View key={venue.id} style={[styles.venueCard, { flexDirection: 'row', alignItems: 'center' }]}>
                   <View style={styles.venueInfo}>
                     <Text style={styles.venueName}>{venue.name}</Text>
                     <Text style={styles.scheduledDateText}>
@@ -841,9 +1013,15 @@ export const AdminSimulationScreen = () => {
                       <Text style={styles.venueType}>Type: {venue.type}</Text>
                     )}
                   </View>
-                  
+
                   <View style={styles.venueControls}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
+                      style={styles.editButton}
+                      onPress={() => handleOpenEdit(venue)}
+                    >
+                      <Pencil color="#FFF" size={16} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
                       style={styles.deleteButton}
                       onPress={() => handleDeleteVenue(venue)}
                     >
@@ -852,14 +1030,14 @@ export const AdminSimulationScreen = () => {
                   </View>
                 </View>
               );
-            })}
+              })
+            )}
           </>
         )}
 
-        {/* Divider */}
-        <View style={styles.sectionDivider} />
-
-        {/* Recurring Stories Schedules Section */}
+        {/* Recurring Stories Schedules Tab */}
+        {activeTab === 'stories' && (
+        <>
         <View style={styles.sectionHeader}>
           <Clock color="#A855F7" size={20} />
           <Text style={[styles.sectionTitle, { color: '#A855F7' }]}>Recurring Stories Schedules</Text>
@@ -934,13 +1112,81 @@ export const AdminSimulationScreen = () => {
             );
           })
         )}
+        </>
+        )}
+
+        {/* Settings Tab */}
+        {activeTab === 'settings' && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Key color="#00FFCC" size={20} />
+              <Text style={[styles.sectionTitle, { color: '#00FFCC' }]}>Integrations & Settings</Text>
+            </View>
+            <Text style={styles.sectionSubtitle}>
+              Platform-level configuration for simulation and AI features.
+            </Text>
+
+            {/* Anthropic API Key Card */}
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Key color="#00FFCC" size={18} />
+                <Text style={styles.cardTitle}>Anthropic API Key</Text>
+              </View>
+              <Text style={styles.cardDesc}>
+                Configure the Anthropic API Key used for automatic persona interactions and curator cleaning jobs.
+              </Text>
+
+              <View style={styles.keyInputRow}>
+                <TextInput
+                  style={[styles.keyInputText, { flex: 1, marginBottom: 0 }]}
+                  placeholder="Paste Anthropic API Key (sk-ant-)..."
+                  placeholderTextColor="#666"
+                  secureTextEntry={isAnthropicKeySaved}
+                  value={anthropicApiKey}
+                  onChangeText={setAnthropicApiKey}
+                  editable={!isAnthropicKeySaved}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {isAnthropicKeySaved ? (
+                  <TouchableOpacity style={styles.clearKeyBtn} onPress={handleClearAnthropicKey}>
+                    <Text style={styles.clearKeyBtnText}>Clear</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity style={styles.saveKeyBtn} onPress={handleSaveAnthropicKey}>
+                    <Text style={styles.saveKeyBtnText}>Save</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Persona Leaderboard Toggle */}
+            <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.cardHeader}>
+                  <Sparkles color="#FFD700" size={18} />
+                  <Text style={styles.cardTitle}>Personas on Leaderboard</Text>
+                </View>
+                <Text style={[styles.cardDesc, { marginBottom: 0 }]}>
+                  Personas earn capped monthly points (10 pts per venue per night) so the leaderboard always looks active. Active real users will pass them easily.
+                </Text>
+              </View>
+              <Switch
+                value={personaLeaderboard}
+                onValueChange={handleTogglePersonaLeaderboard}
+                trackColor={{ false: '#222', true: '#FFD700' }}
+                thumbColor={personaLeaderboard ? '#FFFFFF' : '#888'}
+              />
+            </View>
+          </>
+        )}
       </ScrollView>
 
       <Modal
         visible={isModalVisible}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => setIsModalVisible(false)}
+        onRequestClose={resetVenueForm}
         statusBarTranslucent={true}
       >
         <KeyboardAvoidingView
@@ -949,8 +1195,12 @@ export const AdminSimulationScreen = () => {
         >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add New Venue</Text>
-              <TouchableOpacity onPress={() => setIsModalVisible(false)}>
+              <Text style={styles.modalTitle}>
+                {editingVenue
+                  ? `Edit ${editingVenue.type === 'Event' ? 'Event' : 'Venue'}`
+                  : 'Add New Venue'}
+              </Text>
+              <TouchableOpacity onPress={resetVenueForm}>
                 <X color="#FFFFFF" size={24} />
               </TouchableOpacity>
             </View>
@@ -1073,6 +1323,65 @@ export const AdminSimulationScreen = () => {
                       clearable={newVenueType !== 'Event'}
                     />
                   </View>
+
+                  {newVenueType === 'Event' && (
+                    <>
+                      <View style={styles.rowFormGroup}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                          <Text style={styles.label}>Start Time (24h)</Text>
+                          <TextInput
+                            style={styles.input}
+                            placeholder="19:00"
+                            placeholderTextColor="#666"
+                            keyboardType="numeric"
+                            maxLength={5}
+                            value={newVenueStartTime}
+                            onChangeText={(t) => setNewVenueStartTime(formatTimeInput(t))}
+                          />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <Text style={styles.label}>End Time (24h)</Text>
+                          <TextInput
+                            style={styles.input}
+                            placeholder="23:00"
+                            placeholderTextColor="#666"
+                            keyboardType="numeric"
+                            maxLength={5}
+                            value={newVenueEndTime}
+                            onChangeText={(t) => setNewVenueEndTime(formatTimeInput(t))}
+                          />
+                        </View>
+                      </View>
+                      <Text style={[styles.helperText, { marginTop: -8, marginBottom: 16 }]}>
+                        Nairobi time — shown exactly like this on the event page. Defaults: 19:00 start, end of day.
+                      </Text>
+
+                      <View style={styles.formGroup}>
+                        <Text style={styles.label}>Ticket Price (Optional, shown on event page)</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="e.g. KSh 1,500 · Free entry · From KSh 500"
+                          placeholderTextColor="#666"
+                          value={newVenuePrice}
+                          onChangeText={setNewVenuePrice}
+                        />
+                      </View>
+
+                      <View style={styles.formGroup}>
+                        <Text style={styles.label}>Ticket Link (Optional, adds a BUY button)</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="https://..."
+                          placeholderTextColor="#666"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardType="url"
+                          value={newVenueTicketLink}
+                          onChangeText={setNewVenueTicketLink}
+                        />
+                      </View>
+                    </>
+                  )}
                 </>
               )}
 
@@ -1192,7 +1501,9 @@ export const AdminSimulationScreen = () => {
                 {isUploadingCustomImage ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.createButtonText}>Create Venue</Text>
+                  <Text style={styles.createButtonText}>
+                    {editingVenue ? 'Save Changes' : 'Create Venue'}
+                  </Text>
                 )}
               </TouchableOpacity>
             </ScrollView>
@@ -1408,6 +1719,56 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 24,
+  },
+  tabBarScroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2A2A',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  tabPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    height: 36,
+    flexShrink: 0,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  tabPillActive: {
+    backgroundColor: 'rgba(255, 0, 204, 0.12)',
+    borderColor: '#FF00CC',
+  },
+  tabPillText: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  tabPillTextActive: {
+    color: '#FF00CC',
+  },
+  venueHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  editButton: {
+    backgroundColor: '#4169E1',
+    padding: 8,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sectionHeader: {
     flexDirection: 'row',

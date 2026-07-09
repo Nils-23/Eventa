@@ -154,7 +154,17 @@ function areVenuesEqual(a: LiveVenue[], b: LiveVenue[]): boolean {
       va.latitude !== vb.latitude ||
       va.longitude !== vb.longitude ||
       va.ticketLink !== vb.ticketLink ||
-      va.price !== vb.price
+      va.price !== vb.price ||
+      va.description !== vb.description ||
+      va.address !== vb.address ||
+      va.type !== vb.type ||
+      va.maxCapacity !== vb.maxCapacity ||
+      va.simulatedUsersCount !== vb.simulatedUsersCount ||
+      va.isOverride !== vb.isOverride ||
+      va.startDate !== vb.startDate ||
+      va.expirationDate !== vb.expirationDate ||
+      va.customImageUrl !== vb.customImageUrl ||
+      va.googleImageUrl !== vb.googleImageUrl
     ) {
       return false;
     }

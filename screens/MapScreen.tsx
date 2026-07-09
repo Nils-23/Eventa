@@ -261,7 +261,10 @@ const INITIAL_CAMERA = {
     latitude: -1.286389,
     longitude: 36.817223,
   },
-  pitch: 30, // Slight tilt for 3D/2D hybrid perspective
+  // Pitch must stay 0: a tilted camera makes Google Maps render different tile
+  // zoom levels across the screen, and the heatmap's fixed pixel radius then
+  // draws the same venue's blob tiny near the bottom and wide past mid-screen.
+  pitch: 0,
   heading: 0,
   altitude: 12000,
   zoom: 12.2, // Wide city view
@@ -400,7 +403,7 @@ export const MapScreen = () => {
           longitude: selectedMapVenue.longitude,
         },
         zoom: 19.5,
-        pitch: 60,
+        pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
       }, { duration: 1000 });
     }
   }, [selectedMapVenue, isMapReady]);
@@ -457,7 +460,7 @@ export const MapScreen = () => {
               latitude: location.coords.latitude,
               longitude: location.coords.longitude,
             },
-            pitch: 30,
+            pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
             heading: location.coords.heading || 0,
             zoom: 12.2, // Wide city view showing hot zones
           }, { duration: 2000 });
@@ -498,7 +501,7 @@ export const MapScreen = () => {
           latitude: location.coords.latitude,
           longitude: location.coords.longitude,
         },
-        pitch: 45,
+        pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
         heading: location.coords.heading || 0,
         zoom: 16,
       }, { duration: 1500 });
@@ -819,7 +822,7 @@ export const MapScreen = () => {
         loadingEnabled={true}
         loadingBackgroundColor="#121212"
         loadingIndicatorColor="#00FFCC"
-        pitchEnabled={true}
+        pitchEnabled={false} // tilt gestures re-introduce the heatmap zoom-band artifact
         rotateEnabled={true}
         minZoomLevel={5}
         maxZoomLevel={20}
@@ -841,11 +844,15 @@ export const MapScreen = () => {
              unrelated parent re-renders (notifications, location, etc).
              Weights arrive pre-normalized to 0..1 (LiveVenuesContext), so the
              points array only changes when a venue's heat band actually moves.
-             Radius is a fixed screen-pixel size (Android caps at 50). */}
+             Radius must stay ≤ 50 on BOTH platforms: it's the documented max
+             for Google's heatmap tile layer, and oversizing it (was 90 on iOS)
+             makes each 512px tile ~6x slower to render — neighboring tiles
+             then finish at visibly different times, so a venue's heat blob
+             near the screen edge shows up cut in half along the tile seam. */}
         {showHeatmapOverlay && (
           <StableHeatmap
             points={heatPoints}
-            radius={Platform.OS === 'android' ? 50 : 90}
+            radius={50}
           />
         )}
         {/* Debug: expose the exact points feeding the heatmap (anchor excluded) */}
@@ -1085,7 +1092,7 @@ export const MapScreen = () => {
               longitude: venueObj.longitude,
             },
             zoom: 19.5,
-            pitch: 60,
+            pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
           }, { duration: 1000 });
         }}
       />

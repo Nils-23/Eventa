@@ -21,7 +21,6 @@ import { EventDetailScreen } from './screens/EventDetailScreen';
 import { useAuth } from './hooks/useAuth';
 
 import { useAppStore } from './hooks/useAppStore';
-import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { useReferralTracker } from './hooks/useReferralTracker';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LiveVenuesProvider } from './contexts/LiveVenuesContext';
@@ -39,8 +38,9 @@ export default function App() {
   // Bind Firebase auth listener to the app store
   useAuth();
 
-  // Start serverless background engines
-  useSimulationEngine();
+  // NOTE: crowd simulation moved server-side (functions/crowdSimulation.js,
+  // scheduled every 2 min) — no client engine anymore, so crowds no longer
+  // depend on an admin device keeping the app open.
 
   // Track creator referral installs on first open
   useReferralTracker();
