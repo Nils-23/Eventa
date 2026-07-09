@@ -299,9 +299,13 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
         // Check if user is actively engaged in chat (last interaction within 1 hour)
         const isEngaged = members[user.id] && (now - (members[user.id].lastInteractionTime || 0) < ONE_HOUR);
 
-        if (isEngaged) {
+        if (isPersonaMessage) {
           // Persona messages already notify engaged users inside runPersonaActivity — skip here to avoid doubles.
-          if (isPersonaMessage) continue;
+          // Non-engaged users should not receive push notifications for simulated persona banter.
+          continue;
+        }
+
+        if (isEngaged) {
           // Real user messages: engaged users get unlimited notifications (bypass all limits)
           await sendRateLimitedPushNotification(
             user.id,
@@ -979,7 +983,7 @@ function getVenueCrowdTier(venue, allVenues, nowMs = Date.now()) {
 // Chat follows the crowd: persona conversations happen at the venues currently
 // ranking hottest, so the busiest-looking venues are also the ones talking.
 function selectChatVenuesForNight(allVenues, seedStr, weekday, nowMs = Date.now()) {
-  const totalSimCap = ['Fri', 'Sat'].includes(weekday) ? 4 : 2;
+  const totalSimCap = ['Fri', 'Sat'].includes(weekday) ? 4 : 1;
   const ranked = [...allVenues].sort(
     (a, b) => getRotatingHotScore(b, nowMs) - getRotatingHotScore(a, nowMs)
   );
@@ -2465,7 +2469,9 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
 
   // Daytime pool: the liveliest activity/event venues open right now.
   // Weekends carry one more since that's prime outing time.
-  const daytimeCap = ['Sat', 'Sun'].includes(calendarTime.weekday) ? 3 : 2;
+  const daytimeCap = ['Sat', 'Sun'].includes(calendarTime.weekday)
+    ? 3
+    : (['Fri'].includes(calendarTime.weekday) ? 2 : 1);
   const daytimeSelected = daytimeVenues
     .filter((v) => shapeNow(v) >= CHAT_SHAPE_FLOOR)
     .sort((a, b) => getRotatingHotScore(b, nowMs) - getRotatingHotScore(a, nowMs))

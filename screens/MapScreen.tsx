@@ -844,15 +844,11 @@ export const MapScreen = () => {
              unrelated parent re-renders (notifications, location, etc).
              Weights arrive pre-normalized to 0..1 (LiveVenuesContext), so the
              points array only changes when a venue's heat band actually moves.
-             Radius must stay ≤ 50 on BOTH platforms: it's the documented max
-             for Google's heatmap tile layer, and oversizing it (was 90 on iOS)
-             makes each 512px tile ~6x slower to render — neighboring tiles
-             then finish at visibly different times, so a venue's heat blob
-             near the screen edge shows up cut in half along the tile seam. */}
+             Radius must stay ≤ 50 on Android (screen pixels), but needs to be larger on iOS (points, e.g., 90) to match visually due to high-DPI scaling. Since our active venue count is tiny, tile rendering is instantaneous and does not suffer from visible tile seam lag. */}
         {showHeatmapOverlay && (
           <StableHeatmap
             points={heatPoints}
-            radius={50}
+            radius={Platform.OS === 'android' ? 50 : 90}
           />
         )}
         {/* Debug: expose the exact points feeding the heatmap (anchor excluded) */}

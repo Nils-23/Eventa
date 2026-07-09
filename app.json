@@ -2,7 +2,7 @@
   "expo": {
     "name": "Eventas",
     "slug": "Eventa",
-    "version": "1.1.0",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/App_icon.png",
     "userInterfaceStyle": "dark",
@@ -62,7 +62,7 @@
       "usesAppleSignIn": true
     },
     "android": {
-      "versionCode": 30,
+      "versionCode": 31,
       "adaptiveIcon": {
         "foregroundImage": "./assets/App_icon.png",
         "backgroundColor": "#ffffff"
