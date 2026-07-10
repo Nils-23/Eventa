@@ -11,7 +11,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   Linking,
-  Alert
+  Alert,
+  Image
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -57,6 +58,7 @@ interface PendingEvent {
   startDate?: number;
   expirationDate?: number;
   googleImageUrl?: string;
+  img?: string;
 }
 
 const CATEGORY_IMAGES: Record<string, string> = {
@@ -92,6 +94,7 @@ export const AdminAICuratorScreen = () => {
   const [editLat, setEditLat] = useState('');
   const [editLng, setEditLng] = useState('');
   const [editGoogleImageUrl, setEditGoogleImageUrl] = useState('');
+  const [editImg, setEditImg] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
 
   const fetchSuggestions = async (input: string) => {
@@ -175,7 +178,8 @@ export const AdminAICuratorScreen = () => {
           longitude: data.longitude,
           startDate: data.startDate,
           expirationDate: data.expirationDate,
-          googleImageUrl: data.googleImageUrl
+          googleImageUrl: data.googleImageUrl,
+          img: data.img
         });
       });
       setPendingEvents(list);
@@ -303,7 +307,8 @@ export const AdminAICuratorScreen = () => {
       const latitude = event.latitude !== undefined && event.latitude !== null ? event.latitude : (matchedVenue ? matchedVenue.latitude : -1.286389);
       const longitude = event.longitude !== undefined && event.longitude !== null ? event.longitude : (matchedVenue ? matchedVenue.longitude : 36.817223);
 
-      const imageUrl = event.googleImageUrl || CATEGORY_IMAGES[event.category] || CATEGORY_IMAGES.Default;
+      // Poster priority: admin-provided poster (img) > Google venue photo > category fallback
+      const imageUrl = event.img || event.googleImageUrl || CATEGORY_IMAGES[event.category] || CATEGORY_IMAGES.Default;
 
       const venueData = {
         id: venueId,
@@ -316,6 +321,7 @@ export const AdminAICuratorScreen = () => {
         startDate,
         expirationDate,
         imageUrl,
+        img: event.img || null,
         googleImageUrl: event.googleImageUrl || null,
         simulatedUsersCount: 30,
         ticketLink: event.ticketLink || null,
@@ -359,7 +365,8 @@ export const AdminAICuratorScreen = () => {
         const startDate = event.startDate !== undefined && event.startDate !== null ? event.startDate : parsed.startDate;
         const expirationDate = event.expirationDate !== undefined && event.expirationDate !== null ? event.expirationDate : parsed.expirationDate;
 
-        const imageUrl = event.googleImageUrl || CATEGORY_IMAGES[event.category] || CATEGORY_IMAGES.Default;
+        // Poster priority: admin-provided poster (img) > Google venue photo > category fallback
+        const imageUrl = event.img || event.googleImageUrl || CATEGORY_IMAGES[event.category] || CATEGORY_IMAGES.Default;
 
         const updateData: any = {
           name: event.name,
@@ -369,6 +376,7 @@ export const AdminAICuratorScreen = () => {
           startDate,
           expirationDate,
           imageUrl,
+          img: event.img || null,
           googleImageUrl: event.googleImageUrl || null,
           ticketLink: event.ticketLink || null,
           sourceLink: event.sourceLink || null
@@ -425,6 +433,7 @@ export const AdminAICuratorScreen = () => {
     setEditLat(item.latitude !== undefined && item.latitude !== null ? String(item.latitude) : '');
     setEditLng(item.longitude !== undefined && item.longitude !== null ? String(item.longitude) : '');
     setEditGoogleImageUrl(item.googleImageUrl || '');
+    setEditImg(item.img || '');
     setSuggestions([]);
     setIsEditModalVisible(true);
   };
@@ -454,6 +463,7 @@ export const AdminAICuratorScreen = () => {
         latitude: latNum !== null && !isNaN(latNum) ? latNum : null,
         longitude: lngNum !== null && !isNaN(lngNum) ? lngNum : null,
         googleImageUrl: editGoogleImageUrl || null,
+        img: editImg.trim() || null,
         startDate,
         expirationDate
       };
@@ -469,7 +479,8 @@ export const AdminAICuratorScreen = () => {
           category: editCategory,
           ticketLink: editTicketLink || null,
           sourceLink: editSourceLink || null,
-          googleImageUrl: editGoogleImageUrl || null
+          googleImageUrl: editGoogleImageUrl || null,
+          img: editImg.trim() || null
         };
       }
 
@@ -566,6 +577,15 @@ export const AdminAICuratorScreen = () => {
             {filteredEvents.map((item) => {
               return (
                 <View key={item.id} style={styles.eventCard}>
+                  {/* Poster preview — the image that will go live on the event page */}
+                  {(item.img || item.googleImageUrl) && (
+                    <Image
+                      source={{ uri: item.img || item.googleImageUrl }}
+                      style={styles.cardPoster}
+                      resizeMode="cover"
+                    />
+                  )}
+
                   {/* Card Header info */}
                   <View style={styles.eventCardHeader}>
                     <View style={{ flex: 1 }}>
@@ -705,6 +725,37 @@ export const AdminAICuratorScreen = () => {
                   value={editDesc}
                   onChangeText={setEditDesc}
                 />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Poster Image URL</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={editImg}
+                  onChangeText={setEditImg}
+                  placeholder="https://... (event poster shown on the event page)"
+                  placeholderTextColor="#555"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {(editImg.trim() || editGoogleImageUrl) ? (
+                  <View style={styles.posterPreviewWrap}>
+                    <Image
+                      source={{ uri: editImg.trim() || editGoogleImageUrl }}
+                      style={styles.posterPreview}
+                      resizeMode="cover"
+                    />
+                    <Text style={styles.posterHint}>
+                      {editImg.trim()
+                        ? 'This poster will appear on the live event page.'
+                        : 'No custom poster — the Google venue photo will be used.'}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.posterHint}>
+                    Leave empty to fall back to the venue photo or category image.
+                  </Text>
+                )}
               </View>
 
               <View style={styles.formGroup}>
@@ -937,6 +988,30 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 16,
     padding: 16,
+  },
+  cardPoster: {
+    width: '100%',
+    height: 160,
+    borderRadius: 12,
+    marginBottom: 12,
+    backgroundColor: '#222',
+  },
+  posterPreviewWrap: {
+    marginTop: 10,
+  },
+  posterPreview: {
+    width: '100%',
+    height: 160,
+    borderRadius: 12,
+    backgroundColor: '#222',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  posterHint: {
+    color: '#777',
+    fontSize: 11,
+    marginTop: 6,
+    lineHeight: 15,
   },
   eventCardHeader: {
     flexDirection: 'row',
