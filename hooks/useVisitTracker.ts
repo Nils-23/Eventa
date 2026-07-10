@@ -90,22 +90,10 @@ export const useVisitTracker = () => {
           
           if (isFirstVenueEver && newVenues.length > 0 && !data.hasAttendedFirstVenue) {
             updates.hasAttendedFirstVenue = true;
-            if (data.referredBy) {
-              // Award 20 points to the referrer
-              const referrerDocRef = doc(firestore, 'users', data.referredBy);
-              try {
-                const referrerSnap = await getDoc(referrerDocRef);
-                if (referrerSnap.exists()) {
-                  const referrerUpdates: any = {
-                    points: increment(20),
-                    [monthlyKey]: increment(20),
-                  };
-                  await updateDoc(referrerDocRef, referrerUpdates);
-                }
-              } catch (referrerErr) {
-                console.warn('[useVisitTracker] Failed to award referrer points:', referrerErr);
-              }
-            }
+            // NOTE: Referral rewards are no longer granted here. The referrer is now
+            // credited 20 points server-side at signup (functions/onUserCreated),
+            // which fires on account creation and bypasses the client-only Firestore
+            // rule that forbids writing to another user's document.
           }
 
           await updateDoc(userDocRef, updates);

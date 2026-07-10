@@ -3,6 +3,7 @@
     "name": "Eventas",
     "slug": "Eventa",
     "version": "1.0.4",
+    "scheme": "eventas",
     "orientation": "portrait",
     "icon": "./assets/App_icon.png",
     "userInterfaceStyle": "dark",
@@ -59,6 +60,10 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
+      "associatedDomains": [
+        "applinks:eventas.live",
+        "applinks:www.eventas.live"
+      ],
       "usesAppleSignIn": true
     },
     "android": {
@@ -83,6 +88,17 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.POST_NOTIFICATIONS"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "eventas.live", "pathPrefix": "/invite" },
+            { "scheme": "https", "host": "www.eventas.live", "pathPrefix": "/invite" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
       ]
     },
     "web": {

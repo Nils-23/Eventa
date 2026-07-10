@@ -97,9 +97,9 @@ export const ProfileScreen = () => {
   const handleReferFriend = async () => {
     if (!user?.uid) return;
     try {
-      const inviteLink = `https://eventas.live/invite/${user.uid}`;
+      const inviteLink = `https://www.eventas.live/invite/${user.uid}`;
       await Share.share({
-        message: `Join me on Eventas! Use my invite link to sign up: ${inviteLink}\nAttend your first venue and I'll earn 20 points!`,
+        message: `Join me on Eventas! Use my invite link to sign up: ${inviteLink}\nCreate your account and I'll earn 20 points!`,
         title: 'Invite a Friend to Eventas',
       });
     } catch (error) {

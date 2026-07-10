@@ -1449,6 +1449,59 @@ exports.inviteRedirect = functions.https.onRequest(async (req, res) => {
   }
 });
 
+// 🔐 3b. Well-Known association files for iOS Universal Links & Android App Links.
+// Served from the eventas.live domain so the OS can verify the app owns the links.
+// iOS fetches /.well-known/apple-app-site-association (must be application/json, no redirect).
+// Android fetches /.well-known/assetlinks.json.
+const APPLE_APP_ID = "LG63DX8XBQ.com.nils23.Eventa"; // <TeamID>.<bundleIdentifier>
+const ANDROID_PACKAGE = "com.nils23.Eventa";
+// SHA-256 signing-cert fingerprints allowed to verify Android App Links.
+// The first is the local debug keystore (dev/internal builds). Append the
+// Play App Signing SHA-256 (Play Console → App integrity → App signing) for
+// production Play Store builds — App Links only verify if a fingerprint matches.
+const ANDROID_SHA256_FINGERPRINTS = [
+  // Play App Signing key — used to sign APKs delivered from the Play Store (production App Links)
+  "3D:A9:13:38:B1:DE:30:A8:C7:83:46:F1:18:AF:D4:B7:41:30:34:3F:71:8E:26:EB:5F:95:B5:39:78:85:F0:D9",
+  // Upload key — signs builds before Play re-signs them (internal/upload-signed tracks)
+  "2A:03:D3:8E:C8:B1:C4:6F:11:B7:7D:6B:58:2C:A0:D0:26:5F:3E:17:97:6B:8E:30:94:CC:82:30:6D:4D:A4:73",
+  // Local debug keystore — dev/internal debug builds
+  "FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C"
+];
+
+exports.wellKnown = functions.https.onRequest((req, res) => {
+  const path = req.path || "";
+
+  if (path.endsWith("apple-app-site-association")) {
+    res.set("Content-Type", "application/json");
+    res.status(200).send(JSON.stringify({
+      applinks: {
+        apps: [],
+        details: [
+          { appID: APPLE_APP_ID, paths: ["/invite/*"] }
+        ]
+      }
+    }));
+    return;
+  }
+
+  if (path.endsWith("assetlinks.json")) {
+    res.set("Content-Type", "application/json");
+    res.status(200).send(JSON.stringify([
+      {
+        relation: ["delegate_permission/common.handle_all_urls"],
+        target: {
+          namespace: "android_app",
+          package_name: ANDROID_PACKAGE,
+          sha256_cert_fingerprints: ANDROID_SHA256_FINGERPRINTS
+        }
+      }
+    ]));
+    return;
+  }
+
+  res.status(404).send("Not found");
+});
+
 // 📲 4. Device Install Registration & Anti-Fraud Validation
 exports.registerInstall = functions.https.onCall(async (data, context) => {
   const { deviceId, referralCode, deviceDetails, simulatedIp, simulatedUserAgent } = data;
@@ -1546,13 +1599,28 @@ exports.registerInstall = functions.https.onCall(async (data, context) => {
       return { success: false, status: 'invalid', reason: 'no_referral_code' };
     }
 
-    // 3. Find creator matching referralCode (case-insensitive)
+    // 3. Resolve the referral code. It is either a creator-affiliate code (short
+    //    uppercase token) or a regular user's referral code — the referrer's
+    //    Firebase Auth UID (case-sensitive), shared via eventas.live/invite/<uid>.
     const creatorsSnap = await db.collection('creators')
       .where('referralCode', '==', finalCode.toUpperCase().trim())
       .limit(1)
       .get();
 
-    if (creatorsSnap.empty) {
+    let creatorId = null;
+    let referredByUser = null;
+
+    if (!creatorsSnap.empty) {
+      creatorId = creatorsSnap.docs[0].id;
+    } else {
+      // Not a creator code — check whether it matches a real user (user-to-user referral)
+      const referrerSnap = await db.collection('users').doc(finalCode.trim()).get();
+      if (referrerSnap.exists) {
+        referredByUser = finalCode.trim();
+      }
+    }
+
+    if (!creatorId && !referredByUser) {
       await installRef.update({
         status: 'invalid',
         referralCode: finalCode,
@@ -1562,12 +1630,9 @@ exports.registerInstall = functions.https.onCall(async (data, context) => {
       return { success: false, status: 'invalid', reason: 'invalid_referral_code' };
     }
 
-    const creatorDoc = creatorsSnap.docs[0];
-    const creatorId = creatorDoc.id;
-
     await installRef.update({
-      creatorId,
-      referralCode: finalCode.toUpperCase().trim(),
+      ...(creatorId ? { creatorId, referralCode: finalCode.toUpperCase().trim() } : {}),
+      ...(referredByUser ? { referredByUser } : {}),
       attributionSource
     });
 
@@ -1605,33 +1670,40 @@ exports.registerInstall = functions.https.onCall(async (data, context) => {
       reason: validationResult.reason || null
     });
 
-    // 5. Update creator statistics
-    const creatorRef = db.collection('creators').doc(creatorId);
-    if (validationResult.status === 'confirmed') {
-      await db.runTransaction(async (t) => {
-        const cDoc = await t.get(creatorRef);
-        if (cDoc.exists) {
-          const totalInstalls = cDoc.data().totalInstalls || 0;
-          const validInstalls = cDoc.data().validInstalls || 0;
-          t.update(creatorRef, {
-            totalInstalls: totalInstalls + 1,
-            validInstalls: validInstalls + 1
-          });
-        }
-      });
-      return { success: true, status: 'confirmed' };
-    } else {
-      await db.runTransaction(async (t) => {
-        const cDoc = await t.get(creatorRef);
-        if (cDoc.exists) {
-          const totalInstalls = cDoc.data().totalInstalls || 0;
-          t.update(creatorRef, {
-            totalInstalls: totalInstalls + 1
-          });
-        }
-      });
-      return { success: false, status: 'invalid', reason: validationResult.reason };
+    // 5. Update creator statistics (creator-affiliate referrals only). User-to-user
+    //    referrals carry no creator record — they are credited 20 points to the
+    //    referrer at signup time in onUserCreated.
+    if (creatorId) {
+      const creatorRef = db.collection('creators').doc(creatorId);
+      if (validationResult.status === 'confirmed') {
+        await db.runTransaction(async (t) => {
+          const cDoc = await t.get(creatorRef);
+          if (cDoc.exists) {
+            const totalInstalls = cDoc.data().totalInstalls || 0;
+            const validInstalls = cDoc.data().validInstalls || 0;
+            t.update(creatorRef, {
+              totalInstalls: totalInstalls + 1,
+              validInstalls: validInstalls + 1
+            });
+          }
+        });
+      } else {
+        await db.runTransaction(async (t) => {
+          const cDoc = await t.get(creatorRef);
+          if (cDoc.exists) {
+            const totalInstalls = cDoc.data().totalInstalls || 0;
+            t.update(creatorRef, {
+              totalInstalls: totalInstalls + 1
+            });
+          }
+        });
+      }
     }
+
+    if (validationResult.status === 'confirmed') {
+      return { success: true, status: 'confirmed' };
+    }
+    return { success: false, status: 'invalid', reason: validationResult.reason };
   } catch (error) {
     console.error("Error running registerInstall function:", error);
     try {
@@ -1644,35 +1716,51 @@ exports.registerInstall = functions.https.onCall(async (data, context) => {
   }
 });
 
+// Returns the Firestore field key for the current month's leaderboard points,
+// matching the client's getMonthlyPointsKey() format (points_YYYY_MM). Computed in
+// Africa/Nairobi (the app's primary market) so month rollover aligns with users.
+function getMonthlyPointsKey() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit'
+  }).formatToParts(new Date());
+  let year = '';
+  let month = '';
+  parts.forEach((p) => {
+    if (p.type === 'year') year = p.value;
+    if (p.type === 'month') month = p.value;
+  });
+  return `points_${year}_${month}`;
+}
+
 // 👥 User Account Creation Trigger - Attributes new signups to affiliate creators
+//    and rewards regular users who referred the new account.
 exports.onUserCreated = functions.firestore
   .document('users/{userId}')
   .onCreate(async (snap, context) => {
     const userData = snap.data();
     if (!userData) return;
 
+    const newUserId = context.params.userId;
     const deviceId = userData.deviceId;
-    if (!deviceId) {
-      console.log(`No deviceId for new user ${context.params.userId}, skipping creator attribution.`);
-      return;
-    }
 
     try {
-      // Look up install record for this device
-      const installDoc = await db.collection('installs').doc(deviceId).get();
-      if (!installDoc.exists) {
-        console.log(`No install record found for device ${deviceId}.`);
-        return;
+      // Look up the install record for this device (used for both creator and
+      // user-to-user referral attribution). May be absent for some signups.
+      let installData = null;
+      if (deviceId) {
+        const installDoc = await db.collection('installs').doc(deviceId).get();
+        if (installDoc.exists) {
+          installData = installDoc.data();
+        }
       }
 
-      const installData = installDoc.data();
-      if (installData.status === 'confirmed' && installData.creatorId) {
+      // ---- Creator affiliate attribution ----
+      if (installData && installData.status === 'confirmed' && installData.creatorId) {
         const creatorId = installData.creatorId;
         const creatorRef = db.collection('creators').doc(creatorId);
 
-        console.log(`Attributing user ${context.params.userId} to creator ${creatorId}`);
+        console.log(`Attributing user ${newUserId} to creator ${creatorId}`);
 
-        // Increment totalSignups for this creator
         await db.runTransaction(async (transaction) => {
           const creatorSnap = await transaction.get(creatorRef);
           if (creatorSnap.exists) {
@@ -1683,18 +1771,59 @@ exports.onUserCreated = functions.firestore
           }
         });
 
-        // Update user document with the creatorId and referralCode
         await snap.ref.update({
           referredByCreator: creatorId,
           creatorReferralCode: installData.referralCode || null
         });
 
-        console.log(`Successfully updated creator stats and user record for user ${context.params.userId}`);
-      } else {
-        console.log(`Install status is ${installData.status} or creatorId is missing for device ${deviceId}. Skipping signup attribution.`);
+        console.log(`Successfully updated creator stats and user record for user ${newUserId}`);
+      }
+
+      // ---- User-to-user referral reward (20 points to the referrer at signup) ----
+      // Prefer a referrer captured directly on the user doc (deep/universal link);
+      // otherwise fall back to the install-attributed referrer.
+      let referrerUid = userData.referredBy || null;
+      let fromInstall = false;
+      if (
+        !referrerUid &&
+        installData &&
+        installData.status === 'confirmed' &&
+        installData.referredByUser &&
+        !installData.referralRewarded
+      ) {
+        referrerUid = installData.referredByUser;
+        fromInstall = true;
+      }
+
+      // Guard against self-referral and missing referrer.
+      if (referrerUid && referrerUid !== newUserId) {
+        const referrerRef = db.collection('users').doc(referrerUid);
+        const monthlyKey = getMonthlyPointsKey();
+
+        const awarded = await db.runTransaction(async (transaction) => {
+          const referrerSnap = await transaction.get(referrerRef);
+          if (!referrerSnap.exists) return false;
+          transaction.update(referrerRef, {
+            points: admin.firestore.FieldValue.increment(20),
+            [monthlyKey]: admin.firestore.FieldValue.increment(20)
+          });
+          return true;
+        });
+
+        if (awarded) {
+          // Mark the install as rewarded so re-signups on the same device can't farm points.
+          if (fromInstall && deviceId) {
+            await db.collection('installs').doc(deviceId).update({ referralRewarded: true });
+          }
+          // Record attribution on the new user's doc (audit trail).
+          await snap.ref.update({ referredBy: referrerUid });
+          console.log(`Awarded 20 referral points to ${referrerUid} for signup ${newUserId}`);
+        } else {
+          console.log(`Referrer ${referrerUid} not found; no referral points awarded for ${newUserId}`);
+        }
       }
     } catch (error) {
-      console.error(`Error in onUserCreated trigger for user ${context.params.userId}:`, error);
+      console.error(`Error in onUserCreated trigger for user ${newUserId}:`, error);
     }
   });
 

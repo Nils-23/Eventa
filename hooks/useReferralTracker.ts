@@ -1,10 +1,48 @@
 import { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import * as Device from 'expo-device';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../services/firebase';
+
+/**
+ * Reads the Google Play Install Referrer (Android only). This is the reliable way
+ * to attribute a brand-new install: inviteRedirect appends `&referrer=<code>` to the
+ * Play Store URL, and Google Play surfaces that value here on first launch.
+ *
+ * Returns the raw referrer token only if it matches our referral-code shape
+ * (a bare Firebase UID or creator code). Organic installs return
+ * "utm_source=google-play&utm_medium=organic", which is rejected. Safe no-op if the
+ * native module isn't linked yet (Expo Go / before a native rebuild) or on iOS.
+ */
+const readPlayInstallReferrer = (): Promise<string | null> =>
+  new Promise((resolve) => {
+    if (Platform.OS !== 'android' || !NativeModules.PlayInstallReferrer) {
+      return resolve(null);
+    }
+    try {
+      // Lazy require so the native EventEmitter is only constructed when present.
+      const { PlayInstallReferrer } = require('react-native-play-install-referrer');
+      let settled = false;
+      const done = (value: string | null) => {
+        if (!settled) {
+          settled = true;
+          resolve(value);
+        }
+      };
+      // Guard against the callback never firing (e.g. Play Store unavailable).
+      const timer = setTimeout(() => done(null), 4000);
+      PlayInstallReferrer.getInstallReferrerInfo((info: any, error: any) => {
+        clearTimeout(timer);
+        if (error || !info || !info.installReferrer) return done(null);
+        const raw = String(info.installReferrer).trim();
+        done(/^[A-Za-z0-9_-]+$/.test(raw) ? raw : null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
 
 /**
  * Hook to track app installations on first open.
@@ -31,15 +69,19 @@ export const useReferralTracker = () => {
         let referralCode: string | null = null;
 
         if (Platform.OS === 'android') {
-          // Google Play Install Referrer simulation fallback
-          // 1. Check for simulated referrer (from Admin Dashboard Simulation Suite)
-          // 2. Check for deep link referral code fallback
+          // Android attribution priority:
+          // 1. Simulated referrer (Admin Dashboard Simulation Suite)
+          // 2. Deep link referral code (existing user opened an App Link)
+          // 3. Google Play Install Referrer (reliable for brand-new installs)
           const simulatedReferrer = await AsyncStorage.getItem('simulated_referrer');
           const deepLinkReferrer = await AsyncStorage.getItem('creatorReferralCode');
-          referralCode = simulatedReferrer || deepLinkReferrer || null;
+          const playReferrer = await readPlayInstallReferrer();
+          referralCode = simulatedReferrer || deepLinkReferrer || playReferrer || null;
 
           if (simulatedReferrer) {
             console.log('[ReferralTracker] Using simulated Android referrer:', simulatedReferrer);
+          } else if (!deepLinkReferrer && playReferrer) {
+            console.log('[ReferralTracker] Using Google Play Install Referrer:', playReferrer);
           }
         } else {
           // On iOS, first-open attribution relies on server-side IP + User-Agent match.

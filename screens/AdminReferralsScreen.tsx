@@ -107,7 +107,7 @@ export const AdminReferralsScreen = () => {
   };
 
   const handleCopyLink = (code: string) => {
-    const link = `https://eventas.live/invite/${code}`;
+    const link = `https://www.eventas.live/invite/${code}`;
     Clipboard.setString(link);
     Toast.show({
       type: 'success',
@@ -425,7 +425,7 @@ export const AdminReferralsScreen = () => {
                       >
                         <Copy size={12} color="#00FFCC" />
                         <Text style={styles.copyText} numberOfLines={1}>
-                          eventas.live/invite/{creator.referralCode}
+                          www.eventas.live/invite/{creator.referralCode}
                         </Text>
                       </TouchableOpacity>
                     </View>
