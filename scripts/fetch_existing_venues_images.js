@@ -6,7 +6,11 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
-const apiKey = 'REDACTED_GOOGLE_MAPS_KEY';
+const apiKey = process.env.GOOGLE_MAPS_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+if (!apiKey) {
+  console.error('Missing GOOGLE_MAPS_API_KEY env var. Set it before running, e.g. GOOGLE_MAPS_API_KEY=... node scripts/fetch_existing_venues_images.js');
+  process.exit(1);
+}
 
 const queries = {
   venue_001: 'Alchemist Bar, Parklands Road, Nairobi',

@@ -31,7 +31,15 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
+.env.*
+!.env.example
 .env*.local
+
+# secrets / credentials (never commit)
+scripts/serviceAccountKey.json
+**/serviceAccountKey.json
+*.serviceAccount.json
 
 # typescript
 *.tsbuildinfo

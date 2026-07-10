@@ -78,7 +78,7 @@
       "googleServicesFile": "./google-services.json",
       "config": {
         "googleMaps": {
-          "apiKey": "REDACTED_GOOGLE_MAPS_KEY"
+          "apiKey": ""
         }
       },
       "permissions": [
@@ -111,8 +111,8 @@
       [
         "react-native-maps",
         {
-          "androidGoogleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY",
-          "iosGoogleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY"
+          "androidGoogleMapsApiKey": "",
+          "iosGoogleMapsApiKey": ""
         }
       ],
       "expo-apple-authentication"
