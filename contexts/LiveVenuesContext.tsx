@@ -436,8 +436,8 @@ function computeLiveData(
 
     const resolvedImageUrl = venue.customImageUrl || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id];
 
-    // Filter out future scheduled events/activities that haven't started yet
-    if ((venue.type === 'Activity' || venue.type === 'Event') && venue.startDate && venue.startDate > now) {
+    // Filter out future scheduled events/activities/venues that haven't started yet
+    if (venue.startDate && venue.startDate > now) {
       scheduledVenues.push({
         ...venue,
         imageUrl: resolvedImageUrl,

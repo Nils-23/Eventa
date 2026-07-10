@@ -179,7 +179,7 @@ export const AdminAICuratorScreen = () => {
           startDate: data.startDate,
           expirationDate: data.expirationDate,
           googleImageUrl: data.googleImageUrl,
-          img: data.img
+          img: data.img || data.imageUrl || null
         });
       });
       setPendingEvents(list);
@@ -317,7 +317,7 @@ export const AdminAICuratorScreen = () => {
         address,
         latitude,
         longitude,
-        type: event.category || 'Event',
+        type: (event.category === 'Club' || event.category === 'Bar') ? 'Event' : (event.category || 'Event'),
         startDate,
         expirationDate,
         imageUrl,
@@ -372,7 +372,7 @@ export const AdminAICuratorScreen = () => {
           name: event.name,
           description: event.description,
           address: event.venue,
-          type: event.category || 'Event',
+          type: (event.category === 'Club' || event.category === 'Bar') ? 'Event' : (event.category || 'Event'),
           startDate,
           expirationDate,
           imageUrl,

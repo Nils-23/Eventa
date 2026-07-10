@@ -24,7 +24,7 @@ function computeLiveDataSimulated(venues, mockNow) {
     }
 
     // Filter out future scheduled events/activities that haven't started yet
-    if ((venue.type === 'Activity' || venue.type === 'Event') && venue.startDate && venue.startDate > mockNow) {
+    if (venue.startDate && venue.startDate > mockNow) {
       scheduledVenues.push(venue);
       continue;
     }

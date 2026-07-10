@@ -37,7 +37,7 @@ const VenueCard = ({
   index: number;
 }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const isUpcoming = (item.type === 'Activity' || item.type === 'Event') && item.startDate && Date.now() < item.startDate;
+  const isUpcoming = item.startDate && Date.now() < item.startDate;
   const config = ACTIVITY_CONFIG[isUpcoming ? 'None' : item.activityLevel];
   const color = isUpcoming ? '#666666' : item.activityColor;
   const isTop = index < 3 && !isUpcoming;
