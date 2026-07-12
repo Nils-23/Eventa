@@ -12,7 +12,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Trophy, Award, CircleUserRound, Flame, Wine, Info, X, MapPin, Share2 } from 'lucide-react-native';
+import { Trophy, Award, CircleUserRound, Wine, Info, X, MapPin, Share2 } from 'lucide-react-native';
 import { collection, query, orderBy, limit, getDocs, doc, getDoc, startAfter, where, getCountFromServer } from 'firebase/firestore';
 import { auth, firestore } from '../services/firebase';
 import { getMonthlyPointsKey } from '../services/userService';
@@ -224,49 +224,33 @@ export const LeaderboardScreen = () => {
 
   const renderUserRow = ({ item, index }: { item: LeaderboardUser; index: number }) => {
     const isTop3 = index < 3;
+    const isMe = item.id === auth.currentUser?.uid;
     let rankColor = '#888888';
-    let cardBorderColor = '#2A2A2A';
-    let cardBgColor = '#1A1A1A';
-    let glowStyle = {};
-
-    if (index === 0) {
-      rankColor = '#FFD700'; // Gold
-      cardBorderColor = 'rgba(255, 215, 0, 0.3)';
-      cardBgColor = 'rgba(255, 215, 0, 0.03)';
-      glowStyle = { textShadowColor: '#FFD700', textShadowRadius: 8 };
-    } else if (index === 1) {
-      rankColor = '#C0C0C0'; // Silver
-      cardBorderColor = 'rgba(192, 192, 192, 0.2)';
-      cardBgColor = 'rgba(192, 192, 192, 0.02)';
-      glowStyle = { textShadowColor: '#C0C0C0', textShadowRadius: 6 };
-    } else if (index === 2) {
-      rankColor = '#CD7F32'; // Bronze
-      cardBorderColor = 'rgba(205, 127, 50, 0.15)';
-      cardBgColor = 'rgba(205, 127, 50, 0.01)';
-      glowStyle = { textShadowColor: '#CD7F32', textShadowRadius: 6 };
-    }
+    if (index === 0) rankColor = '#FFD700'; // Gold
+    else if (index === 1) rankColor = '#C0C0C0'; // Silver
+    else if (index === 2) rankColor = '#CD7F32'; // Bronze
 
     return (
-      <View style={[styles.card, { borderColor: cardBorderColor, backgroundColor: cardBgColor }]}>
+      <View style={[styles.card, isMe && styles.cardMe]}>
         <View style={styles.rankCol}>
-          <Text style={[styles.rankNum, { color: rankColor }, glowStyle]}>
+          <Text style={[styles.rankNum, { color: rankColor }]}>
             {index + 1}
           </Text>
         </View>
 
-        <CircleUserRound color={isTop3 ? rankColor : '#666'} size={40} strokeWidth={1} style={styles.avatar} />
+        <CircleUserRound color={isMe ? '#00FFCC' : isTop3 ? rankColor : '#666'} size={36} strokeWidth={1} style={styles.avatar} />
 
         <View style={styles.infoCol}>
-          <Text style={styles.username} numberOfLines={1}>
-            {item.username}
-          </Text>
-          <View style={styles.badgeRow}>
+          <View style={styles.nameRow}>
+            <Text style={[styles.username, isMe && { color: '#00FFCC' }]} numberOfLines={1}>
+              {item.username}{isMe ? ' (You)' : ''}
+            </Text>
             {renderActiveBadge(item.activeBadge)}
           </View>
         </View>
 
         <View style={styles.pointsCol}>
-          <Text style={[styles.pointsVal, isTop3 && { color: rankColor }]}>
+          <Text style={[styles.pointsVal, isTop3 && { color: rankColor }, isMe && { color: '#00FFCC' }]}>
             {item.monthlyPoints}
           </Text>
           <Text style={styles.pointsLabel}>PTS</Text>
@@ -275,58 +259,20 @@ export const LeaderboardScreen = () => {
     );
   };
 
-  const renderStandingRow = (item: RankedUserInfo, isCurrentUser: boolean, isTarget: boolean) => {
-    const isTop3 = item.rank > 0 && item.rank <= 3;
-    let rankColor = '#888888';
-    let glowStyle = {};
-
-    if (item.rank === 1) {
-      rankColor = '#FFD700';
-      glowStyle = { textShadowColor: '#FFD700', textShadowRadius: 8 };
-    } else if (item.rank === 2) {
-      rankColor = '#C0C0C0';
-      glowStyle = { textShadowColor: '#C0C0C0', textShadowRadius: 6 };
-    } else if (item.rank === 3) {
-      rankColor = '#CD7F32';
-      glowStyle = { textShadowColor: '#CD7F32', textShadowRadius: 6 };
-    } else if (isCurrentUser) {
-      rankColor = '#00FFCC';
+  // One-line motivator under the user's rank: how far to the next spot,
+  // a crown line at #1, or a nudge to get on the board when unranked.
+  const getStandingDelta = (): string => {
+    if (!currentUserRanked) return '';
+    if (currentUserRanked.rank === 1) return '👑 1st place — defend your crown';
+    if (currentUserRanked.rank === 0) {
+      return 'Check into a venue to join the board (+10 pts)';
     }
-
-    return (
-      <View style={[styles.standingRow, isCurrentUser && styles.standingRowCurrent]}>
-        <View style={styles.rankCol}>
-          <Text style={[styles.rankNumSmall, { color: rankColor }, glowStyle]}>
-            {item.rank > 0 ? `#${item.rank}` : '-'}
-          </Text>
-        </View>
-
-        <CircleUserRound color={isCurrentUser ? '#00FFCC' : (isTop3 ? rankColor : '#666')} size={32} strokeWidth={1} style={styles.avatarSmall} />
-
-        <View style={styles.infoCol}>
-          <View style={styles.nameRow}>
-            <Text style={[styles.usernameSmall, isCurrentUser && { color: '#00FFCC', fontWeight: '800' }]} numberOfLines={1}>
-              {item.username} {isCurrentUser && '(You)'}
-            </Text>
-            {isTarget && (
-              <View style={styles.targetBadge}>
-                <Text style={styles.targetBadgeText}>NEXT UP</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.badgeRow}>
-            {renderActiveBadge(item.activeBadge)}
-          </View>
-        </View>
-
-        <View style={styles.pointsColSmall}>
-          <Text style={[styles.pointsValSmall, isCurrentUser && { color: '#00FFCC' }]}>
-            {item.monthlyPoints}
-          </Text>
-          <Text style={styles.pointsLabel}>PTS</Text>
-        </View>
-      </View>
-    );
+    if (aboveUserRanked) {
+      const delta = Math.max(aboveUserRanked.monthlyPoints - currentUserRanked.monthlyPoints, 0);
+      if (delta === 0) return `Tied with #${aboveUserRanked.rank} — one check-in passes them`;
+      return `↑ ${delta} pts to catch #${aboveUserRanked.rank}`;
+    }
+    return '';
   };
 
   return (
@@ -371,7 +317,7 @@ export const LeaderboardScreen = () => {
             renderItem={renderUserRow}
             contentContainerStyle={[
               styles.list,
-              currentUserRanked && { paddingBottom: 170 }
+              currentUserRanked && { paddingBottom: 100 }
             ]}
             showsVerticalScrollIndicator={false}
             ItemSeparatorComponent={() => <View style={styles.sep} />}
@@ -385,25 +331,25 @@ export const LeaderboardScreen = () => {
             }
           />
 
-          {/* User standing sticky panel */}
-          {currentUserRanked && (
-            <View style={styles.standingPanel}>
-              <Text style={styles.standingTitle}>Your Standing</Text>
-              
-              {aboveUserRanked ? (
-                renderStandingRow(aboveUserRanked, false, true)
-              ) : (
-                currentUserRanked.rank === 1 ? (
-                  <View style={styles.topStatusRow}>
-                    <Trophy color="#FFD700" size={16} />
-                    <Text style={styles.topStatusText}>You are currently in 1st place! Keep it up! 👑</Text>
-                  </View>
-                ) : null
-              )}
-
-              {aboveUserRanked && <View style={styles.standingDivider} />}
-
-              {renderStandingRow(currentUserRanked, true, false)}
+          {/* Compact standing bar. Hidden when the user is already visible in
+              the top-10 list (their row is highlighted there instead) — no
+              duplicated rows, no second mini-leaderboard. */}
+          {currentUserRanked && !leaders.some((l) => l.id === currentUserRanked.id) && (
+            <View style={styles.standingBar}>
+              <View style={styles.standingRankChip}>
+                <Text style={styles.standingRankText}>
+                  {currentUserRanked.rank > 0 ? `#${currentUserRanked.rank}` : '—'}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.standingMain} numberOfLines={1}>
+                  You · {currentUserRanked.monthlyPoints} pts
+                </Text>
+                <Text style={styles.standingDelta} numberOfLines={1}>
+                  {getStandingDelta()}
+                </Text>
+              </View>
+              <CircleUserRound color="#00FFCC" size={30} strokeWidth={1} />
             </View>
           )}
         </View>
@@ -520,39 +466,27 @@ const styles = StyleSheet.create({
     color: '#888888',
     marginTop: 3,
   },
-  timerPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1A1A1A',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-  },
-  timerText: {
-    color: '#00FFCC',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-
   list: {
     paddingHorizontal: 24,
     paddingBottom: 40,
   },
   sep: {
-    height: 10,
+    height: 8,
   },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1A1A1A',
-    borderRadius: 16,
-    padding: 14,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#232323',
     gap: 12,
+  },
+  cardMe: {
+    borderColor: 'rgba(0, 255, 204, 0.4)',
+    backgroundColor: 'rgba(0, 255, 204, 0.04)',
   },
   rankCol: {
     width: 32,
@@ -576,13 +510,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   username: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  badgeRow: {
-    flexDirection: 'row',
+    flexShrink: 1,
   },
   badgePill: {
     flexDirection: 'row',
@@ -651,100 +582,46 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  standingPanel: {
-    backgroundColor: '#111111',
-    borderTopWidth: 1,
-    borderTopColor: '#2A2A2A',
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 24,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 20,
-  },
-  standingTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#888888',
-    textTransform: 'uppercase',
-    letterSpacing: 1.5,
-    marginBottom: 10,
-  },
-  standingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderRadius: 8,
-    gap: 10,
-  },
-  standingRowCurrent: {
-    backgroundColor: 'rgba(0, 255, 204, 0.04)',
-    paddingHorizontal: 8,
-    marginHorizontal: -8,
-  },
-  standingDivider: {
-    height: 1,
-    backgroundColor: '#2A2A2A',
-    marginVertical: 4,
-  },
-  rankNumSmall: {
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  avatarSmall: {
-    marginRight: 0,
-  },
-  usernameSmall: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  targetBadge: {
-    backgroundColor: 'rgba(255, 94, 0, 0.15)',
-    borderColor: 'rgba(255, 94, 0, 0.3)',
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-  },
-  targetBadgeText: {
-    color: '#FF8800',
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  pointsColSmall: {
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    minWidth: 45,
-  },
-  pointsValSmall: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  topStatusRow: {
+  standingBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 215, 0, 0.05)',
-    borderColor: 'rgba(255, 215, 0, 0.2)',
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 10,
-    gap: 8,
-    marginBottom: 4,
+    gap: 12,
+    backgroundColor: '#161616',
+    borderTopWidth: 1,
+    borderTopColor: '#2A2A2A',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 22,
   },
-  topStatusText: {
-    color: '#FFD700',
+  standingRankChip: {
+    backgroundColor: 'rgba(0, 255, 204, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 204, 0.35)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minWidth: 48,
+    alignItems: 'center',
+  },
+  standingRankText: {
+    color: '#00FFCC',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  standingMain: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  standingDelta: {
+    color: '#888888',
     fontSize: 12,
-    fontWeight: '600',
+    marginTop: 2,
   },
   modalOverlay: {
     flex: 1,
