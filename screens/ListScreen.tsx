@@ -152,10 +152,23 @@ const VenueCard = ({
   );
 };
 
+// ─── Category filters ──────────────────────────────────────────────────────────
+// Display categories sit on top of the stored venue types: the granular types
+// (Club/Bar/…) stay on the docs because the simulation curves depend on them,
+// while the UI groups them the way users think about a night out.
+const CATEGORY_FILTERS = ['All', 'Nightlife', 'Food', 'Activities', 'Events'] as const;
+type CategoryFilter = (typeof CATEGORY_FILTERS)[number];
+const CATEGORY_TYPES: Record<Exclude<CategoryFilter, 'All'>, string[]> = {
+  Nightlife: ['Club', 'Bar'],
+  Food: ['Food'],
+  Activities: ['Activity'],
+  Events: ['Event'],
+};
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 export const ListScreen = () => {
   const { venues, scheduledVenues, isLoading } = useLiveVenues();
-  const [selectedFilter, setSelectedFilter] = useState<'All' | 'Club' | 'Bar' | 'Activity' | 'Event'>('All');
+  const [selectedFilter, setSelectedFilter] = useState<CategoryFilter>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
@@ -169,8 +182,8 @@ export const ListScreen = () => {
 
   const combinedVenues = [...venues, ...scheduledVenues];
 
-  const filteredVenues = combinedVenues.filter((v) => 
-    (selectedFilter === 'All' || v.type === selectedFilter) &&
+  const filteredVenues = combinedVenues.filter((v) =>
+    (selectedFilter === 'All' || CATEGORY_TYPES[selectedFilter].includes(v.type || '')) &&
     v.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -207,7 +220,7 @@ export const ListScreen = () => {
       {/* Filter Row */}
       <View style={styles.filterContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {(['All', 'Club', 'Bar', 'Activity', 'Event'] as const).map((filter) => (
+          {CATEGORY_FILTERS.map((filter) => (
             <TouchableOpacity
               key={filter}
               style={[styles.filterPill, selectedFilter === filter && styles.filterPillActive]}

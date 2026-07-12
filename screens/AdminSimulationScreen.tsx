@@ -162,7 +162,7 @@ export const AdminSimulationScreen = () => {
   const [newVenueLat, setNewVenueLat] = useState('');
   const [newVenueLng, setNewVenueLng] = useState('');
   const [newVenueDesc, setNewVenueDesc] = useState('');
-  const [newVenueType, setNewVenueType] = useState<'Club' | 'Bar' | 'Activity' | 'Event'>('Club');
+  const [newVenueType, setNewVenueType] = useState<'Club' | 'Bar' | 'Food' | 'Activity' | 'Event'>('Club');
   const [newVenueExpiration, setNewVenueExpiration] = useState('');
   const [newVenueStartDate, setNewVenueStartDate] = useState('');
   const [newVenueStartTime, setNewVenueStartTime] = useState('');
@@ -286,10 +286,11 @@ export const AdminSimulationScreen = () => {
     }
   };
 
-  const getDefaultCapacity = (type?: 'Club' | 'Bar' | 'Activity' | 'Event') => {
+  const getDefaultCapacity = (type?: 'Club' | 'Bar' | 'Food' | 'Activity' | 'Event') => {
     switch (type) {
       case 'Club': return 100;
       case 'Bar': return 50;
+      case 'Food': return 60;
       case 'Activity': return 75;
       case 'Event': return 150;
       default: return 100;
@@ -1266,7 +1267,7 @@ export const AdminSimulationScreen = () => {
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Venue Type</Text>
                 <View style={styles.typeSelectorRow}>
-                  {(['Club', 'Bar', 'Activity', 'Event'] as const).map((type) => (
+                  {(['Club', 'Bar', 'Food', 'Activity', 'Event'] as const).map((type) => (
                     <TouchableOpacity
                       key={type}
                       style={[styles.typePill, newVenueType === type && styles.typePillSelected]}

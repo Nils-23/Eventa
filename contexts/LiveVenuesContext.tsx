@@ -27,7 +27,7 @@ export interface LiveVenue {
   simulatedUsersCount?: number;
   isOverride?: boolean;
   maxCapacity?: number;
-  type?: 'Club' | 'Bar' | 'Activity' | 'Event';
+  type?: 'Club' | 'Bar' | 'Food' | 'Activity' | 'Event';
   ticketLink?: string;
   price?: string;
   expirationDate?: number; // timestamp in ms
@@ -71,7 +71,7 @@ interface RawVenue {
   isOverride?: boolean;
   maxCapacity?: number;
   simPopularityScore?: number;
-  type?: 'Club' | 'Bar' | 'Activity' | 'Event';
+  type?: 'Club' | 'Bar' | 'Food' | 'Activity' | 'Event';
   ticketLink?: string;
   price?: string;
   expirationDate?: number;
@@ -172,11 +172,12 @@ function areVenuesEqual(a: LiveVenue[], b: LiveVenue[]): boolean {
   return true;
 }
 
-export function getDefaultCapacity(type?: 'Club' | 'Bar' | 'Activity' | 'Event'): number {
+export function getDefaultCapacity(type?: 'Club' | 'Bar' | 'Food' | 'Activity' | 'Event'): number {
   if (!type) return 100;
   switch (type) {
     case 'Club': return 100;
     case 'Bar': return 50;
+    case 'Food': return 60;
     case 'Activity': return 75;
     case 'Event': return 150;
     default: return 100;
@@ -308,6 +309,21 @@ export function getDynamicTargetCount(venue: RawVenue, allVenues?: RawVenue[]): 
         else if (tier === 'medium') count = 20;
         else count = 5;
       }
+    } else {
+      count = 0;
+    }
+  } else if (venue.type === 'Food') {
+    // Lunch (11-15) and dinner (18-22) service; near-empty otherwise.
+    // Mirrors functions/index.js getDynamicTargetCount — keep in sync.
+    const isMealTime = (hour >= 11 && hour < 15) || (hour >= 18 && hour < 22);
+    if (isMealTime) {
+      if (tier === 'hot') count = 40;
+      else if (tier === 'medium') count = 20;
+      else count = 8;
+    } else if (hour >= 7 && hour < 23) {
+      if (tier === 'hot') count = 10;
+      else if (tier === 'medium') count = 5;
+      else count = 2;
     } else {
       count = 0;
     }

@@ -66,10 +66,11 @@ const CATEGORY_IMAGES: Record<string, string> = {
   Bar: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&q=80&w=600',
   Activity: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&q=80&w=600',
   Event: 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80&w=600',
+  Food: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&q=80&w=600',
   Default: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&q=80&w=600',
 };
 
-const CATEGORIES = ['Bar', 'Club', 'Activity', 'Event'];
+const CATEGORIES = ['Bar', 'Club', 'Food', 'Activity', 'Event'];
 
 export const AdminAICuratorScreen = () => {
   const navigation = useNavigation();
@@ -317,7 +318,11 @@ export const AdminAICuratorScreen = () => {
         address,
         latitude,
         longitude,
-        type: (event.category === 'Club' || event.category === 'Bar') ? 'Event' : (event.category || 'Event'),
+        // Curated items are DATED events: nightlife/food categories still publish
+        // as type Event so they get the start/end attendance envelope (a food
+        // festival is an Event; a permanent restaurant is created as type Food
+        // in the venue admin, not here).
+        type: (event.category === 'Club' || event.category === 'Bar' || event.category === 'Food') ? 'Event' : (event.category || 'Event'),
         startDate,
         expirationDate,
         imageUrl,
@@ -372,7 +377,11 @@ export const AdminAICuratorScreen = () => {
           name: event.name,
           description: event.description,
           address: event.venue,
-          type: (event.category === 'Club' || event.category === 'Bar') ? 'Event' : (event.category || 'Event'),
+          // Curated items are DATED events: nightlife/food categories still publish
+        // as type Event so they get the start/end attendance envelope (a food
+        // festival is an Event; a permanent restaurant is created as type Food
+        // in the venue admin, not here).
+        type: (event.category === 'Club' || event.category === 'Bar' || event.category === 'Food') ? 'Event' : (event.category || 'Event'),
           startDate,
           expirationDate,
           imageUrl,

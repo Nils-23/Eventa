@@ -354,7 +354,7 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
         if (v.expirationDate && v.expirationDate < Date.now()) return false;
         if (v.startDate && v.startDate > Date.now()) return false;
         const type = (v.type || '').toUpperCase();
-        return type === 'CLUB' || type === 'BAR' || type === 'ACTIVITY' || type === 'EVENT';
+        return type === 'CLUB' || type === 'BAR' || type === 'ACTIVITY' || type === 'EVENT' || type === 'FOOD';
       });
 
     const replyCalendarTime = getPersonaNairobiTime();
@@ -383,16 +383,18 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
       venueTier = alive ? 'ambient' : null;
     }
 
-    // Deep venues always respond. Ambient venues get conversation too:
-    // real users usually get drawn in, and persona posts sometimes spark a
-    // short cast-to-cast exchange (capped by chainDepth).
+    // Real users get answered — that's the feature's whole job. Persona-to-
+    // persona chains are kept RARE: personas are seasoning to encourage real
+    // conversation, not a self-sustaining feed.
     const chainRoll = Math.random();
     let shouldTriggerReply = false;
     if (venueTier === 'deep') {
-      shouldTriggerReply = (!isPersonaMessage || parentChainDepth < 2);
+      shouldTriggerReply = isPersonaMessage
+        ? (parentChainDepth < 2 && chainRoll < 0.5)
+        : true;
     } else if (venueTier === 'ambient') {
       shouldTriggerReply = isPersonaMessage
-        ? (parentChainDepth < 2 && chainRoll < 0.4)
+        ? (parentChainDepth < 2 && chainRoll < 0.2)
         : (chainRoll < 0.8);
     }
 
@@ -541,8 +543,11 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
 
               // Fetch last 5 messages to provide context
               const last5Messages = await fetchLast5ChatMessages(venueId);
-              const hourLabel = new Date().getHours() > 12 ? `${new Date().getHours() - 12}PM` : new Date().getHours() === 12 ? '12PM' : `${new Date().getHours()}AM`;
-              const weekdayLabel = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Africa/Nairobi' }).format(new Date());
+              // Nairobi hour, not server hour — Cloud Functions run in UTC (3h behind EAT),
+              // which had personas calling 11pm "8PM".
+              const replyNairobi = getPersonaNairobiTime();
+              const hourLabel = formatNairobiHourLabel(replyNairobi.hour);
+              const weekdayLabel = replyNairobi.weekday;
               const dayAndTime = `${weekdayLabel} at ${hourLabel}`;
 
               // Resolve scenario, role, stance, location, and keywords for deep venues
@@ -794,7 +799,7 @@ exports.onChatReaction = functions.runWith({ timeoutSeconds: 360, memory: '512MB
 
     // Personas react at any supported venue type; the generator's venue
     // context card keeps daytime venues sounding like daytime venues.
-    if (!['CLUB', 'BAR', 'ACTIVITY', 'EVENT'].includes(venueType)) return;
+    if (!['CLUB', 'BAR', 'ACTIVITY', 'EVENT', 'FOOD'].includes(venueType)) return;
 
     // Nightly cast gate: only reply if this persona is "out" at this venue
     // tonight — a reaction to an old message must not revive someone who
@@ -846,8 +851,10 @@ exports.onChatReaction = functions.runWith({ timeoutSeconds: 360, memory: '512MB
     try {
       // Fetch last 5 messages to provide context
       const last5Messages = await fetchLast5ChatMessages(venueId);
-      const hourLabel = new Date().getHours() > 12 ? `${new Date().getHours() - 12}PM` : new Date().getHours() === 12 ? '12PM' : `${new Date().getHours()}AM`;
-      const weekdayLabel = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Africa/Nairobi' }).format(new Date());
+      // Nairobi hour, not server (UTC) hour
+      const reactNairobi = getPersonaNairobiTime();
+      const hourLabel = formatNairobiHourLabel(reactNairobi.hour);
+      const weekdayLabel = reactNairobi.weekday;
       const dayAndTime = `${weekdayLabel} at ${hourLabel}`;
 
       let replyText = await generateMessage({
@@ -927,6 +934,7 @@ function getDefaultCapacity(type) {
     case 'Bar': return 50;
     case 'Activity': return 75;
     case 'Event': return 150;
+    case 'Food': return 60;
     default: return 100;
   }
 }
@@ -958,6 +966,38 @@ function getRotatingHotScore(venue, nowMs = Date.now()) {
   return 0.3 * base + 0.7 * roll;
 }
 
+// Nightly-stable hot score: seeded by the rollover date, NOT the 3h rotation
+// slot. Chat venue SELECTION must use this one — ranking by the rotating score
+// silently re-picked "tonight's venues" every 3 hours, turning a 1-venue night
+// into a parade of 10-18 venues per day (range instead of depth). The rotating
+// score still drives live crowd tiers so chat wording matches the map.
+function getNightlyHotScore(venue, seedStr) {
+  const base = venue.simPopularityScore !== undefined ? venue.simPopularityScore : 0.5;
+  const roll = seededUnitRandom(`${venue.id}|night|${seedStr}`);
+  return 0.3 * base + 0.7 * roll;
+}
+
+// Percentile tier by the nightly score — used where a venue's tier must not
+// flip mid-night (cast sizing), while getVenueCrowdTier stays live for prompts.
+function getNightlyVenueCrowdTier(venue, allVenues, seedStr) {
+  let tier = 'low';
+  if (allVenues && Array.isArray(allVenues)) {
+    const categoryVenues = allVenues.filter(v => v.type === venue.type);
+    if (categoryVenues.length > 0) {
+      const sorted = [...categoryVenues].sort(
+        (a, b) => getNightlyHotScore(b, seedStr) - getNightlyHotScore(a, seedStr)
+      );
+      const rankIndex = sorted.findIndex(v => v.id === venue.id);
+      if (rankIndex !== -1) {
+        const percentile = rankIndex / sorted.length;
+        if (percentile < 0.10) tier = 'hot';
+        else if (percentile < 0.40) tier = 'medium';
+      }
+    }
+  }
+  return tier;
+}
+
 function getVenueCrowdTier(venue, allVenues, nowMs = Date.now()) {
   let tier = 'low';
   if (allVenues && Array.isArray(allVenues)) {
@@ -980,12 +1020,13 @@ function getVenueCrowdTier(venue, allVenues, nowMs = Date.now()) {
   return tier;
 }
 
-// Chat follows the crowd: persona conversations happen at the venues currently
-// ranking hottest, so the busiest-looking venues are also the ones talking.
+// Chat concentrates in a FEW venues per night (depth over range): the same
+// nightly-seeded picks hold for the entire rollover date, so a conversation
+// builds in one place all night instead of hopping venues every 3h slot.
 function selectChatVenuesForNight(allVenues, seedStr, weekday, nowMs = Date.now()) {
-  const totalSimCap = ['Fri', 'Sat'].includes(weekday) ? 4 : 1;
+  const totalSimCap = ['Fri', 'Sat'].includes(weekday) ? 3 : 1;
   const ranked = [...allVenues].sort(
-    (a, b) => getRotatingHotScore(b, nowMs) - getRotatingHotScore(a, nowMs)
+    (a, b) => getNightlyHotScore(b, seedStr) - getNightlyHotScore(a, seedStr)
   );
   const selected = ranked.slice(0, totalSimCap);
   const numDeep = ['Fri', 'Sat'].includes(weekday)
@@ -1126,6 +1167,20 @@ function getDynamicTargetCount(venue, allVenues) {
         else if (tier === 'medium') count = 20;
         else count = 5;
       }
+    } else {
+      count = 0;
+    }
+  } else if (venue.type === 'Food') {
+    // Lunch (11-15) and dinner (18-22) service; near-empty otherwise
+    const isMealTime = (hour >= 11 && hour < 15) || (hour >= 18 && hour < 22);
+    if (isMealTime) {
+      if (tier === 'hot') count = 40;
+      else if (tier === 'medium') count = 20;
+      else count = 8;
+    } else if (hour >= 7 && hour < 23) {
+      if (tier === 'hot') count = 10;
+      else if (tier === 'medium') count = 5;
+      else count = 2;
     } else {
       count = 0;
     }
@@ -2100,6 +2155,13 @@ exports.monthlyEngagementNotification = functions.pubsub
  * Returns current Nairobi time parts.
  * @return {{ weekday: string, hour: number, minute: number }}
  */
+// "2PM" / "11AM" / "12AM" — hour is 0-23 Nairobi time.
+function formatNairobiHourLabel(hour) {
+  if (hour === 0) return '12AM';
+  if (hour === 12) return '12PM';
+  return hour > 12 ? `${hour - 12}PM` : `${hour}AM`;
+}
+
 function getPersonaNairobiTime() {
   const now = new Date();
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -2182,7 +2244,8 @@ function getNightType(weekday) {
  * Preference-matching personas fill the cast first, so bar people staff bars.
  */
 function getNightlyVenueCast(venue, allPersonas, allVenues, seedStr, weekday, nowMs) {
-  const tier = getVenueCrowdTier(venue, allVenues, nowMs);
+  // Nightly-stable tier: the cast must not grow/shrink when the 3h rotation flips.
+  const tier = getNightlyVenueCrowdTier(venue, allVenues, seedStr);
   const table = CAST_SIZE_TABLE[getNightType(weekday)];
   const [min, max] = table[tier] || table.low;
   const sizeRoll = seededRandom(`${seedStr}_${venue.id}_castsize`, 0);
@@ -2268,33 +2331,36 @@ function assignPersonaRolesForScenario(allPersonas, scenario, seedStr, venueId) 
  * @param {number} hour
  * @return {{ window: string, personaSampleSize: number } | null}
  */
+// Volume philosophy: personas are a SMALL encouragement feature — a spark so
+// venues never feel like ghost towns — not the app's content engine. Sample
+// sizes are deliberately low; responsiveness to REAL users (reply path, hot
+// venues) is where the persona budget should go.
 function getPersonaActivityWindow(weekday, hour) {
-  // Fri & Sat: 7pm–2am  → full activity, 3–5 personas
+  // Fri & Sat: 7pm–2am → 2–3 personas
   if (['Fri', 'Sat'].includes(weekday) && (hour >= 19 || hour < 2)) {
-    return { window: 'peak_night', personaSampleSize: Math.floor(Math.random() * 3) + 3 }; // 3–5
+    return { window: 'peak_night', personaSampleSize: Math.floor(Math.random() * 2) + 2 }; // 2–3
   }
   // Sat/Sun early morning (carries over from Fri/Sat nights)
   if (weekday === 'Sun' && hour < 2) {
-    return { window: 'peak_night', personaSampleSize: Math.floor(Math.random() * 3) + 3 };
+    return { window: 'peak_night', personaSampleSize: Math.floor(Math.random() * 2) + 2 };
   }
-  // Wed & Thu: 8pm–midnight → full activity, 3–5 personas
+  // Wed & Thu: 8pm–midnight → 1–2 personas
   if (['Wed', 'Thu'].includes(weekday) && hour >= 20 && hour < 24) {
-    return { window: 'mid_week_night', personaSampleSize: Math.floor(Math.random() * 3) + 3 };
+    return { window: 'mid_week_night', personaSampleSize: Math.floor(Math.random() * 2) + 1 };
   }
-  // Sun, Mon, Tue: 8pm–midnight → light activity, 1–2 personas
+  // Sun, Mon, Tue: 8pm–midnight → 1 persona
   if (['Sun', 'Mon', 'Tue'].includes(weekday) && hour >= 20 && hour < 24) {
-    return { window: 'light_night', personaSampleSize: Math.floor(Math.random() * 2) + 1 }; // 1-2
+    return { window: 'light_night', personaSampleSize: 1 };
   }
-  // Mon–Fri noon–6pm → light afternoon, 1–2 personas. Daytime cycles target
-  // activity venues (parks, karting, museums…) via attendance-shape gating —
-  // bars are dead at these hours and get skipped automatically.
+  // Mon–Fri noon–6pm → 1 persona. Daytime cycles target activity venues
+  // (parks, karting, museums…) via attendance-shape gating — bars are dead
+  // at these hours and get skipped automatically.
   if (['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday) && hour >= 12 && hour < 18) {
-    return { window: 'afternoon', personaSampleSize: Math.floor(Math.random() * 2) + 1 };
+    return { window: 'afternoon', personaSampleSize: 1 };
   }
-  // Sat & Sun 10am–6pm → weekend daytime, 1–3 personas — prime time for
-  // parks, markets, and activities before the night shift takes over.
+  // Sat & Sun 10am–6pm → weekend daytime, 1–2 personas
   if (['Sat', 'Sun'].includes(weekday) && hour >= 10 && hour < 18) {
-    return { window: 'weekend_day', personaSampleSize: Math.floor(Math.random() * 3) + 1 };
+    return { window: 'weekend_day', personaSampleSize: Math.floor(Math.random() * 2) + 1 };
   }
   // All other unlisted times: silent
   return null;
@@ -2503,7 +2569,7 @@ async function awardPersonaLeaderboardPoints(cyclePosts) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 🕑 Scheduled Persona Activity Runner (every 30 minutes)
 // ─────────────────────────────────────────────────────────────────────────────
-exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun(async (context) => {
+exports.runPersonaActivity = functions.runWith({ timeoutSeconds: 540, memory: '512MB' }).pubsub.schedule('every 30 minutes').onRun(async (context) => {
   console.log('[Persona] Starting persona activity cycle...');
 
   // ── 1. Check current Nairobi time ────────────────────────────────────────
@@ -2571,7 +2637,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
       if (v.expirationDate && v.expirationDate < nowMs) return false;
       if (v.startDate && v.startDate > nowMs) return false;
       const type = (v.type || '').toUpperCase();
-      return type === 'CLUB' || type === 'BAR' || type === 'ACTIVITY' || type === 'EVENT';
+      return type === 'CLUB' || type === 'BAR' || type === 'ACTIVITY' || type === 'EVENT' || type === 'FOOD';
     });
 
   if (allVenues.length === 0) {
@@ -2589,7 +2655,9 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
   const shapeNow = (v) => getVenueShapeNow(v, calendarTime.weekday, calendarTime.hour);
 
   const nightlifeVenues = allVenues.filter((v) => ['CLUB', 'BAR'].includes((v.type || '').toUpperCase()));
-  const daytimeVenues = allVenues.filter((v) => ['ACTIVITY', 'EVENT'].includes((v.type || '').toUpperCase()));
+  // Food venues live in the ambient pool: their attendance curve (lunch/dinner)
+  // decides when they're alive, so a café chats at 10am and a restaurant at 8pm.
+  const daytimeVenues = allVenues.filter((v) => ['ACTIVITY', 'EVENT', 'FOOD'].includes((v.type || '').toUpperCase()));
 
   // Select among venues alive at THIS hour, so a Tuesday pick lands on bars
   // (clubs are dead) and a Friday 8pm pick can start at bars before clubs wake.
@@ -2598,12 +2666,10 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
 
   // Daytime pool: the liveliest activity/event venues open right now.
   // Weekends carry one more since that's prime outing time.
-  const daytimeCap = ['Sat', 'Sun'].includes(calendarTime.weekday)
-    ? 3
-    : (['Fri'].includes(calendarTime.weekday) ? 2 : 1);
+  const daytimeCap = ['Sat', 'Sun'].includes(calendarTime.weekday) ? 2 : 1;
   const daytimeSelected = daytimeVenues
     .filter((v) => shapeNow(v) >= CHAT_SHAPE_FLOOR)
-    .sort((a, b) => getRotatingHotScore(b, nowMs) - getRotatingHotScore(a, nowMs))
+    .sort((a, b) => getNightlyHotScore(b, seedStr) - getNightlyHotScore(a, seedStr))
     .slice(0, daytimeCap);
   if (daytimeSelected.length > 0) {
     console.log(`[Persona] Daytime venues in play: ${daytimeSelected.map((v) => v.name).join(', ')}`);
@@ -2712,10 +2778,18 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
   console.log(`[Persona] Selected personas: ${selectedPersonas.map((p) => p.username).join(', ')}`);
 
   const COOLDOWN_MS = 45 * 60 * 1000;        // 45 minutes cooldown per persona×venue
-  const VENUE_HOUR_CAP = 3;                   // max 3 persona messages per venue per hour
+  const VENUE_HOUR_CAP = 2;                   // max 2 ambient persona messages per venue per hour
   const REAL_USER_WINDOW_MIN = 10;            // "active" real user = posted in last 10 min
   let totalMessagesPosted = 0;
   const cyclePosts = []; // successful {persona, venueId} posts → leaderboard points
+
+  // Anti-burst stagger: without it every message in the cycle lands at the
+  // exact same second across all venues — the single most bot-revealing tell.
+  // First post waits 0-60s, later posts 25-85s apart; each message is stamped
+  // with the wall clock at the moment it is actually written.
+  const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let nextPostDelayMs = isEmulator ? 0 : Math.floor(Math.random() * 60 * 1000);
 
   // ── 5. Clean up stale cooldown docs (older than 24h) ────────────────────
   try {
@@ -2806,10 +2880,12 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
       continue;
     }
 
-    // ── c. Real user activity — adjust reply probability ──────────────────
+    // ── c. Real user activity — adjust post probability ──────────────────
+    // Real users present = personas show up for them (0.7). Otherwise ambient
+    // posting is a coin flip at best — background seasoning, not a feed.
     const isPeakWindow = activityWindow.window === 'peak_night' || activityWindow.window === 'mid_week_night';
     const realUserActive = await hasRecentRealUserActivity(targetVenue.id, REAL_USER_WINDOW_MIN);
-    let replyChance = isPeakWindow ? (Math.random() * 0.2 + 0.7) : (realUserActive ? 0.70 : 0.30);
+    let replyChance = realUserActive ? 0.70 : (isPeakWindow ? (Math.random() * 0.2 + 0.4) : 0.30);
     // Quiet venues chat less — keep the chatter where the crowd is
     const targetCrowdTier = getVenueCrowdTier(targetVenue, allVenues, nowMs);
     if (targetCrowdTier === 'low' && !realUserActive) {
@@ -2822,7 +2898,7 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
 
     // ── d. Build Claude Haiku prompt ──────────────────────────────────────
     const last5Messages = await fetchLast5ChatMessages(targetVenue.id);
-    const hourLabel = hour > 12 ? `${hour - 12}PM` : hour === 12 ? '12PM' : `${hour}AM`;
+    const hourLabel = formatNairobiHourLabel(hour);
     const dayAndTime = `${weekday} at ${hourLabel}`;
 
     // Determine target venue tier. The deep scenario system (roles, stances,
@@ -2932,8 +3008,13 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
 
     if (!messageText || messageText.length === 0) continue;
 
-    // ── f. Write message to RTDB with current timestamp ──────────────────
-    const messageTimestamp = nowMs;
+    // ── f. Stagger, then write message with the ACTUAL post-time timestamp ─
+    if (nextPostDelayMs > 0) {
+      console.log(`[Persona] Staggering ${Math.round(nextPostDelayMs / 1000)}s before posting @${persona.username}...`);
+      await sleep(nextPostDelayMs);
+    }
+    nextPostDelayMs = isEmulator ? 500 : (25 + Math.floor(Math.random() * 60)) * 1000; // 25-85s gap to the next post
+    const messageTimestamp = Date.now();
 
     try {
       const chatRef = rtdb.ref(`venue_chats/${targetVenue.id}`);
@@ -2961,9 +3042,9 @@ exports.runPersonaActivity = functions.pubsub.schedule('every 30 minutes').onRun
       await db.collection('persona_cooldowns').doc(cooldownId).set({
         personaId: persona.id,
         venueId: targetVenue.id,
-        lastPostAt: nowMs,
+        lastPostAt: messageTimestamp,
         venueMessageCount: newCount,
-        countWindowStart: currentCount === 0 ? nowMs : windowStart,
+        countWindowStart: currentCount === 0 ? messageTimestamp : windowStart,
       });
     } catch (err) {
       console.warn(`[Persona] Cooldown write failed for ${cooldownId} (non-fatal):`, err.message);

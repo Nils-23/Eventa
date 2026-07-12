@@ -100,6 +100,16 @@ const PROFILES = {
     hours: hoursCurve({ 8: 0.3, 9: 0.6, 10: 0.9, 11: 1, 12: 1, 13: 1, 14: 1, 15: 0.9, 16: 0.7, 17: 0.4 }, 0),
     weekdays: { Mon: 0.2, Tue: 0.2, Wed: 0.25, Thu: 0.3, Fri: 0.5, Sat: 1, Sun: 1 },
   },
+  restaurant: {
+    key: 'restaurant', baseType: 'Food', capacity: 60, popularityPrior: 0.35,
+    hours: hoursCurve({ 7: 0.1, 8: 0.2, 9: 0.2, 10: 0.2, 11: 0.4, 12: 0.9, 13: 1, 14: 0.8, 15: 0.4, 16: 0.3, 17: 0.4, 18: 0.7, 19: 1, 20: 1, 21: 0.8, 22: 0.5, 23: 0.2 }, 0),
+    weekdays: { Mon: 0.6, Tue: 0.6, Wed: 0.7, Thu: 0.8, Fri: 1, Sat: 1, Sun: 0.9 },
+  },
+  cafe: {
+    key: 'cafe', baseType: 'Food', capacity: 35, popularityPrior: 0.3,
+    hours: hoursCurve({ 7: 0.5, 8: 0.8, 9: 1, 10: 1, 11: 0.9, 12: 0.9, 13: 0.8, 14: 0.8, 15: 0.9, 16: 0.9, 17: 0.7, 18: 0.4, 19: 0.2 }, 0),
+    weekdays: { Mon: 0.8, Tue: 0.8, Wed: 0.8, Thu: 0.9, Fri: 1, Sat: 1, Sun: 0.9 },
+  },
   concert: {
     key: 'concert', baseType: 'Event', capacity: 150, popularityPrior: 0.45,
     hours: hoursCurve({ 17: 0.3, 18: 0.5, 19: 0.8, 20: 1, 21: 1, 22: 1, 23: 0.9, 0: 0.7, 1: 0.4, 2: 0.2 }, 0.05),
@@ -130,6 +140,11 @@ const PROFILES = {
     hours: hoursCurve({ 9: 0.6, 10: 0.8, 11: 0.9, 12: 1, 13: 1, 14: 1, 15: 1, 16: 1, 17: 0.9, 18: 0.9, 19: 0.9, 20: 0.9, 21: 0.8, 22: 0.4, 23: 0.2 }, 0.05),
     weekdays: ALL_WEEK,
   },
+  generic_food: {
+    key: 'generic_food', baseType: 'Food', capacity: 50, popularityPrior: 0.3,
+    hours: hoursCurve({ 11: 0.5, 12: 0.9, 13: 1, 14: 0.7, 15: 0.4, 16: 0.4, 17: 0.5, 18: 0.7, 19: 1, 20: 0.9, 21: 0.7, 22: 0.4 }, 0.02),
+    weekdays: { Mon: 0.6, Tue: 0.6, Wed: 0.7, Thu: 0.8, Fri: 1, Sat: 1, Sun: 0.9 },
+  },
   generic_unknown: {
     key: 'generic_unknown', baseType: 'Activity', capacity: 40, popularityPrior: 0.15,
     hours: hoursCurve({ 10: 0.3, 11: 0.3, 12: 0.3, 13: 0.3, 14: 0.3, 15: 0.3, 16: 0.3, 17: 0.3, 18: 0.2 }, 0.02),
@@ -150,6 +165,10 @@ const MATCHERS = [
   { pattern: /\bspa\b|yoga|wellness|massage|sauna|pilates/, profile: 'wellness' },
   { pattern: /\bpark\b|garden|hik(e|ing)|nature|picnic|forest|waterfall|safari/, profile: 'outdoor' },
   { pattern: /market|bazaar|pop.?up|flea|thrift|farmers/, profile: 'market' },
+  // Food before the generic bar matcher: "X Restaurant & Bar" typed Food must
+  // resolve to restaurant (the type-consistency guard settles conflicts).
+  { pattern: /restaurant|eatery|bistro|diner|steak\s?house|pizzeria|pizza|burger|sushi|shawarma|nyama\s?choma|\bchoma\b|buffet|brunch/, profile: 'restaurant' },
+  { pattern: /caf[eé]|coffee|espresso|bakery|patisserie|pastry|tea\s?house|creamery|ice\s?cream|dessert/, profile: 'cafe' },
   { pattern: /concert|live\s?(music|band)|\bgig\b|festival|\bdj\b|performance/, profile: 'concert' },
   { pattern: /conference|expo|summit|workshop|seminar|meetup|hackathon/, profile: 'conference' },
   { pattern: /\bbar\b|\bpub\b|brewery|taproom/, profile: 'bar' },
@@ -161,6 +180,7 @@ const TYPE_DEFAULTS = {
   BAR: 'generic_bar',
   ACTIVITY: 'generic_activity',
   EVENT: 'generic_event',
+  FOOD: 'generic_food',
 };
 
 // A text-matched profile may not contradict the venue's declared type: a Bar
@@ -384,7 +404,7 @@ async function runCrowdSimulationCycle(db, rtdb) {
       const updateObj = {};
       if (v.venueViews === undefined) {
         const type = (v.type || 'Club').toUpperCase();
-        const defaultPop = type === 'CLUB' ? 60 : type === 'BAR' ? 50 : type === 'ACTIVITY' ? 45 : 50;
+        const defaultPop = type === 'CLUB' ? 60 : type === 'BAR' ? 50 : type === 'ACTIVITY' ? 45 : type === 'FOOD' ? 45 : 50;
         Object.assign(updateObj, {
           venueViews: Math.floor(defaultPop * 3 + Math.random() * 100),
           favorites: Math.floor(defaultPop * 0.5 + Math.random() * 10),

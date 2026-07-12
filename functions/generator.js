@@ -137,11 +137,46 @@ const DAYTIME_ENERGY = {
   Sun: `It is Sunday during the day — easy, slow weekend energy. People are out with family or friends, stretching the weekend before Monday. Warm and unhurried.`
 };
 
-function getEnergyInstruction(dayAndTime, dayCard = null) {
+// Nightlife venues (bars, sports bars) are often alive during the day too —
+// lunch, a match, afternoon drinks. The night framing must never leak there:
+// nobody says "tonight is going crazy" at 2pm.
+const NIGHTLIFE_DAY_ENERGY =
+  `It is DAYTIME right now — an easy afternoon at the spot: food, a drink, a match on the screens, catching up. ` +
+  `It is NOT a night out. NEVER say "tonight" as if the night is already happening, and do NOT talk about the DJ going off or the dance floor. ` +
+  `If the night comes up at all, it is a plan for LATER.`;
+
+// Parse the hour out of a "Fri at 2PM" style string. Returns 0-23 or null.
+function parseHourFromDayAndTime(dayAndTime) {
+  const m = (dayAndTime || '').match(/at\s+(\d{1,2})\s*(AM|PM)/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10) % 12;
+  if (m[2].toUpperCase() === 'PM') h += 12;
+  return h;
+}
+
+function isDaytimeHour(dayAndTime) {
+  const h = parseHourFromDayAndTime(dayAndTime);
+  return h !== null && h >= 6 && h < 18;
+}
+
+// Card venues that are open in the EVENING (restaurants at dinner) must not be
+// told "it is during the day" — but they're still not a night out.
+const CARD_EVENING_ENERGY =
+  `It is the evening — dinner / winding-down energy at a calm spot. ` +
+  `People are eating, talking, relaxing after the day. It is NOT a party and there is no nightlife here — keep it warm and low-key.`;
+
+function getEnergyInstruction(dayAndTime, dayCard = null, isDay = false) {
   const wd = (dayAndTime || '').trim().slice(0, 3);
-  const energy = dayCard ? DAYTIME_ENERGY[wd] : WEEKDAY_ENERGY[wd];
-  if (!energy) return '';
-  return dayCard ? `\nTODAY'S ENERGY: ${energy}\n` : `\nTONIGHT'S ENERGY: ${energy}\n`;
+  if (dayCard) {
+    if (!isDay) return `\nTHIS EVENING'S ENERGY: ${CARD_EVENING_ENERGY}\n`;
+    const energy = DAYTIME_ENERGY[wd];
+    return energy ? `\nTODAY'S ENERGY: ${energy}\n` : '';
+  }
+  if (isDay) {
+    return `\nRIGHT NOW: ${NIGHTLIFE_DAY_ENERGY}\n`;
+  }
+  const energy = WEEKDAY_ENERGY[wd];
+  return energy ? `\nTONIGHT'S ENERGY: ${energy}\n` : '';
 }
 
 // ─── Venue context cards ─────────────────────────────────────────────────────
@@ -217,6 +252,24 @@ const VENUE_CONTEXT_CARDS = {
     doing: 'hanging out, passing time',
     topics: 'the place, the day, who is around',
     avoid: 'Do NOT assume there is a DJ, dance floor, or party here. Keep it neutral and low-key.',
+  },
+  restaurant: {
+    setting: 'a restaurant',
+    doing: 'eating, waiting for food, deciding what to order',
+    topics: 'what you ordered, what is worth ordering, portion sizes, prices, how long the food took, the service, who you came with',
+    avoid: 'There is NO DJ, NO dance floor, NO bouncer here. It is a meal, not a night out — never party talk.',
+  },
+  cafe: {
+    setting: 'a café or coffee spot',
+    doing: 'having coffee or a pastry, working on a laptop, catching up with someone',
+    topics: 'the coffee, the pastries or breakfast, the wifi, prices, how good it is for working, the noise level',
+    avoid: 'There is NO DJ, NO drinks specials, NO party here. Calm café register — never nightlife talk.',
+  },
+  generic_food: {
+    setting: 'a food spot',
+    doing: 'eating or about to order',
+    topics: 'the food, prices, what to order, the service, the space',
+    avoid: 'There is NO DJ and NO party here. It is about the food — never nightlife talk.',
   },
 };
 
@@ -315,22 +368,28 @@ function getNightlyVerdict(personaId, venueId, nightSeed, isDaytime) {
   return { verdict, reason };
 }
 
-function buildVerdictInstruction(verdict, venueName) {
+function buildVerdictInstruction(verdict, venueName, isDay = false) {
+  const when = isDay ? 'TODAY' : 'TONIGHT';
+  const span = isDay ? 'all day' : 'all night';
   if (verdict.verdict === 'enjoying') {
-    return `\nYOUR OPINION OF ${venueName} TONIGHT: you're enjoying it — ${verdict.reason}. ` +
+    return `\nYOUR OPINION OF ${venueName} ${when}: you're enjoying it — ${verdict.reason}. ` +
       `Hold this view. If someone trashes the place, push back casually with your reason.\n`;
   }
   if (verdict.verdict === 'unimpressed') {
-    return `\nYOUR OPINION OF ${venueName} TONIGHT: you're not impressed — ${verdict.reason}. ` +
-      `Hold this view all night. Do NOT flip to agreement if others hype the place — push back lightly, tease, or bring up your gripe. Stay friendly, never hostile.\n`;
+    return `\nYOUR OPINION OF ${venueName} ${when}: you're not impressed — ${verdict.reason}. ` +
+      `Hold this view ${span}. Do NOT flip to agreement if others hype the place — push back lightly, tease, or bring up your gripe. Stay friendly, never hostile.\n`;
   }
-  return `\nYOUR OPINION OF ${venueName} TONIGHT: undecided — ${verdict.reason}. ` +
+  return `\nYOUR OPINION OF ${venueName} ${when}: undecided — ${verdict.reason}. ` +
     `You can be swayed, but ask or observe before committing to hype or complaints.\n`;
 }
 
 // ─── Concrete-detail anchoring ───────────────────────────────────────────────
 // The #1 blandness driver is abstract register ("the vibe", "the energy").
-// Every prompt gets 3 sampled concrete hooks and an anchor rule.
+// Every prompt gets 3 concrete hooks and an anchor rule. Hooks are SEEDED per
+// (venue, night): each venue pushes its own 3 details all night instead of
+// every venue in town sampling the same pool and converging on the same talk
+// (the "queues at every venue" failure). Within a venue, the forbidden-words
+// mechanism already stops any one hook from being repeated to death.
 const NIGHTLIFE_DETAIL_POOL = [
   'a specific song or genre the DJ just played',
   'the fries / nyama / wings',
@@ -345,11 +404,74 @@ const NIGHTLIFE_DETAIL_POOL = [
   'the AC or the heat inside',
 ];
 
-function buildDetailInstruction(dayCard) {
-  const hooks = dayCard
-    ? dayCard.topics
-    : sampleFrom(NIGHTLIFE_DETAIL_POOL, 3).join(', ');
+// Day version for bars/sports bars in the afternoon — no DJ, no bathroom line.
+const NIGHTLIFE_DAY_DETAIL_POOL = [
+  'the fries / nyama / wings',
+  'what drinks cost here',
+  'the football match on the screens',
+  'the pool table',
+  'the balcony or outside section',
+  'how chill it is compared to nights',
+  'parking or how you got here',
+  'the music playing low in the background',
+  'the lunch crowd around you',
+];
+
+function seededSampleFrom(arr, n, seedKey) {
+  if (!seedKey) return sampleFrom(arr, n);
+  const copy = [...arr];
+  const out = [];
+  let i = 0;
+  while (out.length < n && copy.length > 0) {
+    const idx = Math.floor(verdictUnit(`${seedKey}|${i++}`) * copy.length);
+    out.push(copy.splice(idx, 1)[0]);
+  }
+  return out;
+}
+
+function buildDetailInstruction(dayCard, isDay = false, seedKey = null) {
+  let hooks;
+  if (dayCard) {
+    // Sample 3 of the card's topics instead of pasting all of them — otherwise
+    // every venue with this profile pushes the identical topic list every time.
+    const topicParts = dayCard.topics.split(',').map((t) => t.trim()).filter(Boolean);
+    hooks = seededSampleFrom(topicParts, Math.min(3, topicParts.length), seedKey).join(', ');
+  } else {
+    const pool = isDay ? NIGHTLIFE_DAY_DETAIL_POOL : NIGHTLIFE_DETAIL_POOL;
+    hooks = seededSampleFrom(pool, 3, seedKey).join(', ');
+  }
   return `\nSPECIFICS RULE: if you mention the place, anchor it in ONE concrete detail (e.g. ${hooks}) — never just "the vibe" or "the energy".\n`;
+}
+
+// ─── Life-topic range ────────────────────────────────────────────────────────
+// Personas post RARELY (they're seasoning, not the app's content engine), so
+// each post should feel like a person with a whole life outside this venue.
+// Two "on your mind today" topics are seeded per (persona, day): stable for
+// the persona through the day, different across personas — so the same night
+// one person is on about the football and another about the rain, instead of
+// everyone reviewing the venue.
+const LIFE_TOPIC_POOL = [
+  'the football this week (a match, a result that hurt, this weekend\'s fixtures)',
+  'a new song or album everyone is playing right now',
+  'a series or movie people are talking about (no spoilers)',
+  'Nairobi traffic today',
+  'the weather (rain out of nowhere, the cold season, the heat)',
+  'work or campus stress this week',
+  'payday feeling far / the price of things lately',
+  'a side hustle you are trying to get going',
+  'gym / trying to stay fit',
+  'a funny matatu or boda moment from today',
+  'plans for the weekend (or recovering from it)',
+  'a family function you attended or are dodging',
+  'phone battery / data bundle struggles',
+  'food — a spot you tried recently or have been meaning to try',
+  'sleep debt / how long this week is dragging',
+];
+
+function buildLifeTopicInstruction(seedKey) {
+  const topics = seededSampleFrom(LIFE_TOPIC_POOL, 2, seedKey);
+  return `\nON YOUR MIND TODAY (beyond this venue): ${topics.join('; ')}. ` +
+    `When the intent calls for life talk or a tangent, draw on ONE of these or your own interests — not the venue again.\n`;
 }
 
 // ─── Message shape variance ──────────────────────────────────────────────────
@@ -394,7 +516,11 @@ const EXAMPLE_POOL = [
   { text: `"work tomorrow is going to hurt"` },
   { text: `"you guys from around here?"`, directed: true },
   { text: `"they played my song and I wasn't ready"` },
-  { text: `"kinda dead rn but it might pick up"` }
+  { text: `"kinda dead rn but it might pick up"` },
+  { text: `"arsenal stressed me the whole weekend"` },
+  { text: `"this rain came out of nowhere"` },
+  { text: `"that new episode was wild, no spoilers"` },
+  { text: `"payday needs to hurry up"` }
 ];
 
 // Daytime register examples for activity venues — same texting style, but the
@@ -416,11 +542,29 @@ const DAYTIME_EXAMPLE_POOL = [
   { text: `"photos are not doing this place justice"` },
 ];
 
-const getBaseStyle = (venueName, isOpener = false, dayCard = null) => {
-  const basePool = dayCard ? DAYTIME_EXAMPLE_POOL : EXAMPLE_POOL;
+// Register examples for a bar/sports-bar during the DAY — the texting style is
+// identical, but the subject is lunch, a match, an easy afternoon. Reusing the
+// night pool here is what produced "the DJ ate" texts at 2pm.
+const NIGHTLIFE_DAY_EXAMPLE_POOL = [
+  { text: `"the fries here are actually good"` },
+  { text: `"ati a beer is how much"` },
+  { text: `"quiet afternoon in here, kinda nice"` },
+  { text: `"who's watching the match later"` },
+  { text: `"needed to get out of the house honestly"` },
+  { text: `"long lunch, don't tell my boss"` },
+  { text: `"first time here, worth coming back at night?"`, directed: true },
+  { text: `"lol same"`, directed: true },
+  { text: `"traffic on waiyaki way was mad, just got here"` },
+  { text: `"they have the game on, sorted"` },
+];
+
+const getBaseStyle = (venueName, isOpener = false, dayCard = null, isDay = false) => {
+  const basePool = dayCard
+    ? DAYTIME_EXAMPLE_POOL
+    : (isDay ? NIGHTLIFE_DAY_EXAMPLE_POOL : EXAMPLE_POOL);
   const pool = isOpener ? basePool.filter(e => !e.directed) : basePool;
   return (
-    (dayCard
+    ((dayCard || isDay)
       ? `You are a young Nairobi local texting in the ${venueName} group chat on a social outings app. `
       : `You are a young Nairobi socialite texting in the ${venueName} group chat on a nightlife app. `) +
     `You must write EXACTLY like young Kenyan Gen Z text online. ` +
@@ -781,17 +925,17 @@ function getHandlesFromHistory(history) {
 // Weekend nights lean on venue talk and hype; weeknights lean on genuine
 // conversation — icebreakers, life outside tonight, checking in on people.
 const INTENTS = [
-  { type:'venue_talk', wWeekend:4, wWeeknight:2, hint:'comment on the PLACE — the DJ/music, a drink, the lighting, the bathroom line, the bouncer. an observation, not a question.' },
+  { type:'venue_talk', wWeekend:3, wWeeknight:2, hint:'comment on the PLACE — the DJ/music, a drink, the lighting, the bathroom line, the bouncer. an observation, not a question.' },
   { type:'banter',     wWeekend:3, wWeeknight:2, hint:'tease/roast another person in the chat by @handle. playful, light.' },
   { type:'reply',      wWeekend:3, wWeeknight:3, hint:'react to the LAST message but you MAY pivot the topic — do not just repeat it.' },
   { type:'cosign',     wWeekend:2, wWeeknight:2, hint:'agree with what someone said — short and specific, echo the exact thing you agree with instead of a generic "facts".' },
   { type:'hype',       wWeekend:2, wWeeknight:1, hint:'react to the vibe, be specific. never just "its lit".' },
-  { type:'tangent',    wWeekend:2, wWeeknight:2, hint:'slightly off-topic — hungry, traffic, an outfit, someone running late.' },
+  { type:'tangent',    wWeekend:3, wWeeknight:2, hint:'slightly off-topic — hungry, traffic, an outfit, someone running late, one of the things on your mind today.' },
   { type:'question',   wWeekend:2, wWeeknight:2, hint:'ask something NOT about money/entry — what they think, where they are, who they came with.' },
   { type:'logistics',  wWeekend:1, wWeeknight:1, hint:'one practical detail. use SPARINGLY.' },
   { type:'icebreaker', wWeekend:1, wWeeknight:3, hint:'start a genuine conversation about the PEOPLE, not the venue — "first time here?", "you guys from around?", "who came solo?". friendly and real, no slang needed.',
     openerHint:'throw an open question into the empty chat, directed at no one specific — "anyone here yet?", "anyone been here before?". Do NOT talk as if people are already chatting with you.' },
-  { type:'life_talk',  wWeekend:1, wWeeknight:4, hint:'talk about life outside tonight — work tomorrow, how the week is going, a match, a show, a new song, plans for the weekend. draw on YOUR interests if you have them.' },
+  { type:'life_talk',  wWeekend:2, wWeeknight:4, hint:'talk about life outside tonight — the things on your mind today, work tomorrow, how the week is going, a match, a show, a new song, plans. draw on YOUR interests if you have them.' },
   { type:'check_in',   wWeekend:1, wWeeknight:2, hint:'genuinely ask how someone\'s night or week is going. warm and simple.',
     openerHint:'ask an open "how is everyone\'s night going" style question — light, aimed at no one specific.' },
   { type:'disagree',   wWeekend:2, wWeeknight:2, hint:'push back on the last opinion in the chat — you see it differently and say why in one casual line. light and friendly, never hostile. ground it in YOUR opinion of the place.' },
@@ -828,7 +972,9 @@ async function generateMessage(context) {
     else if (dp === 'evening') dayAndTime = `${currentWeekday} at 8PM`;
     else if (dp === 'night') dayAndTime = `${currentWeekday} at 11PM`;
   } else {
-    const hourLabel = nowForDay.getHours() > 12 ? `${nowForDay.getHours() - 12}PM` : nowForDay.getHours() === 12 ? '12PM' : `${nowForDay.getHours()}AM`;
+    // Nairobi hour, not server hour — Cloud Functions run in UTC (3h behind EAT).
+    const nairobiHour = parseInt(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'Africa/Nairobi' }).format(nowForDay), 10) % 24;
+    const hourLabel = nairobiHour > 12 ? `${nairobiHour - 12}PM` : nairobiHour === 12 ? '12PM' : nairobiHour === 0 ? '12AM' : `${nairobiHour}AM`;
     dayAndTime = `${currentWeekday} at ${hourLabel}`;
   }
 
@@ -837,8 +983,12 @@ async function generateMessage(context) {
   const dayCard = getVenueContextCard(context.venueProfile);
   const venueContextInstruction = buildVenueContextInstruction(dayCard, venueName, context.venueDescription);
 
+  // Daytime awareness: a nightlife venue (bar, sports bar) chatting at 2pm must
+  // use a daytime register — no "tonight", no DJ, no dance floor.
+  const isDay = isDaytimeHour(dayAndTime);
+
   const isWeeknight = isWeeknightVibe(dayAndTime);
-  const energyInstruction = getEnergyInstruction(dayAndTime, dayCard);
+  const energyInstruction = getEnergyInstruction(dayAndTime, dayCard, isDay);
 
   // 2. Sample one intent per generateMessage call, weighted for tonight.
   // Directed intents (reply/banter/cosign/disagree) need someone to respond to,
@@ -893,7 +1043,7 @@ async function generateMessage(context) {
   // Ground the message in how busy the venue currently looks in the app,
   // so chat energy matches the crowd count users see on the map.
   let crowdInstruction = '';
-  if (dayCard) {
+  if (dayCard || isDay) {
     // Daytime venues: crowd wording is about people around, never dance floors.
     if (context.crowdLevel === 'packed') {
       crowdInstruction = `\nCROWD RIGHT NOW: ${venueName} is very busy today — lots of groups and families around. ` +
@@ -976,6 +1126,14 @@ async function generateMessage(context) {
       if (dayCard && sampledIntent.type === 'hype') {
         hint = 'react to how nice the place/day is, be specific. never generic.';
       }
+      // Nightlife venue during the day: the default hints (DJ, bouncer,
+      // dance floor) don't exist yet — swap in afternoon-appropriate ones.
+      if (!dayCard && isDay && sampledIntent.type === 'venue_talk') {
+        hint = 'comment on the PLACE — the food, what drinks cost, the match on the screens, the space itself. an observation, not a question.';
+      }
+      if (!dayCard && isDay && sampledIntent.type === 'hype') {
+        hint = 'react to how nice the afternoon here is, be specific. never generic, never party talk.';
+      }
       intentInstruction = `\nInstruction for this message: ${hint}\n`;
     }
   }
@@ -1000,11 +1158,22 @@ async function generateMessage(context) {
   // Deep-scenario stances take precedence when present.
   let verdictInstruction = '';
   if (!(context.role && context.stance) && context.venueId && context.nightSeed) {
-    const verdict = getNightlyVerdict(persona.id || personaUsername, context.venueId, context.nightSeed, !!dayCard);
-    verdictInstruction = buildVerdictInstruction(verdict, venueName);
+    const verdict = getNightlyVerdict(persona.id || personaUsername, context.venueId, context.nightSeed, !!dayCard || isDay);
+    verdictInstruction = buildVerdictInstruction(verdict, venueName, isDay);
   }
 
-  const detailInstruction = buildDetailInstruction(dayCard);
+  // Hooks seeded per (venue, night): stable within a venue's night, different
+  // across venues — so the whole town doesn't talk about queues at once.
+  const hookSeed = (context.venueId && context.nightSeed)
+    ? `${context.nightSeed}|${context.venueId}|hooks`
+    : null;
+  const detailInstruction = buildDetailInstruction(dayCard, isDay, hookSeed);
+
+  // Life topics seeded per (persona, day): every persona carries two non-venue
+  // subjects, so the few posts they make range beyond reviewing the place.
+  const lifeTopicInstruction = buildLifeTopicInstruction(
+    context.nightSeed ? `${context.nightSeed}|${personaUsername}|life` : null
+  );
   const shapeInstruction = SHAPE_INSTRUCTIONS[rollMessageShape(isHistoryEmpty)] || '';
 
   let scenarioInstruction = '';
@@ -1045,7 +1214,7 @@ async function generateMessage(context) {
 
   if (variant === 'ambient' || variant === 'ambient_seeding') {
     prompt =
-      getBaseStyle(venueName, isHistoryEmpty, dayCard) +
+      getBaseStyle(venueName, isHistoryEmpty, dayCard, isDay) +
       `Your personality: ${personaStyles[pType] || personaStyles.hype}\n` +
       voiceCard +
       getRules(isHistoryEmpty) +
@@ -1057,6 +1226,7 @@ async function generateMessage(context) {
       crowdInstruction +
       verdictInstruction +
       detailInstruction +
+      lifeTopicInstruction +
       relationshipInstruction +
       intentInstruction +
       topicNegationInstruction +
@@ -1080,7 +1250,7 @@ async function generateMessage(context) {
         `Give a short, concrete explanation of what you meant — name the specific thing. Do NOT answer with another question, and do NOT say "what do you mean".\n`
       : '';
     prompt =
-      getBaseStyle(venueName, false, dayCard) +
+      getBaseStyle(venueName, false, dayCard, isDay) +
       voiceCard +
       getRules() +
       langInstruction +
@@ -1090,6 +1260,7 @@ async function generateMessage(context) {
       crowdInstruction +
       verdictInstruction +
       detailInstruction +
+      lifeTopicInstruction +
       relationshipInstruction +
       scenarioInstruction +
       topicNegationInstruction +
@@ -1104,7 +1275,7 @@ async function generateMessage(context) {
     const emoji = context.reactionEmoji || context.emoji || '🔥';
     const origMsg = context.originalMessage || '';
     prompt =
-      getBaseStyle(venueName, false, dayCard) +
+      getBaseStyle(venueName, false, dayCard, isDay) +
       voiceCard +
       getRules() +
       langInstruction +
