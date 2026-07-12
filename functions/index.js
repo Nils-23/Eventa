@@ -357,10 +357,10 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
         return type === 'CLUB' || type === 'BAR' || type === 'ACTIVITY' || type === 'EVENT' || type === 'FOOD';
       });
 
-    const replyCalendarTime = getPersonaNairobiTime();
+    // Full-pool selection (no alive filter) — MUST match runPersonaActivity's
+    // daily-budget selection so both paths agree on tonight's venues/tiers.
     const nightlifeVenuesForSelect = allVenues.filter(
-      (v) => ['CLUB', 'BAR'].includes((v.type || '').toUpperCase()) &&
-             getVenueShapeNow(v, replyCalendarTime.weekday, replyCalendarTime.hour) >= CHAT_SHAPE_FLOOR
+      (v) => ['CLUB', 'BAR'].includes((v.type || '').toUpperCase())
     );
     const { selected: selectedVenuesForNight, numDeep } = selectChatVenuesForNight(nightlifeVenuesForSelect, seedStr, dateInfo.weekday);
 
@@ -1024,7 +1024,7 @@ function getVenueCrowdTier(venue, allVenues, nowMs = Date.now()) {
 // nightly-seeded picks hold for the entire rollover date, so a conversation
 // builds in one place all night instead of hopping venues every 3h slot.
 function selectChatVenuesForNight(allVenues, seedStr, weekday, nowMs = Date.now()) {
-  const totalSimCap = ['Fri', 'Sat'].includes(weekday) ? 3 : 1;
+  const totalSimCap = ['Fri', 'Sat'].includes(weekday) ? 2 : 1;
   const ranked = [...allVenues].sort(
     (a, b) => getNightlyHotScore(b, seedStr) - getNightlyHotScore(a, seedStr)
   );
@@ -2700,26 +2700,30 @@ exports.runPersonaActivity = functions.runWith({ timeoutSeconds: 540, memory: '5
   // decides when they're alive, so a café chats at 10am and a restaurant at 8pm.
   const daytimeVenues = allVenues.filter((v) => ['ACTIVITY', 'EVENT', 'FOOD'].includes((v.type || '').toUpperCase()));
 
-  // Select among venues alive at THIS hour, so a Tuesday pick lands on bars
-  // (clubs are dead) and a Friday 8pm pick can start at bars before clubs wake.
-  const aliveNightlife = nightlifeVenues.filter((v) => shapeNow(v) >= CHAT_SHAPE_FLOOR);
-  const { selected: selectedVenuesForNight, numDeep } = selectChatVenuesForNight(aliveNightlife, seedStr, weekday, nowMs);
+  // HARD DAILY VENUE BUDGET: select from the FULL pool so the picks are fixed
+  // for the entire rollover date, and apply the alive-gate only at POSTING
+  // time. Selecting from the alive-at-this-hour subset (the previous approach)
+  // silently re-picked venues every hour as curves opened/closed — bars at 8pm,
+  // clubs at 11pm, cafés in the morning, parks at noon — which is exactly what
+  // spread "minimal" chat across 15 venues/day. A pick that is currently
+  // closed simply stays silent this cycle; it does NOT free up a slot.
+  const { selected: nightlyPicks, numDeep } = selectChatVenuesForNight(nightlifeVenues, seedStr, weekday, nowMs);
+  const selectedVenuesForNight = nightlyPicks.filter((v) => shapeNow(v) >= CHAT_SHAPE_FLOOR);
 
-  // Daytime pool: the liveliest activity/event venues open right now.
-  // Weekends carry one more since that's prime outing time.
-  const daytimeCap = ['Sat', 'Sun'].includes(calendarTime.weekday) ? 2 : 1;
-  const daytimeSelected = daytimeVenues
-    .filter((v) => shapeNow(v) >= CHAT_SHAPE_FLOOR)
+  // Daytime pool: ONE ambient daytime venue per day (minimal presence), fixed
+  // for the date; it chats only during the hours its curve says it is open.
+  const daytimeCap = 1;
+  const daytimePicks = [...daytimeVenues]
     .sort((a, b) => getNightlyHotScore(b, seedStr) - getNightlyHotScore(a, seedStr))
     .slice(0, daytimeCap);
-  if (daytimeSelected.length > 0) {
-    console.log(`[Persona] Daytime venues in play: ${daytimeSelected.map((v) => v.name).join(', ')}`);
-  }
+  const daytimeSelected = daytimePicks.filter((v) => shapeNow(v) >= CHAT_SHAPE_FLOOR);
+  console.log(`[Persona] Daily picks — nightlife: ${nightlyPicks.map((v) => v.name).join(', ') || 'none'}; daytime: ${daytimePicks.map((v) => v.name).join(', ') || 'none'} (alive now: ${[...selectedVenuesForNight, ...daytimeSelected].map((v) => v.name).join(', ') || 'none'})`);
 
-  // Track simulated venue tiers. Daytime venues are always ambient — the deep
-  // scenario system is nightlife-shaped.
+  // Track simulated venue tiers. Deep/ambient is decided on the full nightly
+  // pick list (stable), not the alive subset. Daytime venues are always
+  // ambient — the deep scenario system is nightlife-shaped.
   const simulatedVenueTiers = {};
-  selectedVenuesForNight.forEach((venue, index) => {
+  nightlyPicks.forEach((venue, index) => {
     simulatedVenueTiers[venue.id] = index < numDeep ? 'deep' : 'ambient';
   });
   daytimeSelected.forEach((venue) => {
@@ -2727,7 +2731,7 @@ exports.runPersonaActivity = functions.runWith({ timeoutSeconds: 540, memory: '5
   });
 
   // Assign distinct scenarios to deep venues
-  const deepVenues = selectedVenuesForNight.slice(0, numDeep);
+  const deepVenues = nightlyPicks.slice(0, numDeep);
   const assignedScenarios = {};
   const usedScenarioIndexes = new Set();
   deepVenues.forEach((venue) => {
