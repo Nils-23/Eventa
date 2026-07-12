@@ -1,26 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Linking, ActivityIndicator, Modal, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Trash2, Flag, Users, FileText, UserX, X } from 'lucide-react-native';
-import { useNavigation } from '@react-navigation/native';
+import { ArrowLeft, Trash2, Flag, Users, FileText, UserX, X, Star } from 'lucide-react-native';
+import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { auth, firestore } from '../services/firebase';
 import { doc, deleteDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 import { useAppStore } from '../hooks/useAppStore';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
 import { fetchUsername, unhideUser } from '../services/userService';
+import { useCreatorStatus } from '../hooks/useCreatorStatus';
+import { fetchMyApplication, effectiveStatus, CreatorApplication } from '../services/creatorService';
 
 export const SettingsScreen = () => {
   const navigation = useNavigation<any>();
+  const isFocused = useIsFocused();
   const [isDeleting, setIsDeleting] = useState(false);
   const [isHiddenUsersModalVisible, setIsHiddenUsersModalVisible] = useState(false);
   const [hiddenUsernames, setHiddenUsernames] = useState<Record<string, string>>({});
   const [loadingHiddenUsers, setLoadingHiddenUsers] = useState(false);
+  const [creatorApp, setCreatorApp] = useState<CreatorApplication | null>(null);
 
   const user = useAppStore((s) => s.user);
   const hiddenUsers = useAppStore((s) => s.hiddenUsers);
   const setHiddenUsers = useAppStore((s) => s.setHiddenUsers);
   const isAdmin = useAppStore((s) => s.isAdmin);
+  const { isCreator } = useCreatorStatus();
+
+  // Re-check the application whenever the screen regains focus, so the row
+  // reflects a submission made moments ago on the application screen.
+  useEffect(() => {
+    if (user?.uid && isFocused && !isCreator) {
+      fetchMyApplication(user.uid).then(setCreatorApp).catch(() => {});
+    }
+  }, [user?.uid, isFocused, isCreator]);
+
+  // Row state: creator → dashboard; pending/expired → verification screen;
+  // no application or rejected → the application form.
+  const appStatus = creatorApp ? effectiveStatus(creatorApp) : null;
+  const creatorRow = isCreator
+    ? { label: 'Creator Dashboard', route: 'CreatorDashboard' }
+    : appStatus === 'pending' || appStatus === 'expired'
+      ? { label: `Creator Application (${appStatus === 'pending' ? 'Pending' : 'Code Expired'})`, route: 'CreatorVerification' }
+      : { label: 'Apply for Creator Account', route: 'CreatorApplication' };
 
   const handleReport = async () => {
     const url = 'mailto:support@eventas.live?subject=Report%20Issue&body=Please%20describe%20your%20issue%20here...';
@@ -153,9 +175,19 @@ export const SettingsScreen = () => {
           </View>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={styles.row}
+          onPress={() => navigation.navigate(creatorRow.route)}
+        >
+          <View style={styles.rowItemLeft}>
+            <Star color="#FFD700" size={20} />
+            <Text style={styles.rowText}>{creatorRow.label}</Text>
+          </View>
+        </TouchableOpacity>
+
         {isAdmin && (
-          <TouchableOpacity 
-            style={styles.row} 
+          <TouchableOpacity
+            style={styles.row}
             onPress={() => navigation.navigate('AdminDashboard')}
           >
             <View style={styles.rowItemLeft}>

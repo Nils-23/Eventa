@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useState } from 'react';
+import React, { useLayoutEffect, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,11 +12,16 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Calendar, Navigation, MapPin, Share as ShareIcon, Ticket, Clock, Info, MessageSquare, Users } from 'lucide-react-native';
+import { ArrowLeft, Calendar, Navigation, MapPin, Share as ShareIcon, Ticket, Clock, Info, MessageSquare, Users, BadgeCheck, Star, CheckCircle2 } from 'lucide-react-native';
+import Toast from 'react-native-toast-message';
 import { LiveVenue, useLiveVenues } from '../hooks/useLiveVenues';
 import { VenueImage } from '../components/VenueImage';
 import { VenueChat } from '../components/VenueChat';
 import { useAppStore } from '../hooks/useAppStore';
+import { useCreatorStatus } from '../hooks/useCreatorStatus';
+import {
+  CreatorAttendance, subscribeCreatorsAttending, markGoing, cancelGoing,
+} from '../services/creatorService';
 
 const { width } = Dimensions.get('window');
 
@@ -26,6 +31,7 @@ export const EventDetailScreen = () => {
   const insets = useSafeAreaInsets();
   const { event: eventParam } = route.params as { event: LiveVenue };
   const setSelectedMapVenue = useAppStore((s) => s.setSelectedMapVenue);
+  const user = useAppStore((s) => s.user);
   const [isChatVisible, setIsChatVisible] = useState(false);
 
   // The route param is a snapshot from navigation time; re-resolve against the
@@ -34,6 +40,41 @@ export const EventDetailScreen = () => {
   const event = venues.find((v) => v.id === eventParam.id) ?? eventParam;
 
   const isOngoing = event.startDate ? Date.now() >= event.startDate : false;
+
+  // ── Creator Program: "I'm Going" + Creators Attending ─────────────────────
+  // The section is visible to everyone; the button only to approved creators.
+  const { isCreator, creatorProfile } = useCreatorStatus();
+  const [creatorsAttending, setCreatorsAttending] = useState<CreatorAttendance[]>([]);
+  const [togglingGoing, setTogglingGoing] = useState(false);
+
+  useEffect(() => {
+    const unsub = subscribeCreatorsAttending(event.id, setCreatorsAttending);
+    return unsub;
+  }, [event.id]);
+
+  const iAmGoing = !!user && creatorsAttending.some((c) => c.userId === user.uid);
+
+  const handleToggleGoing = async () => {
+    if (!user?.uid || !creatorProfile || togglingGoing) return;
+    setTogglingGoing(true);
+    try {
+      if (iAmGoing) {
+        await cancelGoing(event.id, user.uid);
+        Toast.show({ type: 'success', text1: 'Removed from Creators Attending' });
+      } else {
+        await markGoing(event.id, event.name, user.uid, creatorProfile);
+        Toast.show({
+          type: 'success',
+          text1: "You're on the list!",
+          text2: 'Your attendance is verified when you arrive at the event.',
+        });
+      }
+    } catch (err: any) {
+      Toast.show({ type: 'error', text1: 'Something went wrong', text2: err.message });
+    } finally {
+      setTogglingGoing(false);
+    }
+  };
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -210,6 +251,48 @@ export const EventDetailScreen = () => {
                   </TouchableOpacity>
                 )}
               </View>
+            </View>
+          )}
+
+          {/* Creators Attending — visible to all users */}
+          {(creatorsAttending.length > 0 || isCreator) && (
+            <View style={[styles.card, { borderColor: 'rgba(255, 215, 0, 0.25)', borderWidth: 1 }]}>
+              <View style={styles.creatorsHeader}>
+                <Star color="#FFD700" size={18} />
+                <Text style={styles.creatorsTitle}>Creators Attending</Text>
+                {creatorsAttending.length > 0 && (
+                  <Text style={styles.creatorsCount}>{creatorsAttending.length}</Text>
+                )}
+              </View>
+              {creatorsAttending.length === 0 ? (
+                <Text style={styles.creatorsEmpty}>No creators have confirmed yet — be the first.</Text>
+              ) : (
+                creatorsAttending.map((c) => (
+                  <View key={c.userId} style={styles.creatorRow}>
+                    <BadgeCheck color="#00FFCC" size={16} />
+                    <Text style={styles.creatorRowName} numberOfLines={1}>{c.creatorName}</Text>
+                    <Text style={styles.creatorRowCategory}>{c.category}</Text>
+                    {c.verified && (
+                      <View style={styles.verifiedChip}>
+                        <CheckCircle2 color="#00FFCC" size={11} />
+                        <Text style={styles.verifiedChipText}>HERE</Text>
+                      </View>
+                    )}
+                  </View>
+                ))
+              )}
+              {isCreator && (
+                <TouchableOpacity
+                  style={[styles.goingButton, iAmGoing && styles.goingButtonActive]}
+                  onPress={handleToggleGoing}
+                  disabled={togglingGoing}
+                >
+                  <Star color={iAmGoing ? '#121212' : '#FFD700'} size={16} />
+                  <Text style={[styles.goingButtonText, iAmGoing && styles.goingButtonTextActive]}>
+                    {iAmGoing ? "You're Going ✓" : "I'm Going"}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
 
@@ -390,6 +473,91 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginLeft: 4,
     letterSpacing: 0.5,
+  },
+  creatorsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  creatorsTitle: {
+    color: '#FFD700',
+    fontSize: 15,
+    fontWeight: '700',
+    flex: 1,
+  },
+  creatorsCount: {
+    color: '#FFD700',
+    fontSize: 13,
+    fontWeight: '800',
+    backgroundColor: 'rgba(255, 215, 0, 0.12)',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    overflow: 'hidden',
+  },
+  creatorsEmpty: {
+    color: '#777',
+    fontSize: 13,
+    fontStyle: 'italic',
+  },
+  creatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 7,
+  },
+  creatorRowName: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+    flexShrink: 1,
+  },
+  creatorRowCategory: {
+    color: '#777',
+    fontSize: 12,
+    flex: 1,
+  },
+  verifiedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 204, 0.4)',
+    backgroundColor: 'rgba(0, 255, 204, 0.08)',
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  verifiedChipText: {
+    color: '#00FFCC',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  goingButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.5)',
+    backgroundColor: 'rgba(255, 215, 0, 0.08)',
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  goingButtonActive: {
+    backgroundColor: '#FFD700',
+    borderColor: '#FFD700',
+  },
+  goingButtonText: {
+    color: '#FFD700',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  goingButtonTextActive: {
+    color: '#121212',
   },
   descriptionContainer: {
     marginTop: 10,

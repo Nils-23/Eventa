@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LogOut, Settings, Award, CircleUserRound, Edit2, Check, UserPlus } from 'lucide-react-native';
+import { LogOut, Settings, Award, CircleUserRound, Edit2, Check, UserPlus, BadgeCheck, Star } from 'lucide-react-native';
+import { useCreatorStatus } from '../hooks/useCreatorStatus';
 import { useAppStore } from '../hooks/useAppStore';
 import { auth } from '../services/firebase';
 import { useStories } from '../hooks/useStories';
@@ -26,6 +27,10 @@ export const ProfileScreen = () => {
   const [stats, setStats] = useState({ venues: 0, points: 0 });
   const [unlockedAchievements, setUnlockedAchievements] = useState<string[]>([]);
   const navigation = useNavigation();
+  // Real-time creator state: the badge and stage name appear on approval and
+  // disappear instantly on revocation. Full Name is never on the user doc —
+  // the public profile only ever shows the Creator/Stage name.
+  const { isCreator, creatorProfile } = useCreatorStatus();
 
   useEffect(() => {
     if (user?.uid) {
@@ -139,11 +144,21 @@ export const ProfileScreen = () => {
           ) : (
             <View style={styles.usernameContainer}>
               <Text style={styles.username}>
-                {username}
+                {isCreator && creatorProfile ? creatorProfile.creatorName : username}
               </Text>
-              <TouchableOpacity onPress={handleEditUsername} style={styles.editButton}>
-                <Edit2 color="#888888" size={16} />
-              </TouchableOpacity>
+              {isCreator ? (
+                <BadgeCheck color="#00FFCC" size={20} style={{ marginLeft: 8 }} />
+              ) : (
+                <TouchableOpacity onPress={handleEditUsername} style={styles.editButton}>
+                  <Edit2 color="#888888" size={16} />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+          {isCreator && creatorProfile && (
+            <View style={styles.creatorChip}>
+              <Star color="#FFD700" size={12} />
+              <Text style={styles.creatorChipText}>{creatorProfile.category} Creator</Text>
             </View>
           )}
           <Text style={styles.joinDate}>
@@ -310,6 +325,23 @@ const styles = StyleSheet.create({
   joinDate: {
     fontSize: 14,
     color: '#888888',
+  },
+  creatorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255, 215, 0, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.35)',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 6,
+  },
+  creatorChipText: {
+    color: '#FFD700',
+    fontSize: 12,
+    fontWeight: '700',
   },
   statsContainer: {
     flexDirection: 'row',

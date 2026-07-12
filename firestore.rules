@@ -13,9 +13,19 @@ service cloud.firestore {
     }
 
     // Users
+    // Owners edit their own doc, but creator status is admin-granted only:
+    // without the field guard, anyone could self-assign accountType='creator'.
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAdmin() || (
+        isAuthenticated() && request.auth.uid == userId
+        && !request.resource.data.keys().hasAny(['accountType', 'creator'])
+      );
+      allow update: if isAdmin() || (
+        isAuthenticated() && request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountType', 'creator'])
+      );
+      allow delete: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
     }
 
     // Venues
@@ -72,6 +82,37 @@ service cloud.firestore {
     // Pending Events (Claude Event Curator staging area)
     match /pendingEvents/{eventId} {
       allow read, write: if isAdmin();
+    }
+
+    // ── Creator Program ──────────────────────────────────────────────────
+
+    // Applications. Full Name is PRIVATE: readable only by the applicant and
+    // admins. Owners can never change `status` — approval/rejection is
+    // admin-only. Owners may update a pending application (code regeneration)
+    // and re-apply after a rejection.
+    match /creatorApplications/{userId} {
+      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      allow create: if isAuthenticated() && request.auth.uid == userId
+        && request.resource.data.status == 'pending';
+      allow update: if isAdmin() || (
+        isAuthenticated() && request.auth.uid == userId
+        && request.resource.data.status == 'pending'
+        && (resource.data.status == 'pending' || resource.data.status == 'rejected')
+      );
+      allow delete: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    // Event attendance ("I'm Going"). Visible to everyone in the app; only an
+    // approved creator can declare their own attendance. Geofence verification
+    // updates the creator's own doc.
+    match /creatorAttendance/{attendanceId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.accountType == 'creator';
+      allow update, delete: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
     }
   }
 }

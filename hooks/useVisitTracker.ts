@@ -5,6 +5,7 @@ import { useAppStore } from './useAppStore';
 import { useLiveVenues } from './useLiveVenues';
 import { checkAndUnlockAchievements } from '../services/achievementService';
 import { getMonthlyPointsKey } from '../services/userService';
+import { verifyAttendanceAtVenues } from '../services/creatorService';
 
 export const useVisitTracker = () => {
   const user = useAppStore((s) => s.user);
@@ -97,10 +98,15 @@ export const useVisitTracker = () => {
           }
 
           await updateDoc(userDocRef, updates);
-          
+
           // Check for achievements based on updated visits
           await checkAndUnlockAchievements(user.uid);
         }
+
+        // Creator Program: the same 200m geofence check-in verifies any
+        // "I'm Going" declarations for the venues the user is physically at.
+        // No-op for users with no declared attendance.
+        await verifyAttendanceAtVenues(user.uid, nearbyVenues.map((v) => v.id));
         
       } catch (err) {
         console.warn('[useVisitTracker] Failed to update visit stats:', err);

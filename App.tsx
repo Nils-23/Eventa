@@ -18,6 +18,10 @@ import { AdminReferralsScreen } from './screens/AdminReferralsScreen';
 import { AdminReportsScreen } from './screens/AdminReportsScreen';
 import { AdminAICuratorScreen } from './screens/AdminAICuratorScreen';
 import { EventDetailScreen } from './screens/EventDetailScreen';
+import { CreatorApplicationScreen } from './screens/CreatorApplicationScreen';
+import { CreatorVerificationScreen } from './screens/CreatorVerificationScreen';
+import { CreatorDashboardScreen } from './screens/CreatorDashboardScreen';
+import { AdminCreatorApplicationsScreen } from './screens/AdminCreatorApplicationsScreen';
 import { useAuth } from './hooks/useAuth';
 
 import { useAppStore } from './hooks/useAppStore';
@@ -138,6 +142,10 @@ export default function App() {
                 <Stack.Screen name="AdminReferrals" component={AdminReferralsScreen} />
                 <Stack.Screen name="AdminReports" component={AdminReportsScreen} />
                 <Stack.Screen name="AdminAICurator" component={AdminAICuratorScreen} />
+                <Stack.Screen name="CreatorApplication" component={CreatorApplicationScreen} />
+                <Stack.Screen name="CreatorVerification" component={CreatorVerificationScreen} />
+                <Stack.Screen name="CreatorDashboard" component={CreatorDashboardScreen} />
+                <Stack.Screen name="AdminCreatorApplications" component={AdminCreatorApplicationsScreen} />
               </>
             )}
           </Stack.Navigator>

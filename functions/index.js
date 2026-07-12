@@ -1463,6 +1463,22 @@ exports.inviteRedirect = functions.https.onRequest(async (req, res) => {
         userAgent: userAgent,
         timestamp: admin.firestore.FieldValue.serverTimestamp()
       });
+
+      // Creator Program: count the click on the owning creator's stats doc so
+      // the creator dashboard's "Link Clicks" metric is live. Non-fatal.
+      try {
+        const creatorClickSnap = await db.collection('creators')
+          .where('referralCode', '==', cleanCode.toUpperCase())
+          .limit(1)
+          .get();
+        if (!creatorClickSnap.empty) {
+          await creatorClickSnap.docs[0].ref.update({
+            totalClicks: admin.firestore.FieldValue.increment(1)
+          });
+        }
+      } catch (clickErr) {
+        console.warn('Creator click counting failed (non-fatal):', clickErr.message);
+      }
     }
 
     // In production, redirects to Store links:
@@ -1880,6 +1896,31 @@ exports.onUserCreated = functions.firestore
     } catch (error) {
       console.error(`Error in onUserCreated trigger for user ${newUserId}:`, error);
     }
+  });
+
+// 🏅 Creator Program: credit a referred user's FIRST verified venue visit to the
+// referring creator. Fires when the geofence visit tracker flips
+// hasAttendedFirstVenue on the user doc; the creators/{id} doc accumulates
+// firstVisits for the creator dashboard. Counting server-side keeps clients
+// from ever writing to another account's stats.
+exports.onFirstVenueVisit = functions.firestore
+  .document('users/{userId}')
+  .onUpdate(async (change, context) => {
+    const before = change.before.data() || {};
+    const after = change.after.data() || {};
+
+    const flipped = !before.hasAttendedFirstVenue && after.hasAttendedFirstVenue === true;
+    if (!flipped || !after.referredByCreator) return null;
+
+    try {
+      await db.collection('creators').doc(after.referredByCreator).update({
+        firstVisits: admin.firestore.FieldValue.increment(1)
+      });
+      console.log(`[Creator] First venue visit by ${context.params.userId} credited to creator ${after.referredByCreator}`);
+    } catch (err) {
+      console.warn('[Creator] firstVisits increment failed (non-fatal):', err.message);
+    }
+    return null;
   });
 
 // Cleanup duplicate expoPushTokens across users to avoid multiple delivery to the same device

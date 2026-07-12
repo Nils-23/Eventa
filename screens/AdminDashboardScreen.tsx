@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Modal, ActivityIndicator, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X, Activity, Flag, Sparkles } from 'lucide-react-native';
+import { ArrowLeft, Users, Settings, MapPin, Zap, BadgeCheck, Wine, X, Activity, Flag, Sparkles, Star } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, query, where, getDocs, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
@@ -196,9 +196,22 @@ export const AdminDashboardScreen = () => {
             <Text style={styles.cardDesc}>Review and act on reports submitted by users for inappropriate venue details, chat messages, or stories.</Text>
           </TouchableOpacity>
 
+          {/* Creator Program Applications */}
+          <TouchableOpacity
+            style={styles.card}
+            onPress={() => navigation.navigate('AdminCreatorApplications')}
+          >
+            <View style={[styles.iconContainer, { backgroundColor: 'rgba(255, 215, 0, 0.1)' }]}>
+              <Star color="#FFD700" size={28} />
+              <BadgeCheck color="#00FFCC" size={20} style={styles.subIcon} />
+            </View>
+            <Text style={styles.cardTitle}>Creator Applications</Text>
+            <Text style={styles.cardDesc}>Review Creator Program applications, verify DM codes, and approve, reject, or revoke creators.</Text>
+          </TouchableOpacity>
+
           {/* AI Event Curator */}
-          <TouchableOpacity 
-            style={styles.card} 
+          <TouchableOpacity
+            style={styles.card}
             onPress={() => navigation.navigate('AdminAICurator')}
           >
             <View style={[styles.iconContainer, { backgroundColor: 'rgba(0, 255, 204, 0.1)' }]}>
