@@ -93,7 +93,7 @@ const PERSONAS = [
     name: 'Aisha Ndegwa',
     username: 'ClubHopper5902',
     personalityType: 'hype_person',
-    preferredVenueTypes: ['Club', 'Activity'],
+    preferredVenueTypes: ['Club', 'Activity', 'Food'],
     voice: {
       slang: ['slay', 'aki'],
       emojiStyle: 'signature',
@@ -211,7 +211,7 @@ const PERSONAS = [
     name: 'Lydia Chebet',
     username: 'VibeChaser2719',
     personalityType: 'question_asker',
-    preferredVenueTypes: ['Activity', 'Bar'],
+    preferredVenueTypes: ['Activity', 'Bar', 'Food'],
     voice: {
       slang: ['woiye', 'lowkey'],
       emojiStyle: 'signature',
@@ -257,7 +257,7 @@ const PERSONAS = [
     name: 'Felix Oduya',
     username: 'PartyAnimal4819',
     personalityType: 'opinion_giver',
-    preferredVenueTypes: ['Bar', 'Event'],
+    preferredVenueTypes: ['Bar', 'Event', 'Food'],
     voice: {
       slang: ['cooked', 'bruv'],
       emojiStyle: 'signature',
@@ -272,7 +272,7 @@ const PERSONAS = [
     name: 'Grace Wambui',
     username: 'VibeCheck3829',
     personalityType: 'opinion_giver',
-    preferredVenueTypes: ['Club', 'Event'],
+    preferredVenueTypes: ['Club', 'Event', 'Food'],
     voice: {
       slang: ['surely', 'the way'],
       emojiStyle: 'stacked',
@@ -287,7 +287,7 @@ const PERSONAS = [
     name: 'Shem Mutua',
     username: 'Raver5902',
     personalityType: 'opinion_giver',
-    preferredVenueTypes: ['Bar', 'Activity'],
+    preferredVenueTypes: ['Bar', 'Activity', 'Food'],
     voice: {
       slang: ['boss', 'mid'],
       emojiStyle: 'none',
@@ -376,7 +376,7 @@ const PERSONAS = [
     name: 'Diana Njeri',
     username: 'MoonlightViber8291',
     personalityType: 'event_enthusiast',
-    preferredVenueTypes: ['Event', 'Activity'],
+    preferredVenueTypes: ['Event', 'Activity', 'Food'],
     voice: {
       slang: ['lowkey', 'woiye'],
       emojiStyle: 'rare',
