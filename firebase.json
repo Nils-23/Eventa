@@ -27,6 +27,18 @@
       "**/.*",
       "**/node_modules/**"
     ],
+    "redirects": [
+      {
+        "source": "/venue/:id",
+        "destination": "/#ssr-event-:id",
+        "type": 302
+      },
+      {
+        "source": "/event/:id",
+        "destination": "/#ssr-event-:id",
+        "type": 302
+      }
+    ],
     "rewrites": [
       {
         "source": "/invite/**",
