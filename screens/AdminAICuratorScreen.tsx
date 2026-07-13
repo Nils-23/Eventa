@@ -322,7 +322,7 @@ export const AdminAICuratorScreen = () => {
         // as type Event so they get the start/end attendance envelope (a food
         // festival is an Event; a permanent restaurant is created as type Food
         // in the venue admin, not here).
-        type: (event.category === 'Club' || event.category === 'Bar' || event.category === 'Food') ? 'Event' : (event.category || 'Event'),
+        type: 'Event',
         startDate,
         expirationDate,
         imageUrl,
@@ -381,7 +381,7 @@ export const AdminAICuratorScreen = () => {
         // as type Event so they get the start/end attendance envelope (a food
         // festival is an Event; a permanent restaurant is created as type Food
         // in the venue admin, not here).
-        type: (event.category === 'Club' || event.category === 'Bar' || event.category === 'Food') ? 'Event' : (event.category || 'Event'),
+        type: 'Event',
           startDate,
           expirationDate,
           imageUrl,

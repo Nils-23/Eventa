@@ -111,22 +111,42 @@ export async function resolveVenueImages(venues: any[]): Promise<Record<string, 
 
   // We process resolution sequentially to avoid overloading the API
   for (const venue of venues) {
-    // 1. Admin custom thumbnail override (highest priority)
-    if (venue.customImageUrl) {
-      result[venue.id] = venue.customImageUrl;
-      continue;
-    }
+    // For event type, prioritize customImageUrl/img, then googleImageUrl, then imageUrl
+    if (venue.type === 'Event') {
+      if (venue.customImageUrl) {
+        result[venue.id] = venue.customImageUrl;
+        continue;
+      }
+      if (venue.img) {
+        result[venue.id] = venue.img;
+        continue;
+      }
+      if (venue.googleImageUrl) {
+        result[venue.id] = venue.googleImageUrl;
+        continue;
+      }
+      if (venue.imageUrl) {
+        result[venue.id] = venue.imageUrl;
+        continue;
+      }
+    } else {
+      // 1. Admin custom thumbnail override (highest priority)
+      if (venue.customImageUrl) {
+        result[venue.id] = venue.customImageUrl;
+        continue;
+      }
 
-    // 2. Google Maps fetch (middle priority)
-    if (venue.googleImageUrl) {
-      result[venue.id] = venue.googleImageUrl;
-      continue;
-    }
+      // 2. Google Maps fetch (middle priority)
+      if (venue.googleImageUrl) {
+        result[venue.id] = venue.googleImageUrl;
+        continue;
+      }
 
-    // 3. Direct/Legacy imageUrl field
-    if (venue.imageUrl) {
-      result[venue.id] = venue.imageUrl;
-      continue;
+      // 3. Direct/Legacy imageUrl field
+      if (venue.imageUrl) {
+        result[venue.id] = venue.imageUrl;
+        continue;
+      }
     }
 
     // 4. Default category thumbnail

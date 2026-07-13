@@ -23,6 +23,7 @@ export interface LiveVenue {
   imageUrl?: string;
   googleImageUrl?: string;
   customImageUrl?: string;
+  img?: string;
   address?: string;
   simulatedUsersCount?: number;
   isOverride?: boolean;
@@ -66,6 +67,7 @@ interface RawVenue {
   imageUrl?: string;
   googleImageUrl?: string;
   customImageUrl?: string;
+  img?: string;
   address?: string;
   simulatedUsersCount?: number;
   isOverride?: boolean;
@@ -450,7 +452,10 @@ function computeLiveData(
         ? Math.round(haversineMeters(userLat, userLng, venue.latitude, venue.longitude) / 10) * 10 / 1000
         : null;
 
-    const resolvedImageUrl = venue.customImageUrl || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id];
+    const resolvedImageUrl =
+      venue.type === 'Event'
+        ? (venue.customImageUrl || venue.img || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id])
+        : (venue.customImageUrl || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id]);
 
     // Filter out future scheduled events/activities/venues that haven't started yet
     if (venue.startDate && venue.startDate > now) {
