@@ -25,6 +25,7 @@ import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { realtimeDB, firestore, storage } from '../services/firebase';
 import { useAppStore } from '../hooks/useAppStore';
+import * as Crypto from 'expo-crypto';
 import { fetchUsername, hideUser } from '../services/userService';
 import { checkAndUnlockAchievements, ACHIEVEMENTS } from '../services/achievementService';
 import { createReport } from '../services/reportService';
@@ -214,6 +215,34 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
   const [sendAsSimulated, setSendAsSimulated] = useState(false);
+  // Admin "simulated user" identity is PINNED: every simulated message reuses this same
+  // id/name so the admin can hold a continuous conversation as one persona (previously a
+  // fresh random id was minted per message, so each message looked like a different user).
+  // Shuffle mints a new persona on demand. The ref mirrors state so the async send paths
+  // never read a stale value between a set and the next render.
+  const [simPersona, setSimPersona] = useState<{ id: string; name: string } | null>(null);
+  const simPersonaRef = useRef<{ id: string; name: string } | null>(null);
+  const setPersona = (p: { id: string; name: string } | null) => {
+    simPersonaRef.current = p;
+    setSimPersona(p);
+  };
+  const makeSimPersona = async () => {
+    // Globally-unique id via a v4 UUID (no collisions across messages, devices, or sessions),
+    // kept distinct from seeded personas (persona_*) and real Firebase UIDs by the sim_admin_
+    // prefix. The trailing numeric segment stays so fetchUsername derives a stable name — the
+    // UUID has no underscores, so split('_').pop() still lands on that number.
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const id = `sim_admin_${Crypto.randomUUID()}_${randomNum}`;
+    const name = await fetchUsername(id);
+    return { id, name };
+  };
+  // Returns the pinned persona, creating one on first use.
+  const ensureSimPersona = async () => {
+    if (simPersonaRef.current) return simPersonaRef.current;
+    const p = await makeSimPersona();
+    setPersona(p);
+    return p;
+  };
   const [isStickerPickerVisible, setIsStickerPickerVisible] = useState(false);
   const [isUploadingCustom, setIsUploadingCustom] = useState(false);
   const [selectedStoryForViewer, setSelectedStoryForViewer] = useState<any[]>([]);
@@ -354,9 +383,9 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
       let senderBadge: string | null = activeBadge;
 
       if (isAdmin && sendAsSimulated) {
-        const randomNum = Math.floor(1000 + Math.random() * 9000);
-        senderId = `sim_admin_${Date.now()}_${randomNum}`;
-        senderName = await fetchUsername(senderId);
+        const persona = await ensureSimPersona();
+        senderId = persona.id;
+        senderName = persona.name;
         senderBadge = null; // Simulated users don't get the admin's active badge
       } else {
         senderName = await fetchUsername(user.uid);
@@ -433,9 +462,9 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
       let senderBadge: string | null = activeBadge;
 
       if (isAdmin && sendAsSimulated) {
-        const randomNum = Math.floor(1000 + Math.random() * 9000);
-        senderId = `sim_admin_${Date.now()}_${randomNum}`;
-        senderName = await fetchUsername(senderId);
+        const persona = await ensureSimPersona();
+        senderId = persona.id;
+        senderName = persona.name;
         senderBadge = null;
       } else {
         senderName = await fetchUsername(user.uid);
@@ -505,9 +534,9 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
       let senderBadge: string | null = activeBadge;
 
       if (isAdmin && sendAsSimulated) {
-        const randomNum = Math.floor(1000 + Math.random() * 9000);
-        senderId = `sim_admin_${Date.now()}_${randomNum}`;
-        senderName = await fetchUsername(senderId);
+        const persona = await ensureSimPersona();
+        senderId = persona.id;
+        senderName = persona.name;
         senderBadge = null;
       } else {
         senderName = await fetchUsername(user.uid);
@@ -1061,15 +1090,31 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                     My Admin Profile
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[styles.adminToggleButton, sendAsSimulated && styles.adminToggleButtonActive]}
-                  onPress={() => setSendAsSimulated(true)}
+                  onPress={() => { setSendAsSimulated(true); ensureSimPersona(); }}
                 >
                   <Text style={[styles.adminToggleText, sendAsSimulated && styles.adminToggleTextActive]}>
                     Simulated User
                   </Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          )}
+
+          {/* Pinned simulated persona: all simulated messages send as this identity so a
+              conversation stays consistent; ↻ mints a new persona. */}
+          {isAdmin && sendAsSimulated && (
+            <View style={styles.simPersonaBar}>
+              <Text style={styles.simPersonaLabel}>Speaking as </Text>
+              <Text style={styles.simPersonaName}>{simPersona?.name ?? '…'}</Text>
+              <TouchableOpacity
+                style={styles.simShuffleBtn}
+                onPress={async () => setPersona(await makeSimPersona())}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.simShuffleText}>↻ New persona</Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -1605,6 +1650,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   
+  // Pinned simulated-persona bar
+  simPersonaBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#1A1626',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2F1A4A',
+  },
+  simPersonaLabel: {
+    color: '#9A8FB0',
+    fontSize: 12,
+  },
+  simPersonaName: {
+    color: '#00FFCC',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  simShuffleBtn: {
+    marginLeft: 'auto',
+    backgroundColor: '#241B36',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#3A2A55',
+  },
+  simShuffleText: {
+    color: '#00FFCC',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   // Admin posting toggle styles
   adminToggleContainer: {
     flexDirection: 'row',
