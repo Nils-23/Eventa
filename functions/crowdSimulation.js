@@ -15,6 +15,8 @@
  * RTDB under `simulation_state` so it survives across stateless invocations.
  */
 
+const crypto = require('crypto');
+
 const MAX_RADIUS_METERS = 200; // sims roam within 200m of their venue
 const ROAM_STEP_METERS = 30;   // per-cycle micro-movement (cycles are ~2 min)
 const HOT_ROTATION_SLOT_MS = 3 * 60 * 60 * 1000;
@@ -655,7 +657,9 @@ async function runCrowdSimulationCycle(db, rtdb) {
       for (let i = 0; i < finalDiff; i++) {
         const loc = offsetLocation(venue.latitude, venue.longitude, MAX_RADIUS_METERS / 2);
         const newUser = {
-          user_id: `sim_${venue.id}_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+          // UUID suffix guarantees a globally-unique id (no same-ms collisions). Structure
+          // stays sim_<venueId>_<ts>_<x> so the client's venueId parse (slice(1,-2)) still works.
+          user_id: `sim_${venue.id}_${Date.now()}_${crypto.randomUUID()}`,
           venueId: venue.id,
           centerLat: venue.latitude,
           centerLon: venue.longitude,

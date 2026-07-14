@@ -1,6 +1,7 @@
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
+const crypto = require("crypto");
 const { generateMessage } = require("./generator");
 const { SCENARIOS, getCoreStanceForScenario, getSecondaryStanceForScenario, STRANGER_OK_SCENARIOS } = require("./scenarios");
 const { runCrowdSimulationCycle, getProfile, getAttendanceShape, inferProfileKey } = require("./crowdSimulation");
@@ -2078,7 +2079,8 @@ exports.checkRecurringStories = functions.pubsub.schedule("every 5 minutes").onR
         // 1. Write the new story doc
         const newStoryRef = db.collection('stories').doc();
         batch.set(newStoryRef, {
-          user_id: `sim_admin_${Date.now()}`,
+          // Unique id (UUID) + numeric tail so fetchUsername still derives a stable name.
+          user_id: `sim_admin_${crypto.randomUUID()}_${Math.floor(1000 + Math.random() * 9000)}`,
           venue_id: schedule.venueId,
           media_url: schedule.mediaUrl,
           media_type: schedule.mediaType,
