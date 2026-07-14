@@ -5,6 +5,20 @@ import { Plus } from 'lucide-react-native';
 import { LiveVenue } from '../contexts/LiveVenuesContext';
 import { StoryData } from '../services/storyService';
 import { VenueImage } from './VenueImage';
+import { useAppStore } from '../hooks/useAppStore';
+
+// Normalize a story's created_at (Firestore Timestamp | number | string) to epoch ms.
+const toMs = (ts: any): number => {
+  if (!ts) return 0;
+  if (typeof ts === 'number') return ts;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+  if (typeof ts === 'string') {
+    const d = Date.parse(ts);
+    return isNaN(d) ? 0 : d;
+  }
+  return 0;
+};
 
 interface StoriesTrayProps {
   venues: LiveVenue[];
@@ -22,14 +36,21 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
   onOpenVenueStories,
 }) => {
   const insets = useSafeAreaInsets();
+  const viewedStories = useAppStore((s) => s.viewedStories);
 
-  // Venues that currently have active stories, busiest first. This is the whole point of the
-  // tray: a one-tap, always-visible way into stories now that pins are hidden.
-  const storyVenues = useMemo(() => {
-    const withStories = new Set(stories.map((s) => s.venue_id).filter(Boolean));
-    return venues
-      .filter((v) => withStories.has(v.id))
+  // Venues that currently have active stories (busiest first) plus each venue's newest story
+  // timestamp — used to tell whether the user has already seen that venue's latest story.
+  const { storyVenues, latestTsByVenue } = useMemo(() => {
+    const latestTs: Record<string, number> = {};
+    for (const s of stories) {
+      if (!s.venue_id) continue;
+      const ms = toMs(s.created_at);
+      if (ms > (latestTs[s.venue_id] || 0)) latestTs[s.venue_id] = ms;
+    }
+    const withStories = venues
+      .filter((v) => latestTs[v.id] !== undefined)
       .sort((a, b) => b.userCount - a.userCount);
+    return { storyVenues: withStories, latestTsByVenue: latestTs };
   }, [venues, stories]);
 
   return (
@@ -51,14 +72,17 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
           </Text>
         </TouchableOpacity>
 
-        {storyVenues.map((v) => (
+        {storyVenues.map((v) => {
+          // Viewed = user opened this venue's stories after its newest story was posted.
+          const viewed = viewedStories[v.id] !== undefined && viewedStories[v.id] >= (latestTsByVenue[v.id] || 0);
+          return (
           <TouchableOpacity
             key={v.id}
             style={styles.item}
             activeOpacity={0.8}
             onPress={() => onOpenVenueStories(v)}
           >
-            <View style={[styles.ring, styles.storyRing]}>
+            <View style={[styles.ring, viewed ? styles.viewedRing : styles.storyRing]}>
               {/* VenueImage guarantees a picture: it falls back to a type-based image both
                   when imageUrl is missing AND when the URL fails to load — so a story bubble
                   never renders blank (this is what the raw <Image> got wrong). */}
@@ -73,7 +97,8 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
               {v.name}
             </Text>
           </TouchableOpacity>
-        ))}
+          );
+        })}
       </ScrollView>
     </View>
   );
@@ -116,6 +141,10 @@ const styles = StyleSheet.create({
   },
   storyRing: {
     borderColor: '#FF00CC',
+  },
+  viewedRing: {
+    // Already-seen: drop the vivid pink for a muted grey, like Instagram's viewed state.
+    borderColor: '#555',
   },
   addRing: {
     borderColor: '#00FFCC',

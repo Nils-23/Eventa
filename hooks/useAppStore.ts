@@ -36,6 +36,12 @@ interface AppState {
   lastViewedChats: Record<string, number>;
   setLastViewedChats: (lastViewed: Record<string, number>) => void;
   updateLastViewedChat: (venueId: string) => void;
+  // venueId -> timestamp the user last opened that venue's stories. A venue's ring reads as
+  // "viewed" (greyed) while this is >= its newest story's created_at, and re-colours when a
+  // newer story arrives.
+  viewedStories: Record<string, number>;
+  setViewedStories: (viewed: Record<string, number>) => void;
+  markVenueStoriesViewed: (venueId: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -87,4 +93,24 @@ export const useAppStore = create<AppState>((set) => ({
     });
     return { lastViewedChats: updated };
   }),
+  viewedStories: {},
+  setViewedStories: (viewedStories) => set({ viewedStories }),
+  markVenueStoriesViewed: (venueId) => set((state) => {
+    const updated = { ...state.viewedStories, [venueId]: Date.now() };
+    AsyncStorage.setItem('eventas_stories_viewed', JSON.stringify(updated)).catch(() => {});
+    return { viewedStories: updated };
+  }),
 }));
+
+// Hydrate the persisted "viewed stories" ring state once on startup.
+AsyncStorage.getItem('eventas_stories_viewed')
+  .then((stored) => {
+    if (stored) {
+      try {
+        useAppStore.getState().setViewedStories(JSON.parse(stored));
+      } catch {
+        // ignore corrupt cache
+      }
+    }
+  })
+  .catch(() => {});

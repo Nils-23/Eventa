@@ -499,7 +499,7 @@ export const MapScreen = () => {
           latitude: selectedMapVenue.latitude,
           longitude: selectedMapVenue.longitude,
         },
-        zoom: 19.5,
+        zoom: 18,
         pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
       }, { duration: 1000 });
     }
@@ -558,7 +558,7 @@ export const MapScreen = () => {
               longitude: location.coords.longitude,
             },
             pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
-            heading: location.coords.heading || 0,
+            heading: 0, // keep north-up; rotating to the device heading during the fly-in re-rasterizes the heatmap tiles mid-animation and breaks them
             zoom: 12.2, // Wide city view showing hot zones
           }, { duration: 2000 });
         }
@@ -599,7 +599,7 @@ export const MapScreen = () => {
           longitude: location.coords.longitude,
         },
         pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
-        heading: location.coords.heading || 0,
+        heading: 0, // keep north-up; rotating re-rasterizes heatmap tiles mid-animation and breaks them
         zoom: 16,
       }, { duration: 1500 });
     } catch (error) {
@@ -831,6 +831,15 @@ export const MapScreen = () => {
     loop.start();
     return () => loop.stop();
   }, [livePulse]);
+
+  // Mark a venue's stories as viewed when the story viewer opens for it (any entry point:
+  // tray, venue card, or live feed). Greys out that venue's ring in the stories tray.
+  useEffect(() => {
+    if (isViewerVisible && selectedMapVenue) {
+      useAppStore.getState().markVenueStoriesViewed(selectedMapVenue.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isViewerVisible, selectedMapVenue?.id]);
 
   const canAddGlobalStory = closestLiveVenue.distance <= 200;
 
@@ -1198,7 +1207,7 @@ export const MapScreen = () => {
           setSelectedMapVenue(venueObj);
           mapRef.current?.animateCamera({
             center: { latitude: venueObj.latitude, longitude: venueObj.longitude },
-            zoom: 19.5,
+            zoom: 18,
             pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
           }, { duration: 1000 });
         }}
@@ -1225,7 +1234,7 @@ export const MapScreen = () => {
               latitude: venueObj.latitude,
               longitude: venueObj.longitude,
             },
-            zoom: 19.5,
+            zoom: 18,
             pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
           }, { duration: 1000 });
         }}
