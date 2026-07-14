@@ -427,7 +427,12 @@ function computeLiveData(
     }
     if (venueId) {
       simCountsMap[venueId] = (simCountsMap[venueId] || 0) + 1;
-      addHeat(venueId, loc, SIM_STALE_MS);
+      // Sims get FULL, STABLE weight (not age-decayed). The server refreshes sim timestamps
+      // every ~2 min and despawns them discretely, so the linear decay just oscillates each
+      // sim's weight ~0.8↔1.0 every cycle — enough to cross a heat quantization step and force
+      // a native heatmap repaint (the visible flicker). A sim's contribution now changes only
+      // when it actually spawns/despawns. Real-user decay (2h cool-down) is unchanged above.
+      heatWeightMap[venueId] = (heatWeightMap[venueId] || 0) + 1;
     }
   }
 
