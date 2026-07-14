@@ -1,9 +1,9 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import * as Location from 'expo-location';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform, AppState, Animated, PanResponder } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Marker, Heatmap } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, MarkerAnimated, Heatmap, MapPressEvent } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LocateFixed, Plus, Minus, MapPin, Camera, Wrench, Flag, MessageSquare, Users, Navigation as NavigationIcon, TrendingUp, TrendingDown } from 'lucide-react-native';
+import { LocateFixed, MapPin, Flag, MessageSquare, Users, Navigation as NavigationIcon, TrendingUp, TrendingDown } from 'lucide-react-native';
 import { theme } from '../config/theme';
 import { createReport } from '../services/reportService';
 import { useLiveVenues, LiveVenue as LiveVenue } from '../hooks/useLiveVenues';
@@ -12,12 +12,14 @@ import Toast from 'react-native-toast-message';
 import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
+import { StoriesTray } from '../components/StoriesTray';
 import { uploadStoryMedia, createStory, deleteStory } from '../services/storyService';
 import { getDistanceInMeters } from '../utils/locationUtils';
 import { useAppStore } from '../hooks/useAppStore';
 import { VenueChat } from '../components/VenueChat';
 import { VenueImage } from '../components/VenueImage';
 import { LiveFeedModal } from '../components/LiveFeedModal';
+import { CityPulseModal } from '../components/CityPulseModal';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
 
 const DARK_MAP_STYLE = [
@@ -267,8 +269,22 @@ const INITIAL_CAMERA = {
   pitch: 0,
   heading: 0,
   altitude: 12000,
-  zoom: 12.2, // Wide city view
+  zoom: 11.5, // Wide city view (a bit zoomed out, leaves room to zoom out to the minZoomLevel floor)
 };
+
+// Venue pins are hidden when zoomed out (they clutter the map and overpower the
+// heatmap) and automatically turn on once the user zooms in to this level or closer.
+const PIN_VISIBILITY_ZOOM = 14;
+
+// Tapping a hot area (while zoomed out) flies the camera in to this zoom — comfortably
+// past PIN_VISIBILITY_ZOOM so the pins reveal — centered on the nearest hot spot. This
+// makes "just tap the heat" work for users who don't realize they need to pinch-zoom.
+const HEAT_TAP_ZOOM = 16;
+// How close (metres) a tap must land to a heat point to count as tapping "the heat".
+const HEAT_TAP_RADIUS_M = 1500;
+// Duration (ms) of the pin fade in/out when crossing PIN_VISIBILITY_ZOOM, so pins ease
+// in/out instead of popping.
+const PIN_FADE_MS = 350;
 
 export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
@@ -278,7 +294,6 @@ export const MapScreen = () => {
   const userLocation = useAppStore((s) => s.userLocation);
   const selectedMapVenue = useAppStore((s) => s.selectedMapVenue);
   const setSelectedMapVenue = useAppStore((s) => s.setSelectedMapVenue);
-  const isAdmin = useAppStore((s) => s.isAdmin);
   const pendingVenueAction = useAppStore((s) => s.pendingVenueAction);
   const setPendingVenueAction = useAppStore((s) => s.setPendingVenueAction);
   const unreadChatCount = useAppStore((s) => s.unreadChatCount);
@@ -297,12 +312,8 @@ export const MapScreen = () => {
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [chatVenue, setChatVenue] = useState<{ id: string; name: string } | null>(null);
   const [isLiveFeedVisible, setIsLiveFeedVisible] = useState(false);
+  const [isCityPulseVisible, setIsCityPulseVisible] = useState(false);
   const [isMapReady, setIsMapReady] = useState(false);
-
-  // Debug states
-  const [isDebugMode, setIsDebugMode] = useState(false);
-  const [showHeatmapOverlay, setShowHeatmapOverlay] = useState(true);
-  const [showRawPoints, setShowRawPoints] = useState(false);
 
   // ─── Venue card entrance + swipe-down dismiss ────────────────────────
   const cardTranslateY = useRef(new Animated.Value(0)).current;
@@ -346,6 +357,90 @@ export const MapScreen = () => {
 
   // Effect to stop marker tracking after mount to boost performance
   const [trackMarkerChanges, setTrackMarkerChanges] = useState(true);
+
+  // Venue pins fade in/out by zoom (see PIN_VISIBILITY_ZOOM). Start hidden because the
+  // initial camera opens zoomed out. The ref mirrors the state so the settle handler can
+  // bail without depending on (and re-creating itself for) the latest render's value.
+  const [pinsVisible, setPinsVisible] = useState(false);
+  const pinsVisibleRef = useRef(false);
+  // Drives the native marker opacity so pins fade rather than pop. Animating the marker's
+  // native alpha (not its content) means no per-frame re-rasterization — tracksViewChanges
+  // is untouched, so the fade doesn't reintroduce the tap-latency regression.
+  const pinOpacity = useRef(new Animated.Value(0)).current;
+
+  // Fires only when a pan/zoom gesture settles (not per frame). We do work ONLY when the
+  // pins' visibility actually flips across the zoom threshold, so ordinary gestures within
+  // a zoom band trigger no setState / re-render / marker re-rasterization — this is what
+  // keeps the tap-latency invariant (see the note above <MapView/>) intact.
+  const handleRegionChangeComplete = useCallback(async () => {
+    const cam = await mapRef.current?.getCamera();
+    const zoom = cam?.zoom;
+    if (zoom === undefined) return;
+    const shouldShow = zoom >= PIN_VISIBILITY_ZOOM;
+    if (shouldShow === pinsVisibleRef.current) return;
+    pinsVisibleRef.current = shouldShow;
+
+    // Stop any in-flight fade so a quick re-cross reverses smoothly instead of fighting it.
+    pinOpacity.stopAnimation();
+    if (shouldShow) {
+      // Mount the pins, then fade them in. Briefly re-enable tracking (and remount via
+      // focusEpoch) so their SVG bitmaps capture — Android renders blank pins otherwise.
+      setPinsVisible(true);
+      setFocusEpoch(e => e + 1);
+      setTrackMarkerChanges(true);
+      setTimeout(() => setTrackMarkerChanges(false), 1500);
+      Animated.timing(pinOpacity, {
+        toValue: 1,
+        duration: PIN_FADE_MS,
+        useNativeDriver: false, // opacity is a native marker prop, not a transform
+      }).start();
+    } else {
+      // Fade out first, then unmount once the fade actually finishes (finished === false
+      // means a fade-in interrupted us, so we leave the pins mounted).
+      Animated.timing(pinOpacity, {
+        toValue: 0,
+        duration: PIN_FADE_MS,
+        useNativeDriver: false,
+      }).start(({ finished }) => {
+        if (finished) setPinsVisible(false);
+      });
+    }
+  }, [pinOpacity]);
+
+  // Tapping the heat while zoomed out flies the camera in to the nearest hot spot so pins
+  // reveal (see HEAT_TAP_ZOOM). Discoverability: a tap is most users' first instinct, so it
+  // should "just work" even if they never think to pinch-zoom. Once pins are already showing
+  // we leave taps alone. Marker presses call stopPropagation, so this never fires on a pin.
+  const handleMapPress = useCallback((e: MapPressEvent) => {
+    if (pinsVisibleRef.current) return;
+    const tap = e.nativeEvent.coordinate;
+    if (!tap) return;
+
+    // Snap to the nearest hot point (skip the far-south heatmap calibration anchor).
+    let nearest: { latitude: number; longitude: number } | null = null;
+    let nearestDist = Infinity;
+    for (const p of heatPoints) {
+      if (p.latitude <= -60) continue;
+      const d = getDistanceInMeters(tap.latitude, tap.longitude, p.latitude, p.longitude);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearest = p;
+      }
+    }
+    if (!nearest || nearestDist > HEAT_TAP_RADIUS_M) return;
+
+    // Smooth fly-in. Pitch/heading stay flat (a tilted camera breaks heatmap blob sizing —
+    // see INITIAL_CAMERA). onRegionChangeComplete fires when this settles and flips the pins on.
+    mapRef.current?.animateCamera(
+      {
+        center: { latitude: nearest.latitude, longitude: nearest.longitude },
+        zoom: HEAT_TAP_ZOOM,
+        pitch: 0,
+        heading: 0,
+      },
+      { duration: 700 }
+    );
+  }, [heatPoints]);
 
   // Briefly re-enable tracking when App returns to foreground to redraw any OS-dropped bitmaps.
   // Skipped when this screen isn't the focused tab — capturing the marker bitmaps while the
@@ -512,18 +607,6 @@ export const MapScreen = () => {
         text1: 'Location Error',
         text2: 'Could not retrieve your location. Please check your GPS settings and try again.'
       });
-    }
-  };
-
-  const handleZoom = async (zoomIn: boolean) => {
-    try {
-      const camera = await mapRef.current?.getCamera();
-      if (camera && camera.zoom !== undefined) {
-        camera.zoom += zoomIn ? 1 : -1;
-        mapRef.current?.animateCamera(camera, { duration: 300 });
-      }
-    } catch (error) {
-      console.warn("Error zooming:", error);
     }
   };
 
@@ -725,10 +808,60 @@ export const MapScreen = () => {
     return { venue: closest, distance: minDist };
   }, [userLocation, venues]);
 
+  // Live city pulse: total people out across every venue right now. Updates in real time
+  // with the venues feed, and shows a believable number instantly (not 0) thanks to the
+  // cold-start prediction. Drives the bottom-center "Nairobi Live" pill.
+  const totalUsersOut = useMemo(
+    () => venues.reduce((sum, v) => sum + (v.userCount || 0), 0),
+    [venues]
+  );
+
+  // Gentle heartbeat on the live dot. Plain view (not a map marker) + native-driven opacity,
+  // so it's off the JS thread and has no marker-rasterization cost.
+  const livePulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(livePulse, { toValue: 0.25, duration: 900, useNativeDriver: true }),
+        Animated.timing(livePulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [livePulse]);
+
   const canAddGlobalStory = closestLiveVenue.distance <= 200;
 
-  const handleGlobalAddStory = () => {
-    if (!canAddGlobalStory) {
+  const handleGlobalAddStory = async () => {
+    // Re-check the LIVE position on tap instead of trusting the cached store value. The
+    // background watcher only pushes updates after ≥20m of movement or every 15s, so it can
+    // lag real movement — and a static simulated-location teleport may never trigger it at
+    // all, leaving the feature stuck "locked". A fresh fetch makes the unlock responsive.
+    let coords = userLocation;
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        coords = { latitude: fresh.coords.latitude, longitude: fresh.coords.longitude };
+        useAppStore.getState().setUserLocation(coords); // keep store (and lock UI) in sync
+      }
+    } catch {
+      // Fall back to whatever cached location we have.
+    }
+
+    let nearest: LiveVenue | null = null;
+    let nearestDist = Infinity;
+    if (coords) {
+      for (const v of venues) {
+        const d = getDistanceInMeters(coords.latitude, coords.longitude, v.latitude, v.longitude);
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearest = v;
+        }
+      }
+    }
+
+    if (!nearest || nearestDist > 200) {
       Alert.alert(
         "Vibe Check Restricted",
         "You must be within 200 meters of a venue to post a story. This keeps the Eventas live feed real and local to what is happening right now!",
@@ -736,9 +869,7 @@ export const MapScreen = () => {
       );
       return;
     }
-    if (closestLiveVenue.venue) {
-      executeStoryUpload(closestLiveVenue.venue);
-    }
+    executeStoryUpload(nearest);
   };
 
   // Safe distance check
@@ -762,7 +893,7 @@ export const MapScreen = () => {
         const pinColor = hasStories ? "#FF00CC" : "#00FFCC";
 
         return (
-          <Marker
+          <MarkerAnimated
             key={`${venue.id}_${hasStories}_${focusEpoch}`}
             coordinate={{ latitude: venue.latitude, longitude: venue.longitude }}
             onPress={(e) => {
@@ -770,6 +901,7 @@ export const MapScreen = () => {
               handleMarkerPress(venue);
             }}
             tracksViewChanges={trackMarkerChanges}
+            opacity={pinOpacity}
             zIndex={hasStories ? 200 : 100}
             anchor={{ x: 0.5, y: 1 }}
           >
@@ -781,31 +913,31 @@ export const MapScreen = () => {
               </View>
               <View style={[styles.pinArrow, { borderTopColor: pinColor }]} />
             </View>
-          </Marker>
+          </MarkerAnimated>
         );
       });
-  }, [venues, stories, trackMarkerChanges, focusEpoch]);
+  }, [venues, stories, trackMarkerChanges, focusEpoch, pinOpacity]);
 
   return (
     <View style={styles.container}>
-      {/* Global Top Add Story Button */}
-      <View style={[styles.topBarContainer, { top: insets.top + 16 }]}>
-        <TouchableOpacity
-          style={[styles.globalAddButton, !canAddGlobalStory && styles.globalAddButtonDisabled]}
-          onPress={handleGlobalAddStory}
-          activeOpacity={0.8}
-        >
-          <Camera color={canAddGlobalStory ? "#000" : "#888"} size={18} style={{ marginRight: 6 }} />
-          <Text style={[styles.globalAddText, !canAddGlobalStory && styles.globalAddTextDisabled]}>
-            Add Story
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {/* Top stories tray — one-tap access to add / view stories now that pins are hidden.
+          First bubble adds your story; the rest are venues with active stories. */}
+      <StoriesTray
+        venues={venues}
+        stories={stories}
+        canAddStory={canAddGlobalStory}
+        onAddStory={handleGlobalAddStory}
+        onOpenVenueStories={(venueObj) => {
+          setSelectedMapVenue(venueObj);
+          setIsViewerVisible(true);
+        }}
+      />
 
-      {/* NOTE: no onRegionChangeComplete handler, and never toggle
-          tracksViewChanges from camera moves — rasterized marker bitmaps are
-          repositioned natively during pan/zoom, and re-rasterizing on every
-          gesture saturates the UI thread (app-wide tap latency regression). */}
+      {/* NOTE: the onRegionChangeComplete handler below fires only when a gesture
+          settles and re-renders ONLY when pins cross the zoom-visibility threshold —
+          never on ordinary pans/zooms. Do NOT toggle tracksViewChanges on every camera
+          move: rasterized marker bitmaps are repositioned natively during pan/zoom, and
+          re-rasterizing on every gesture saturates the UI thread (tap-latency regression). */}
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
@@ -819,13 +951,16 @@ export const MapScreen = () => {
         showsBuildings={true}
         showsTraffic={false}
         showsIndoors={false}
+        toolbarEnabled={false} // (Android) hide the Directions/navigate toolbar that pops up bottom-right and covers our controls
         loadingEnabled={true}
         loadingBackgroundColor="#121212"
         loadingIndicatorColor="#00FFCC"
         pitchEnabled={false} // tilt gestures re-introduce the heatmap zoom-band artifact
         rotateEnabled={true}
-        minZoomLevel={5}
+        minZoomLevel={11} // Zoom-out floor: start is 11.5, so users get a slight (~half level) pull-back but can't zoom out so far events condense into one blob
         maxZoomLevel={20}
+        onPress={handleMapPress}
+        onRegionChangeComplete={handleRegionChangeComplete}
         onMapReady={() => {
           // Pan boundaries (generously covering Africa) keep the heatmap's
           // south-pole calibration anchor (see LiveVenuesContext) permanently
@@ -845,50 +980,18 @@ export const MapScreen = () => {
              Weights arrive pre-normalized to 0..1 (LiveVenuesContext), so the
              points array only changes when a venue's heat band actually moves.
              Radius must stay ≤ 50 on Android (screen pixels), but needs to be larger on iOS (points, e.g., 90) to match visually due to high-DPI scaling. Since our active venue count is tiny, tile rendering is instantaneous and does not suffer from visible tile seam lag. */}
-        {showHeatmapOverlay && (
-          <StableHeatmap
-            points={heatPoints}
-            radius={Platform.OS === 'android' ? 50 : 90}
-          />
-        )}
-        {/* Debug: expose the exact points feeding the heatmap (anchor excluded) */}
-        {isDebugMode && showRawPoints && heatPoints
-          .filter((p) => p.latitude > -60)
-          .map((p, i) => (
-            <Marker
-              key={`heatpt_${i}`}
-              coordinate={{ latitude: p.latitude, longitude: p.longitude }}
-              anchor={{ x: 0.5, y: 0.5 }}
-              tracksViewChanges={false}
-              zIndex={300}
-            >
-              <View style={styles.rawHeatDot} collapsable={false}>
-                <Text style={styles.rawHeatDotText}>{p.weight.toFixed(2)}</Text>
-              </View>
-            </Marker>
-          ))}
-        {/* LiveVenue markers */}
-        {renderedMarkers}
+        <StableHeatmap
+          points={heatPoints}
+          radius={Platform.OS === 'android' ? 50 : 90}
+        />
+        {/* LiveVenue markers — shown only when zoomed in past PIN_VISIBILITY_ZOOM */}
+        {pinsVisible && renderedMarkers}
       </MapView>
 
       {/* Story Upload Overlay */}
       {isUploading && (
         <View style={styles.uploadOverlay}>
           <Text style={styles.uploadText}>Uploading Story...</Text>
-        </View>
-      )}
-
-      {/* Hardware Debugging Panel */}
-      {isDebugMode && (
-        <View style={[styles.debugPanel, { top: insets.top + 80 }]}>
-          <Text style={styles.debugTitle}>ENGINE DEBUG</Text>
-          <TouchableOpacity onPress={() => setShowHeatmapOverlay(!showHeatmapOverlay)}>
-            <Text style={styles.debugText}>[ {showHeatmapOverlay ? 'X' : ' '} ] KDE Heatmap Matrix</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowRawPoints(!showRawPoints)}>
-            <Text style={styles.debugText}>[ {showRawPoints ? 'X' : ' '} ] Show Heat Point Weights</Text>
-          </TouchableOpacity>
-          <Text style={styles.debugText}>Active Heat LiveVenues: {heatPoints.length}</Text>
         </View>
       )}
 
@@ -1029,21 +1132,18 @@ export const MapScreen = () => {
         </Animated.View>
       )}
 
-      <View style={[styles.controlsContainer, { bottom: insets.bottom + 120 }]}>
-        {/* Debug Toggle Wrench */}
-        {isAdmin && (
-          <TouchableOpacity style={styles.controlButton} onPress={() => setIsDebugMode(!isDebugMode)} activeOpacity={0.7}>
-            <Wrench color={isDebugMode ? "#FF00CC" : "#888"} size={20} />
-          </TouchableOpacity>
-        )}
-
+      {/* Neutral (dark-glass / white) controls so they recede against the colourful heat.
+          Recenter sits at the bottom-right corner (maps convention), chat stacked above it.
+          In the resting state the stack shares the Nairobi Live pill's baseline (+24); it
+          rises to +120 only when a venue card is up, to clear the full-width card. */}
+      <View style={[styles.controlsContainer, { bottom: insets.bottom + (selectedMapVenue ? 120 : 8) }]}>
         {/* Active Chats List Button */}
-        <TouchableOpacity 
-          style={[styles.controlButton, styles.chatListButton]} 
-          onPress={() => setIsLiveFeedVisible(true)} 
+        <TouchableOpacity
+          style={styles.controlButton}
+          onPress={() => setIsLiveFeedVisible(true)}
           activeOpacity={0.7}
         >
-          <MessageSquare color="#00FFCC" size={20} />
+          <MessageSquare color="#FFFFFF" size={20} />
           {unreadChatCount > 0 && (
             <View style={styles.badgeContainer}>
               <Text style={styles.badgeText}>{unreadChatCount}</Text>
@@ -1052,19 +1152,47 @@ export const MapScreen = () => {
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.controlButton} onPress={centerMap} activeOpacity={0.7}>
-          <LocateFixed color="#00FFCC" size={20} />
+          <LocateFixed color="#FFFFFF" size={20} />
         </TouchableOpacity>
+      </View>
 
-        <View style={styles.zoomContainer}>
-          <TouchableOpacity style={styles.controlButton} onPress={() => handleZoom(true)} activeOpacity={0.7}>
-            <Plus color="#FFFFFF" size={24} />
-          </TouchableOpacity>
-          <View style={styles.controlDivider} />
-          <TouchableOpacity style={styles.controlButton} onPress={() => handleZoom(false)} activeOpacity={0.7}>
-            <Minus color="#FFFFFF" size={24} />
+      {/* Bottom-center "Nairobi Live" realtime pulse. Tap to open the City Pulse popup.
+          Hidden while a venue card is up (they'd overlap). box-none lets the empty sides of
+          the container pass touches through to the map (only the pill itself is tappable). */}
+      {!selectedMapVenue && (
+        <View
+          style={[styles.livePulseContainer, { bottom: insets.bottom + 8 }]}
+          pointerEvents="box-none"
+        >
+          <TouchableOpacity
+            style={styles.livePulsePill}
+            activeOpacity={0.85}
+            onPress={() => setIsCityPulseVisible(true)}
+          >
+            <Animated.View style={[styles.livePulseDot, { opacity: livePulse }]} />
+            <Text style={styles.livePulseLabel}>NAIROBI LIVE</Text>
+            <Text style={styles.livePulseDivider}>·</Text>
+            <Text style={styles.livePulseCount}>{totalUsersOut.toLocaleString()} out now</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      )}
+
+      {/* City Pulse popup (opened from the Nairobi Live pill) */}
+      <CityPulseModal
+        isVisible={isCityPulseVisible}
+        onClose={() => setIsCityPulseVisible(false)}
+        venues={venues}
+        totalUsersOut={totalUsersOut}
+        onSelectVenue={(venueObj) => {
+          setIsCityPulseVisible(false);
+          setSelectedMapVenue(venueObj);
+          mapRef.current?.animateCamera({
+            center: { latitude: venueObj.latitude, longitude: venueObj.longitude },
+            zoom: 19.5,
+            pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
+          }, { duration: 1000 });
+        }}
+      />
 
       {/* Live Feed Modal */}
       <LiveFeedModal
@@ -1132,79 +1260,6 @@ const styles = StyleSheet.create({
     borderRightColor: 'transparent',
     borderTopColor: '#00FFCC',
     marginTop: -2,
-  },
-  topBarContainer: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  globalAddButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#00FFCC',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 24,
-    gap: 8,
-    shadowColor: '#00FFCC',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  globalAddButtonDisabled: {
-    backgroundColor: 'rgba(26,26,26,0.9)',
-    borderColor: '#444',
-    borderWidth: 1,
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  globalAddText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  globalAddTextDisabled: {
-    color: '#888',
-    fontSize: 14,
-  },
-  debugPanel: {
-    position: 'absolute',
-    left: 16,
-    backgroundColor: 'rgba(26,26,26,0.95)',
-    padding: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FF00CC',
-    zIndex: 100,
-  },
-  debugTitle: {
-    color: '#FF00CC',
-    fontSize: 12,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    letterSpacing: 2,
-  },
-  debugText: {
-    color: '#00FFCC',
-    fontSize: 14,
-    marginVertical: 4,
-    fontFamily: 'monospace',
-  },
-  rawHeatDot: {
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    borderWidth: 1,
-    borderColor: '#FF00CC',
-  },
-  rawHeatDotText: {
-    color: '#FF00CC',
-    fontSize: 10,
-    fontFamily: 'monospace',
   },
   // Removed fuzzy markerGlow and storyRing to improve pin quality and clarity per user request
   uploadOverlay: {
@@ -1364,12 +1419,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 16,
   },
-  zoomContainer: {
-    backgroundColor: 'rgba(26, 26, 26, 0.9)',
-    borderRadius: 16,
+  livePulseContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  livePulsePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(18, 18, 18, 0.92)',
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderWidth: 1,
     borderColor: '#2A2A2A',
-    overflow: 'hidden',
+    gap: 7,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  livePulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF2D55',
+  },
+  livePulseLabel: {
+    color: '#00FFCC',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  livePulseDivider: {
+    color: '#666',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  livePulseCount: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   controlButton: {
     width: 48,
@@ -1380,19 +1473,6 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#2A2A2A',
-  },
-  chatListButton: {
-    borderColor: '#00FFCC',
-    shadowColor: '#00FFCC',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  controlDivider: {
-    height: 1,
-    width: '100%',
-    backgroundColor: '#2A2A2A',
   },
   badgeContainer: {
     position: 'absolute',

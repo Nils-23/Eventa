@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ActivityIndicator, Linking } from 'react-native';
+import { View, Animated, Linking } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import Toast from 'react-native-toast-message';
@@ -88,12 +88,43 @@ export default function App() {
   const isLoading = useAppStore((s) => s.isLoading);
   const hasAgreedToTerms = useAppStore((s) => s.hasAgreedToTerms);
 
-  if (isLoading || hasCompletedOnboarding === null) {
+  const isBooting = isLoading || hasCompletedOnboarding === null;
+
+  // Pulsating "EVENTAS" wordmark for the launch screen — reads as an intentional brand
+  // moment instead of a spinner that looks like the app is lagging. Native-driven opacity,
+  // and the loop only runs while booting.
+  const launchPulse = React.useRef(new Animated.Value(0.45)).current;
+  React.useEffect(() => {
+    if (!isBooting) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(launchPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(launchPulse, { toValue: 0.45, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isBooting, launchPulse]);
+
+  if (isBooting) {
     // theme.background matches the native splash color exactly so the
     // splash → loading → app handoff is one continuous dark sequence
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.background }}>
-        <ActivityIndicator size="large" color={theme.accent} />
+        <Animated.Text
+          style={{
+            color: theme.accent,
+            fontSize: 34,
+            fontWeight: '800',
+            letterSpacing: 6,
+            opacity: launchPulse,
+            transform: [
+              { scale: launchPulse.interpolate({ inputRange: [0.45, 1], outputRange: [0.97, 1.03] }) },
+            ],
+          }}
+        >
+          EVENTAS
+        </Animated.Text>
       </View>
     );
   }

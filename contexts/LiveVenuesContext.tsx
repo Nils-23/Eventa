@@ -529,6 +529,82 @@ function computeLiveData(
   return { venues: liveVenues, scheduledVenues, heatPoints, hash: hashStr };
 }
 
+// Instant cold-start snapshot. Derived purely from the venue list using the same
+// deterministic time-of-day model the simulation targets (getDynamicTargetCount) — no
+// RTDB location streams required — so it can be painted the moment venues are available
+// (cached instantly for returning users, or from the first Firestore snapshot on a fresh
+// install). This keeps the map/heat from looking dead during the seconds before the live
+// location data lands, at which point computeLiveData overwrites it with the real numbers.
+function computePredictedData(
+  venues: RawVenue[],
+  userLat: number | null,
+  userLng: number | null,
+  resolvedImages: Record<string, string>
+): { venues: LiveVenue[]; scheduledVenues: LiveVenue[]; heatPoints: HeatPoint[] } {
+  const now = Date.now();
+  const liveVenues: LiveVenue[] = [];
+  const scheduledVenues: LiveVenue[] = [];
+  const heatPoints: HeatPoint[] = [];
+
+  for (const venue of venues) {
+    if (!venue.latitude || !venue.longitude) continue;
+    if (venue.hidden === true) continue;
+    if (venue.expirationDate && venue.expirationDate < now) continue;
+
+    const distanceKm =
+      userLat !== null && userLng !== null
+        ? Math.round(haversineMeters(userLat, userLng, venue.latitude, venue.longitude) / 10) * 10 / 1000
+        : null;
+
+    const resolvedImageUrl =
+      venue.type === 'Event'
+        ? (venue.customImageUrl || venue.img || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id])
+        : (venue.customImageUrl || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id]);
+
+    if (venue.startDate && venue.startDate > now) {
+      scheduledVenues.push({
+        ...venue,
+        imageUrl: resolvedImageUrl,
+        userCount: 0,
+        activityLevel: 'None',
+        activityColor: toActivityColor('None'),
+        distanceKm,
+      });
+      continue;
+    }
+
+    // Predicted crowd for right now (same model as the cloud simulation).
+    const userCount = getDynamicTargetCount(venue, venues);
+    const activityLevel = toActivityLevel(userCount);
+    liveVenues.push({
+      ...venue,
+      imageUrl: resolvedImageUrl,
+      userCount,
+      activityLevel,
+      activityColor: toActivityColor(activityLevel),
+      distanceKm,
+    });
+
+    if (userCount > 0) {
+      heatPoints.push({ latitude: venue.latitude, longitude: venue.longitude, weight: userCount });
+    }
+  }
+
+  // Same normalization + calibration anchor as computeLiveData so the predicted heatmap
+  // renders identically to the live one (see HEAT_REF_FLOOR and the anchor note above).
+  if (heatPoints.length > 0) {
+    const maxHeat = heatPoints.reduce((max, p) => Math.max(max, p.weight), HEAT_REF_FLOOR);
+    for (const p of heatPoints) {
+      p.weight = Math.max(0.05, Math.round((p.weight / maxHeat) * 20) / 20);
+    }
+    heatPoints.push({ latitude: -85, longitude: 0, weight: 1 });
+  }
+
+  scheduledVenues.sort((a, b) => (a.startDate ?? 0) - (b.startDate ?? 0));
+  liveVenues.sort((a, b) => b.userCount - a.userCount);
+  return { venues: liveVenues, scheduledVenues, heatPoints };
+}
+
 // ─── Context ──────────────────────────────────────────────────────────────────
 interface LiveVenuesContextValue {
   venues: LiveVenue[];
@@ -574,6 +650,10 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
         if (cachedLive || cachedScheduled) {
           setIsLoading(false);
+          // Heat isn't cached, and the cached counts may be stale — kick an immediate
+          // predicted paint from the just-restored venue list so the heatmap and counts
+          // look alive instantly, well before the live RTDB streams connect.
+          requestRecalculate();
         }
       } catch (err) {
         console.warn('[LiveVenuesContext] Error loading cache:', err);
@@ -593,6 +673,9 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const simConfigRef = useRef({ enabled: true, threshold: 100 });
   const hasRealLocsLoadedRef = useRef(false);
   const hasSimLocsLoadedRef = useRef(false);
+  // True once anything (predicted cold-start snapshot OR real data) has been painted, so
+  // the instant prediction fills the screen at most once and never clobbers real data.
+  const hasPaintedRef = useRef(false);
 
   const isProcessingRef = useRef(false);
   const pendingUpdateRef = useRef(false);
@@ -621,6 +704,28 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Wait until locations and simulated locations have loaded at least once (or fallback fires)
     const isReady = hasRealLocsLoadedRef.current && hasSimLocsLoadedRef.current;
     if (!isReady) {
+      // Live location streams haven't landed yet. Instead of leaving the map blank/dead,
+      // paint an immediate realistic prediction from the venue list once. The real path
+      // below overwrites it as soon as the RTDB data arrives (or the 4s fallback fires).
+      if (!hasPaintedRef.current && venuesRef.current.length > 0) {
+        try {
+          const predicted = computePredictedData(
+            venuesRef.current,
+            userPosRef.current.lat,
+            userPosRef.current.lng,
+            resolvedImages
+          );
+          setVenues((prev) => (areVenuesEqual(prev, predicted.venues) ? prev : predicted.venues));
+          setScheduledVenues((prev) =>
+            areVenuesEqual(prev, predicted.scheduledVenues) ? prev : predicted.scheduledVenues
+          );
+          setHeatPoints(predicted.heatPoints);
+          setIsLoading(false);
+          hasPaintedRef.current = true;
+        } catch (e) {
+          console.warn('[LiveVenuesContext] predicted paint error:', e);
+        }
+      }
       isProcessingRef.current = false;
       return;
     }
@@ -680,6 +785,7 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       });
 
       setIsLoading(false);
+      hasPaintedRef.current = true;
 
       const nowTime = Date.now();
       if (nowTime - lastWriteTimeRef.current > 30000) {

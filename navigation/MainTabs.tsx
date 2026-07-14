@@ -51,10 +51,11 @@ export const MainTabs = () => {
           tabBarIcon: ({ color, size }) => <Map color={color} size={size} />,
         }}
       />
-      <Tab.Screen 
-        name="List" 
+      <Tab.Screen
+        name="List"
         component={ListScreen}
         options={{
+          tabBarLabel: 'Explore',
           tabBarIcon: ({ color, size }) => <List color={color} size={size} />,
         }}
       />

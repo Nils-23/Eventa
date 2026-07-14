@@ -197,10 +197,6 @@ export const ListScreen = () => {
           <Text style={styles.headerTitle}>Live Rankings</Text>
           <Text style={styles.headerSub}>Updated in real‑time · Nairobi</Text>
         </View>
-        <View style={styles.livePill}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>LIVE</Text>
-        </View>
       </View>
 
       {/* Search Bar */}
@@ -302,9 +298,6 @@ const styles = StyleSheet.create({
   },
   headerTitle:  { fontSize: 28, fontWeight: '800', color: '#FFFFFF', letterSpacing: -0.5 },
   headerSub:    { fontSize: 13, color: '#555', marginTop: 3 },
-  livePill:     { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, gap: 5, borderWidth: 1, borderColor: '#2A2A2A' },
-  liveDot:      { width: 6, height: 6, borderRadius: 3, backgroundColor: '#FF0055' },
-  liveText:     { color: '#FF0055', fontSize: 11, fontWeight: '800', letterSpacing: 1.5 },
   legend:       { flexDirection: 'row', paddingHorizontal: 24, gap: 16, marginBottom: 12 },
   legendItem:   { flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot:    { width: 7, height: 7, borderRadius: 4 },
