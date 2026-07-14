@@ -1136,7 +1136,7 @@ export const MapScreen = () => {
           Recenter sits at the bottom-right corner (maps convention), chat stacked above it.
           In the resting state the stack shares the Nairobi Live pill's baseline (+24); it
           rises to +120 only when a venue card is up, to clear the full-width card. */}
-      <View style={[styles.controlsContainer, { bottom: insets.bottom + (selectedMapVenue ? 120 : 8) }]}>
+      <View style={[styles.controlsContainer, { bottom: insets.bottom + (selectedMapVenue ? 120 : 72) }]}>
         {/* Active Chats List Button */}
         <TouchableOpacity
           style={styles.controlButton}
