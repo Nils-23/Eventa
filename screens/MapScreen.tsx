@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import * as Location from 'expo-location';
-import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform, AppState, Animated, PanResponder } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform, AppState, Animated, PanResponder, Dimensions } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, MarkerAnimated, Heatmap, MapPressEvent } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LocateFixed, MapPin, Flag, MessageSquare, Users, Navigation as NavigationIcon, TrendingUp, TrendingDown } from 'lucide-react-native';
@@ -271,6 +271,8 @@ const INITIAL_CAMERA = {
   altitude: 12000,
   zoom: 11.5, // Wide city view (a bit zoomed out, leaves room to zoom out to the minZoomLevel floor)
 };
+
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 
 // Venue pins are hidden when zoomed out (they clutter the map and overpower the
 // heatmap) and automatically turn on once the user zooms in to this level or closer.
@@ -980,10 +982,15 @@ export const MapScreen = () => {
              Weights arrive pre-normalized to 0..1 (LiveVenuesContext), so the
              points array only changes when a venue's heat band actually moves.
              Radius must stay ≤ 50 on Android (screen pixels), but needs to be larger on iOS (points, e.g., 90) to match visually due to high-DPI scaling. Since our active venue count is tiny, tile rendering is instantaneous and does not suffer from visible tile seam lag. */}
-        <StableHeatmap
-          points={heatPoints}
-          radius={Platform.OS === 'android' ? 50 : 90}
-        />
+        {/* Gated on isMapReady: pushing points into the native heatmap layer while the base
+            map is still initializing (which the instant cold-start heat now does) renders
+            broken/partial tiles. Waiting for onMapReady makes the first paint clean. */}
+        {isMapReady && (
+          <StableHeatmap
+            points={heatPoints}
+            radius={Platform.OS === 'android' ? 50 : 90}
+          />
+        )}
         {/* LiveVenue markers — shown only when zoomed in past PIN_VISIBILITY_ZOOM */}
         {pinsVisible && renderedMarkers}
       </MapView>
@@ -1136,7 +1143,10 @@ export const MapScreen = () => {
           Recenter sits at the bottom-right corner (maps convention), chat stacked above it.
           In the resting state the stack shares the Nairobi Live pill's baseline (+24); it
           rises to +120 only when a venue card is up, to clear the full-width card. */}
-      <View style={[styles.controlsContainer, { bottom: insets.bottom + (selectedMapVenue ? 120 : 72) }]}>
+      {/* Anchored by top at the screen midline: the chat button (top of the stack) sits just
+          below mid-screen, recenter below it. Mid-screen placement clears the bottom venue
+          card, so no reposition-on-card is needed. */}
+      <View style={[styles.controlsContainer, { top: SCREEN_HEIGHT * 0.53 }]}>
         {/* Active Chats List Button */}
         <TouchableOpacity
           style={styles.controlButton}
@@ -1469,7 +1479,7 @@ const styles = StyleSheet.create({
     height: 48,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(26, 26, 26, 0.9)',
+    backgroundColor: '#1A1A1A', // fully opaque so the map doesn't show through
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#2A2A2A',

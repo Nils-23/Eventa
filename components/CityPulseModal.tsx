@@ -71,18 +71,21 @@ export const CityPulseModal: React.FC<CityPulseModalProps> = ({
 
   const panResponder = useRef(
     PanResponder.create({
-      // Claim a clear vertical-DOWN drag (taps have dy ≈ 0, so they pass through to the venue
-      // rows). Both move hooks + the Capture variant ensure the sheet grabs the drag even when
-      // it starts over a row's TouchableOpacity, and we refuse termination so nothing steals it.
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) => g.dy > 4 && g.dy > Math.abs(g.dx),
-      onMoveShouldSetPanResponderCapture: (_, g) => g.dy > 4 && g.dy > Math.abs(g.dx),
+      // CRITICAL: inside an RN Modal, move-based claiming (onMoveShouldSet*) is swallowed by
+      // the Modal's native root, so it never fires — this is why earlier threshold tweaks did
+      // nothing. Claim on START instead (the pattern LiveFeedModal uses successfully in a
+      // Modal). To keep the venue rows tappable, these handlers are attached only to the top
+      // drag-handle zone, not the whole sheet — so start-claiming here has no tap to conflict.
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
       onPanResponderTerminationRequest: () => false,
       onPanResponderMove: (_, g) => {
         translateY.setValue(Math.max(0, g.dy));
       },
       onPanResponderRelease: (_, g) => {
-        if (g.dy > 110 || g.vy > 0.6) {
+        if (g.dy > 90 || g.vy > 0.5) {
           Animated.timing(translateY, {
             toValue: SCREEN_HEIGHT,
             duration: 220,
@@ -103,19 +106,23 @@ export const CityPulseModal: React.FC<CityPulseModalProps> = ({
         {/* Swipe the sheet down to dismiss. */}
         <Animated.View
           style={[styles.card, { paddingBottom: insets.bottom + 24, transform: [{ translateY }] }]}
-          {...panResponder.panHandlers}
         >
-          <View style={styles.grabber} />
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.dot} />
-              <Text style={styles.headerLabel}>NAIROBI LIVE</Text>
+          {/* Dedicated drag handle (grabber + header + hero). Claims the gesture on start,
+              which is the reliable way to swipe-to-dismiss inside an RN Modal. The venue rows
+              below sit outside this zone, so they stay tappable. */}
+          <View {...panResponder.panHandlers}>
+            <View style={styles.grabber} />
+            <View style={styles.header}>
+              <View style={styles.headerLeft}>
+                <View style={styles.dot} />
+                <Text style={styles.headerLabel}>NAIROBI LIVE</Text>
+              </View>
             </View>
-          </View>
 
-          {/* Hero count */}
-          <Text style={styles.heroNumber}>{totalUsersOut.toLocaleString()}</Text>
-          <Text style={styles.heroCaption}>people out right now</Text>
+            {/* Hero count */}
+            <Text style={styles.heroNumber}>{totalUsersOut.toLocaleString()}</Text>
+            <Text style={styles.heroCaption}>people out right now</Text>
+          </View>
 
           {/* Peak area */}
           <View style={styles.section}>

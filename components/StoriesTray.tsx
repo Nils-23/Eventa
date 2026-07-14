@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Image, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Plus } from 'lucide-react-native';
 import { LiveVenue } from '../contexts/LiveVenuesContext';
 import { StoryData } from '../services/storyService';
+import { VenueImage } from './VenueImage';
 
 interface StoriesTrayProps {
   venues: LiveVenue[];
@@ -58,13 +59,15 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
             onPress={() => onOpenVenueStories(v)}
           >
             <View style={[styles.ring, styles.storyRing]}>
-              {v.imageUrl ? (
-                <Image source={{ uri: v.imageUrl }} style={styles.thumb} />
-              ) : (
-                <View style={[styles.thumb, styles.thumbFallback]}>
-                  <Text style={styles.thumbFallbackText}>{v.name?.charAt(0)?.toUpperCase() ?? '?'}</Text>
-                </View>
-              )}
+              {/* VenueImage guarantees a picture: it falls back to a type-based image both
+                  when imageUrl is missing AND when the URL fails to load — so a story bubble
+                  never renders blank (this is what the raw <Image> got wrong). */}
+              <VenueImage
+                venue={{ imageUrl: v.imageUrl, type: v.type }}
+                style={styles.thumb}
+                imageStyle={{ opacity: 1 }}
+                isThumbnail
+              />
             </View>
             <Text style={styles.label} numberOfLines={1}>
               {v.name}
@@ -133,15 +136,6 @@ const styles = StyleSheet.create({
     height: 53,
     borderRadius: 27,
     backgroundColor: '#222',
-  },
-  thumbFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  thumbFallbackText: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: '700',
   },
   label: {
     color: '#FFFFFF',
