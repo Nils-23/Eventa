@@ -30,19 +30,22 @@ export const SettingsScreen = () => {
   // Re-check the application whenever the screen regains focus, so the row
   // reflects a submission made moments ago on the application screen.
   useEffect(() => {
-    if (user?.uid && isFocused && !isCreator) {
+    if (user?.uid && isFocused && !isCreator && !isAdmin) {
       fetchMyApplication(user.uid).then(setCreatorApp).catch(() => {});
     }
-  }, [user?.uid, isFocused, isCreator]);
+  }, [user?.uid, isFocused, isCreator, isAdmin]);
 
   // Row state: creator → dashboard; pending/expired → verification screen;
-  // no application or rejected → the application form.
+  // no application or rejected → the application form. Admins don't apply —
+  // they review applications from the Admin Dashboard instead.
   const appStatus = creatorApp ? effectiveStatus(creatorApp) : null;
   const creatorRow = isCreator
     ? { label: 'Creator Dashboard', route: 'CreatorDashboard' }
-    : appStatus === 'pending' || appStatus === 'expired'
-      ? { label: `Creator Application (${appStatus === 'pending' ? 'Pending' : 'Code Expired'})`, route: 'CreatorVerification' }
-      : { label: 'Apply for Creator Account', route: 'CreatorApplication' };
+    : isAdmin
+      ? null
+      : appStatus === 'pending' || appStatus === 'expired'
+        ? { label: `Creator Application (${appStatus === 'pending' ? 'Pending' : 'Code Expired'})`, route: 'CreatorVerification' }
+        : { label: 'Apply for Creator Account', route: 'CreatorApplication' };
 
   const handleReport = async () => {
     const url = 'mailto:support@eventas.live?subject=Report%20Issue&body=Please%20describe%20your%20issue%20here...';
@@ -175,15 +178,17 @@ export const SettingsScreen = () => {
           </View>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.row}
-          onPress={() => navigation.navigate(creatorRow.route)}
-        >
-          <View style={styles.rowItemLeft}>
-            <Star color="#FFD700" size={20} />
-            <Text style={styles.rowText}>{creatorRow.label}</Text>
-          </View>
-        </TouchableOpacity>
+        {creatorRow && (
+          <TouchableOpacity
+            style={styles.row}
+            onPress={() => navigation.navigate(creatorRow.route)}
+          >
+            <View style={styles.rowItemLeft}>
+              <Star color="#FFD700" size={20} />
+              <Text style={styles.rowText}>{creatorRow.label}</Text>
+            </View>
+          </TouchableOpacity>
+        )}
 
         {isAdmin && (
           <TouchableOpacity

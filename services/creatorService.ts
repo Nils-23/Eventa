@@ -108,27 +108,17 @@ export const CODE_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
 // No 0/O/1/I — codes get retyped from DMs, ambiguity creates support tickets.
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
+// No cross-application uniqueness check: security rules only let applicants
+// read their own creatorApplications doc, so a collection query here fails
+// with a permission error for every non-admin. Admins match a code against
+// one specific application (1:1), so global uniqueness isn't required —
+// 32^6 combinations make an accidental clash irrelevant anyway.
 function randomCode(): string {
   let s = '';
   for (let i = 0; i < 6; i++) {
     s += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
   }
   return `EVT-${s}`;
-}
-
-/** Generates a code that no other application currently holds. */
-async function generateUniqueVerificationCode(): Promise<string> {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const code = randomCode();
-    const clash = await getDocs(query(
-      collection(firestore, 'creatorApplications'),
-      where('verificationCode', '==', code),
-      limit(1)
-    ));
-    if (clash.empty) return code;
-  }
-  // 32^6 combinations — five straight collisions means something is broken.
-  throw new Error('Could not generate a unique verification code. Try again.');
 }
 
 export function isCodeExpired(app: Pick<CreatorApplication, 'codeExpiresAt' | 'codeUsed'>): boolean {
@@ -156,7 +146,7 @@ export async function submitCreatorApplication(
   userId: string,
   form: CreatorApplicationForm
 ): Promise<CreatorApplication> {
-  const verificationCode = await generateUniqueVerificationCode();
+  const verificationCode = randomCode();
   const app: CreatorApplication = {
     userId,
     fullName: form.fullName.trim(),
@@ -193,7 +183,7 @@ export async function regenerateVerificationCode(userId: string): Promise<string
   const app = appSnap.data() as CreatorApplication;
   if (app.status !== 'pending') throw new Error('Application is no longer pending.');
 
-  const verificationCode = await generateUniqueVerificationCode();
+  const verificationCode = randomCode();
   await updateDoc(doc(firestore, 'creatorApplications', userId), {
     verificationCode,
     codeExpiresAt: Date.now() + CODE_TTL_MS,
