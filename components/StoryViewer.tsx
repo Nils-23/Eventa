@@ -42,6 +42,10 @@ interface StoryViewerProps {
   /** When provided, a "Remove Story" button is shown and this callback is invoked with the story id */
   onRemoveStory?: (storyId: string) => void;
   onStoriesEnd?: () => void;
+  /** Called when navigating back past the first story (e.g. step to the previous venue). */
+  onStoriesStart?: () => void;
+  /** Start at the last story when the list changes — used when entering a venue backwards. */
+  startAtEnd?: boolean;
 }
 
 interface StoryMediaItemProps {
@@ -181,6 +185,8 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   onAddStory,
   onRemoveStory,
   onStoriesEnd,
+  onStoriesStart,
+  startAtEnd,
 }) => {
   const insets = useSafeAreaInsets();
   const user = useAppStore((s) => s.user);
@@ -366,9 +372,12 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     return () => progressAnim.removeListener(listener);
   }, []);
 
-  // Reset index when stories list changes (e.g. switching to next venue)
+  // Reset index when stories list changes (e.g. switching venue). Entering a
+  // venue backwards (swipe-right past the first story) lands on its LAST
+  // story, matching how Instagram steps back into the previous user's set.
   useEffect(() => {
-    setCurrentIndex(0);
+    setCurrentIndex(startAtEnd ? Math.max(stories.length - 1, 0) : 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storiesSerialized]);
 
   // ─── Per-story reset ─────────────────────────────────────────────────────
@@ -440,8 +449,10 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const handlePrev = useCallback(() => {
     if (currentIndex > 0) {
       setCurrentIndex(prev => prev - 1);
+    } else if (onStoriesStart) {
+      onStoriesStart();
     }
-  }, [currentIndex]);
+  }, [currentIndex, onStoriesStart]);
 
   // Keep the gesture responder's view of navigation fresh
   handleNextRef.current = handleNext;

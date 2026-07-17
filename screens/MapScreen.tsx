@@ -310,6 +310,8 @@ export const MapScreen = () => {
   const [focusEpoch, setFocusEpoch] = useState(0);
 
   const [isViewerVisible, setIsViewerVisible] = useState(false);
+  // When stepping backwards into a venue's stories, open on its last story.
+  const [viewerStartAtEnd, setViewerStartAtEnd] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [chatVenue, setChatVenue] = useState<{ id: string; name: string } | null>(null);
@@ -781,6 +783,7 @@ export const MapScreen = () => {
   const handleStoriesEnd = () => {
     // Find all venues that have stories, preserving the order they are in the active venues list
     const venuesWithStories = venues.filter(v => stories.some(s => s.venue_id === v.id));
+    setViewerStartAtEnd(false);
     if (selectedMapVenue) {
       const currentIdx = venuesWithStories.findIndex(v => v.id === selectedMapVenue.id);
       if (currentIdx !== -1 && currentIdx < venuesWithStories.length - 1) {
@@ -793,6 +796,20 @@ export const MapScreen = () => {
       }
     } else {
       setIsViewerVisible(false);
+    }
+  };
+
+  // Backward twin of handleStoriesEnd: swiping back past a venue's first story
+  // steps into the PREVIOUS venue's stories, landing on its last story
+  // (Instagram behavior). At the very first venue there is nothing before —
+  // the viewer just stays put.
+  const handleStoriesStart = () => {
+    if (!selectedMapVenue) return;
+    const venuesWithStories = venues.filter(v => stories.some(s => s.venue_id === v.id));
+    const currentIdx = venuesWithStories.findIndex(v => v.id === selectedMapVenue.id);
+    if (currentIdx > 0) {
+      setViewerStartAtEnd(true);
+      setSelectedMapVenue(venuesWithStories[currentIdx - 1]);
     }
   };
 
@@ -1015,13 +1032,18 @@ export const MapScreen = () => {
       {selectedMapVenue && (
         <StoryViewer
           isVisible={isViewerVisible}
-          onClose={() => setIsViewerVisible(false)}
+          onClose={() => {
+            setIsViewerVisible(false);
+            setViewerStartAtEnd(false);
+          }}
           stories={stories.filter(s => s.venue_id === selectedMapVenue.id)}
           venueName={selectedMapVenue.name}
           canAddStory={Boolean(isNearLiveVenue)}
           onAddStory={handleAddStory}
           onRemoveStory={handleRemoveStory}
           onStoriesEnd={handleStoriesEnd}
+          onStoriesStart={handleStoriesStart}
+          startAtEnd={viewerStartAtEnd}
         />
       )}
 

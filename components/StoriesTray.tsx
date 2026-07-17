@@ -38,8 +38,11 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
   const insets = useSafeAreaInsets();
   const viewedStories = useAppStore((s) => s.viewedStories);
 
-  // Venues that currently have active stories (busiest first) plus each venue's newest story
-  // timestamp — used to tell whether the user has already seen that venue's latest story.
+  // Venues that currently have active stories plus each venue's newest story
+  // timestamp — used to tell whether the user has already seen that venue's
+  // latest story. Unviewed venues come first (right next to the add bubble)
+  // so fresh stories are always in view; viewed ones sink to the end. Within
+  // each group, busiest first.
   const { storyVenues, latestTsByVenue } = useMemo(() => {
     const latestTs: Record<string, number> = {};
     for (const s of stories) {
@@ -47,14 +50,23 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
       const ms = toMs(s.created_at);
       if (ms > (latestTs[s.venue_id] || 0)) latestTs[s.venue_id] = ms;
     }
+    const isViewed = (id: string) =>
+      viewedStories[id] !== undefined && viewedStories[id] >= (latestTs[id] || 0);
     const withStories = venues
       .filter((v) => latestTs[v.id] !== undefined)
-      .sort((a, b) => b.userCount - a.userCount);
+      .sort((a, b) => {
+        const aViewed = isViewed(a.id) ? 1 : 0;
+        const bViewed = isViewed(b.id) ? 1 : 0;
+        if (aViewed !== bViewed) return aViewed - bViewed;
+        return b.userCount - a.userCount;
+      });
     return { storyVenues: withStories, latestTsByVenue: latestTs };
-  }, [venues, stories]);
+  }, [venues, stories, viewedStories]);
 
   return (
-    <View style={[styles.container, { top: insets.top + 10 }]} pointerEvents="box-none">
+    // Sit well below the notch/Dynamic Island: some devices report a slim top
+    // inset, and without the old text labels the rings hug the camera area.
+    <View style={[styles.container, { top: Math.max(insets.top, 24) + 26 }]} pointerEvents="box-none">
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
