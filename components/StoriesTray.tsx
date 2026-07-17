@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Plus } from 'lucide-react-native';
 import { LiveVenue } from '../contexts/LiveVenuesContext';
@@ -67,9 +67,6 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
               <Plus color={canAddStory ? '#00FFCC' : '#777'} size={24} />
             </View>
           </View>
-          <Text style={styles.label} numberOfLines={1}>
-            Your Story
-          </Text>
         </TouchableOpacity>
 
         {storyVenues.map((v) => {
@@ -93,9 +90,6 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
                 isThumbnail
               />
             </View>
-            <Text style={styles.label} numberOfLines={1}>
-              {v.name}
-            </Text>
           </TouchableOpacity>
           );
         })}
@@ -165,16 +159,5 @@ const styles = StyleSheet.create({
     height: 53,
     borderRadius: 27,
     backgroundColor: '#222',
-  },
-  label: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 5,
-    maxWidth: 66,
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.9)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
   },
 });
