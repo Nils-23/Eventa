@@ -336,6 +336,13 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
     }
 
     // ── Persona Direct Message Reply Trigger ─────────────────────────────
+    // Personas can only "see" plain text. A story reaction/reply or a sticker
+    // references media the persona has no access to — answering it ("what
+    // story?", "which photo?") is an instant bot tell. Stay silent.
+    if (messageData.type && messageData.type !== 'text') {
+      return;
+    }
+
     const venueType = (venueSnap.data().type || '').toUpperCase();
     const parentChainDepth = messageData.chainDepth !== undefined 
       ? parseInt(messageData.chainDepth, 10) 

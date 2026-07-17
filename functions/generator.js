@@ -586,7 +586,9 @@ const getRules = (isOpener = false) =>
   `(2) No hashtags. (3) No line breaks. ` +
   `(4) Be extremely casual, like texting a friend. ` +
   `(5) Do NOT start with 'yo', 'yoo', 'ayo', 'bro', or 'buda'. Most messages should open mid-thought, with no greeting/filler word at all — just say the thing. ` +
-  `(6) Do NOT start with 'facts', 'fr', 'real', 'same', or 'honestly', and avoid the word 'actually' — bots overuse these; real texters vary their entrances.\n`;
+  `(6) Do NOT start with 'facts', 'fr', 'real', 'same', or 'honestly', and avoid the word 'actually' — bots overuse these; real texters vary their entrances. ` +
+  `(7) NEVER use the phrase "hits different" (or "hit different" / "hitting different") in any form — it is worn out. Say what you mean some other way. ` +
+  `(8) The app has photo/video stories but YOU cannot see them. Never mention stories, never claim you saw one, and if someone brings up a story or photo, respond to the conversation without referencing it or asking to see/describe it.\n`;
 
 // Persona voice card: the stable texting identity stored on the persona doc.
 // Same card every night → the same persona texts the same way next weekend.
@@ -1340,7 +1342,17 @@ async function generateMessage(context) {
         attempts++;
         continue;
       }
-      
+
+      // Overused-phrase and story-blindness enforcement: the model habitually
+      // reaches for "hits different", and any story talk outs the persona as
+      // blind to media it "reacted" to. Prompt rules 7-8 ask; this enforces.
+      const hasBannedPhrase = /hit(s|ting)? different|\bstory\b|\bstories\b/i.test(text);
+      if (hasBannedPhrase && attempts < 4) {
+        console.warn(`[Persona Generator] Attempt ${attempts + 1} used a banned phrase ("hits different"/story talk). Retrying. Text: "${text}"`);
+        attempts++;
+        continue;
+      }
+
       // Opener validation
       const candidateCleaned = enforceCeiling(text, personaUsername, personaName, sampledIntent.type, history || '', personaVoice);
       const firstW = getCleanedFirstWord(candidateCleaned, personaUsername, personaName);
