@@ -1257,6 +1257,13 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
   const simLocsSnap = await rtdb.ref('simulated_locations').once('value');
   const simLocs = simLocsSnap.exists() ? simLocsSnap.val() : {};
 
+  // Fetch admin-driven persona presence (written when an admin chats as a
+  // persona). These are human-controlled, so they count as REAL users for
+  // every notification signal — unlike engine sims they ignore the sim
+  // threshold and the unrealistic-hours filter.
+  const adminPersonaSnap = await rtdb.ref('admin_persona_locations').once('value');
+  const adminPersonaLocs = adminPersonaSnap.exists() ? adminPersonaSnap.val() : {};
+
   // Load simulation settings from Firestore
   let simEnabled = true;
   let simThreshold = 100;
@@ -1275,6 +1282,21 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
   const activeRealLocs = Object.entries(realLocs)
     .map(([uid, loc]) => ({ ...loc, user_id: uid }))
     .filter(loc => loc.latitude && loc.longitude && (now - loc.timestamp < STALE_MS));
+
+  // Admin personas join the real pool. Entries carry venueId (no lat/lng) —
+  // every consumer below matches on venueId first. Stale entries are pruned.
+  const activeAdminPersonaLocs = Object.entries(adminPersonaLocs)
+    .map(([uid, loc]) => ({ ...loc, user_id: uid }))
+    .filter(loc => loc.venueId && (now - loc.timestamp < STALE_MS));
+  const stalePersonaIds = Object.entries(adminPersonaLocs)
+    .filter(([, loc]) => !loc || !loc.venueId || !(now - loc.timestamp < STALE_MS))
+    .map(([uid]) => uid);
+  if (stalePersonaIds.length > 0) {
+    rtdb.ref('admin_persona_locations')
+      .update(Object.fromEntries(stalePersonaIds.map((uid) => [uid, null])))
+      .catch(err => console.warn('[notifyHotVenues] Failed to prune stale admin personas:', err));
+  }
+  activeRealLocs.push(...activeAdminPersonaLocs);
   const activeRealCount = activeRealLocs.length;
 
   const includeSimulated = simEnabled && (activeRealCount < simThreshold);
@@ -1321,9 +1343,11 @@ exports.notifyHotVenues = functions.pubsub.schedule("every 5 minutes").onRun(asy
     const isUnrealistic = isUnrealisticVenueTime(venue, weekday, hour);
     const includeSimulatedForVenue = includeSimulated && !isUnrealistic;
 
-    // Filter activeLocations for counts and presence checks at this venue
+    // Filter activeLocations for counts and presence checks at this venue.
+    // sim_admin_ personas are human-driven, so they survive the
+    // unrealistic-hours filter that hides engine sims.
     const venueLocations = activeLocations.filter(loc => {
-      if (isUnrealistic && loc.user_id && loc.user_id.startsWith('sim_')) {
+      if (isUnrealistic && loc.user_id && loc.user_id.startsWith('sim_') && !loc.user_id.startsWith('sim_admin_')) {
         return false;
       }
       if (loc.venueId) return loc.venueId === venue.id;

@@ -10,6 +10,10 @@
       ".read": true,
       ".write": "auth != null"
     },
+    "admin_persona_locations": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
     "simulation_status": {
       ".read": "auth != null",
       ".write": "auth != null"

@@ -236,11 +236,26 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     const name = await fetchUsername(id);
     return { id, name };
   };
+  // Admin personas are human-controlled, so they count as real presence for
+  // the hot-venue notification triggers (join spike / user count). Every send
+  // refreshes the persona's entry; the server prunes entries it deems stale.
+  const recordSimPersonaPresence = (personaId: string) => {
+    if (!venueId) return;
+    set(ref(realtimeDB, `admin_persona_locations/${personaId}`), {
+      user_id: personaId,
+      venueId,
+      timestamp: Date.now(),
+    }).catch((err) => console.warn('[VenueChat] Failed to record persona presence:', err));
+  };
   // Returns the pinned persona, creating one on first use.
   const ensureSimPersona = async () => {
-    if (simPersonaRef.current) return simPersonaRef.current;
+    if (simPersonaRef.current) {
+      recordSimPersonaPresence(simPersonaRef.current.id);
+      return simPersonaRef.current;
+    }
     const p = await makeSimPersona();
     setPersona(p);
+    recordSimPersonaPresence(p.id);
     return p;
   };
   const [isStickerPickerVisible, setIsStickerPickerVisible] = useState(false);
