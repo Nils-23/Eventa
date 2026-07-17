@@ -286,11 +286,45 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     })
   ).current;
 
+  // ── Unread divider (WhatsApp-style) ──────────────────────────────────────
+  // Snapshot the last-viewed timestamp at open — the effect below overwrites
+  // it immediately, and the divider anchors to this boundary.
+  const [unreadAnchor, setUnreadAnchor] = useState<{ id: string; count: number } | null>(null);
+  const unreadLockedRef = useRef(false);
+  const initialScrollDoneRef = useRef(false);
+  const unreadSinceRef = useRef(0);
+
+  useEffect(() => {
+    if (isVisible && venueId) {
+      unreadSinceRef.current = useAppStore.getState().lastViewedChats[venueId] || 0;
+    } else {
+      unreadLockedRef.current = false;
+      initialScrollDoneRef.current = false;
+      setUnreadAnchor(null);
+    }
+  }, [isVisible, venueId]);
+
   useEffect(() => {
     if (isVisible && venueId) {
       updateLastViewedChat(venueId);
     }
   }, [isVisible, venueId, messages.length, updateLastViewedChat]);
+
+  // Anchor the divider once per open on the first load of messages: it stays
+  // put while the chat is open (even as new messages arrive) and is gone on
+  // the next visit, once everything has been "read".
+  useEffect(() => {
+    if (!isVisible || unreadLockedRef.current || isLoading) return;
+    unreadLockedRef.current = true;
+    const since = unreadSinceRef.current;
+    if (since <= 0) return; // first-ever visit: nothing is "unread" yet
+    const unread = messages.filter(
+      (m) => m.timestamp > since && m.user_id !== user?.uid && !hiddenUsers.includes(m.user_id)
+    );
+    if (unread.length > 0) {
+      setUnreadAnchor({ id: unread[0].id, count: unread.length });
+    }
+  }, [isVisible, isLoading, messages]);
 
 
 
@@ -920,6 +954,16 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     const isStoryReaction = item.type === 'story_reaction' && item.storyData;
 
     return (
+      <>
+      {unreadAnchor?.id === item.id && (
+        <View style={styles.unreadDividerRow}>
+          <View style={styles.unreadDividerLine} />
+          <Text style={styles.unreadDividerText}>
+            {unreadAnchor.count} UNREAD MESSAGE{unreadAnchor.count > 1 ? 'S' : ''}
+          </Text>
+          <View style={styles.unreadDividerLine} />
+        </View>
+      )}
       <SwipeableMessage
         key={item.id}
         onSwipe={() => setReplyingTo(item)}
@@ -1001,7 +1045,27 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           {renderReactions(item, isMe)}
         </View>
       </SwipeableMessage>
+      </>
     );
+  };
+
+  const visibleMessages = messages.filter(msg => !hiddenUsers.includes(msg.user_id));
+
+  // Initial scroll lands on the unread divider (slightly below the top) like
+  // WhatsApp; without unread we stick to the bottom as before. After the
+  // divider scroll, incoming messages no longer yank the list to the end —
+  // the explicit scrollToEnd in the send paths still covers own messages.
+  const handleListReady = () => {
+    if (unreadAnchor) {
+      if (initialScrollDoneRef.current) return;
+      const idx = visibleMessages.findIndex(m => m.id === unreadAnchor.id);
+      if (idx >= 0) {
+        initialScrollDoneRef.current = true;
+        flatListRef.current?.scrollToIndex({ index: idx, viewPosition: 0.2, animated: false });
+      }
+      return;
+    }
+    flatListRef.current?.scrollToEnd({ animated: true });
   };
 
   return (
@@ -1049,12 +1113,19 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           ) : (
             <FlatList
               ref={flatListRef}
-              data={messages.filter(msg => !hiddenUsers.includes(msg.user_id))}
+              data={visibleMessages}
               keyExtractor={item => item.id}
               renderItem={renderMessage}
               contentContainerStyle={styles.messagesList}
-              onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-              onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
+              onContentSizeChange={handleListReady}
+              onLayout={handleListReady}
+              onScrollToIndexFailed={(info) => {
+                // Virtualized rows may not be measured yet — jump close, retry.
+                flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
+                setTimeout(() => {
+                  flatListRef.current?.scrollToIndex({ index: info.index, viewPosition: 0.2, animated: false });
+                }, 120);
+              }}
             />
           )}
 
@@ -1402,6 +1473,23 @@ const styles = StyleSheet.create({
   messagesList: {
     padding: 16,
     paddingBottom: 20,
+  },
+  unreadDividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+    gap: 10,
+  },
+  unreadDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(0, 255, 204, 0.35)',
+  },
+  unreadDividerText: {
+    color: '#00FFCC',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   messageContainer: {
     marginBottom: 10,
