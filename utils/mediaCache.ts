@@ -17,6 +17,9 @@ export const getCachedMediaUriSync = (url: string | undefined | null): string | 
 
 /**
  * Generates a unique SHA-256 hash for a given URL and appends the extension.
+ * The "media2_" prefix versions the cache: the old scheme downloaded straight
+ * to this path, so half-written files from interrupted downloads may exist
+ * under "media_" — those must never be picked up again (black-screen videos).
  */
 export const getCachedFilePath = async (url: string): Promise<string> => {
   const hash = await Crypto.digestStringAsync(
@@ -28,7 +31,48 @@ export const getCachedFilePath = async (url: string): Promise<string> => {
   if (!extension || extension.length > 5) {
     extension = 'bin';
   }
-  return `${FileSystem.cacheDirectory}media_${hash}.${extension}`;
+  return `${FileSystem.cacheDirectory}media2_${hash}.${extension}`;
+};
+
+// One download per URL, shared by the viewer's direct fetch and the prefetch
+// queue. Without this, both saw "not cached" and wrote to the SAME final path
+// concurrently — interleaved writes produced permanently corrupt files.
+const inFlight: Record<string, Promise<string> | undefined> = {};
+
+// Downloads into a temp file and atomically moves it into place, so the final
+// cache path only ever holds COMPLETE files. The old direct-to-path download
+// meant an exists() check passed for half-written videos — the player got a
+// truncated MP4 (no moov atom) and rendered a silent black screen.
+const downloadToCache = async (url: string): Promise<string> => {
+  const cachedUri = await getCachedFilePath(url);
+  const fileInfo = await FileSystem.getInfoAsync(cachedUri);
+  if (fileInfo.exists) {
+    memoryCache[url] = cachedUri;
+    return cachedUri;
+  }
+
+  const tmpUri = `${cachedUri}.tmp-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const downloadResult = await FileSystem.downloadAsync(url, tmpUri);
+
+  const finalInfo = await FileSystem.getInfoAsync(cachedUri);
+  if (finalInfo.exists) {
+    // Another racer finished first; keep theirs, drop ours.
+    FileSystem.deleteAsync(downloadResult.uri, { idempotent: true }).catch(() => {});
+  } else {
+    await FileSystem.moveAsync({ from: downloadResult.uri, to: cachedUri });
+  }
+  memoryCache[url] = cachedUri;
+  return cachedUri;
+};
+
+const getOrDownload = (url: string): Promise<string> => {
+  const existing = inFlight[url];
+  if (existing) return existing;
+  const p = downloadToCache(url).finally(() => {
+    delete inFlight[url];
+  });
+  inFlight[url] = p;
+  return p;
 };
 
 /**
@@ -45,17 +89,7 @@ export const getCachedMediaUri = async (url: string): Promise<string> => {
   }
 
   try {
-    const cachedUri = await getCachedFilePath(url);
-    const fileInfo = await FileSystem.getInfoAsync(cachedUri);
-    if (fileInfo.exists) {
-      memoryCache[url] = cachedUri;
-      return cachedUri;
-    }
-
-    // Download the file to local cache
-    const downloadResult = await FileSystem.downloadAsync(url, cachedUri);
-    memoryCache[url] = downloadResult.uri;
-    return downloadResult.uri;
+    return await getOrDownload(url);
   } catch (error) {
     console.warn('[MediaCache] Failed to get cached URI:', url, error);
     return url; // Fallback to remote URL
@@ -74,16 +108,7 @@ export const prefetchMedia = async (url: string): Promise<void> => {
     if (memoryCache[url]) {
       return;
     }
-
-    const cachedUri = await getCachedFilePath(url);
-    const fileInfo = await FileSystem.getInfoAsync(cachedUri);
-    if (fileInfo.exists) {
-      memoryCache[url] = cachedUri;
-      return;
-    }
-
-    const downloadResult = await FileSystem.downloadAsync(url, cachedUri);
-    memoryCache[url] = downloadResult.uri;
+    await getOrDownload(url);
   } catch (error) {
     // Fail silently on prefetch
   }
