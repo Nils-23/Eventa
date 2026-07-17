@@ -71,38 +71,55 @@ export const prefetchMedia = async (url: string): Promise<void> => {
   }
 
   try {
-    const cachedUri = await getCachedFilePath(url);
-    
     if (memoryCache[url]) {
       return;
     }
 
+    const cachedUri = await getCachedFilePath(url);
     const fileInfo = await FileSystem.getInfoAsync(cachedUri);
     if (fileInfo.exists) {
       memoryCache[url] = cachedUri;
       return;
     }
 
-    // Run download in background
-    FileSystem.downloadAsync(url, cachedUri)
-      .then((downloadResult) => {
-        memoryCache[url] = downloadResult.uri;
-      })
-      .catch((err) => {
-        console.warn('[MediaCache] Background download failed:', url, err);
-      });
+    const downloadResult = await FileSystem.downloadAsync(url, cachedUri);
+    memoryCache[url] = downloadResult.uri;
   } catch (error) {
     // Fail silently on prefetch
   }
 };
 
+// Bounded-concurrency prefetch queue. Unbounded parallel downloads (every
+// active story at once, videos included) saturate the connection and starve
+// the story the user actually tapped — the main "stories take long to load"
+// complaint. Queue order is submission order, so callers should pass URLs
+// most-likely-viewed first.
+const MAX_CONCURRENT_PREFETCH = 3;
+const pendingQueue: string[] = [];
+const queuedUrls = new Set<string>();
+let activeDownloads = 0;
+
+const pumpPrefetchQueue = (): void => {
+  while (activeDownloads < MAX_CONCURRENT_PREFETCH && pendingQueue.length > 0) {
+    const url = pendingQueue.shift()!;
+    activeDownloads++;
+    prefetchMedia(url).finally(() => {
+      queuedUrls.delete(url);
+      activeDownloads--;
+      pumpPrefetchQueue();
+    });
+  }
+};
+
 /**
- * Prefetches multiple media URLs in the background.
+ * Prefetches multiple media URLs in the background, a few at a time.
  */
 export const prefetchStoriesMedia = (urls: string[]): void => {
   urls.forEach((url) => {
-    if (url) {
-      prefetchMedia(url);
+    if (url && !memoryCache[url] && !queuedUrls.has(url)) {
+      queuedUrls.add(url);
+      pendingQueue.push(url);
     }
   });
+  pumpPrefetchQueue();
 };

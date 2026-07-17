@@ -12,10 +12,13 @@ import {
   Alert,
   PanResponder,
   TouchableOpacity,
+  TextInput,
+  Keyboard,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Video, ResizeMode, Audio } from 'expo-av';
-import { X, Plus, ArrowLeft, User as UserIcon, Trash2, Flag, UserX } from 'lucide-react-native';
+import { X, Plus, ArrowLeft, User as UserIcon, Trash2, Flag, UserX, Send } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StoryData } from '../services/storyService';
 import { fetchUsername, hideUser } from '../services/userService';
@@ -81,7 +84,7 @@ const StoryMediaItem: React.FC<StoryMediaItemProps> = ({
         isLooping={false}
         volume={1.0}
         isMuted={false}
-        progressUpdateIntervalMillis={100}
+        progressUpdateIntervalMillis={250}
         onPlaybackStatusUpdate={(status) => {
           if (isActive) {
             onVideoUpdate(status);
@@ -184,13 +187,15 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const hiddenUsers = useAppStore((s) => s.hiddenUsers);
   const setHiddenUsers = useAppStore((s) => s.setHiddenUsers);
 
-  const [shouldRender, setShouldRender] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const storiesSerialized = stories.map(s => s.id).join(',');
   const [isPaused, setIsPaused] = useState(false);
   const [isMediaLoading, setIsMediaLoading] = useState(true);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
   const nextUniqueId = useRef(0);
+  const [replyText, setReplyText] = useState('');
+  const [isSendingReply, setIsSendingReply] = useState(false);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
 
   // Username cache per-session (avoids re-fetching same uid)
   const [usernameMap, setUsernameMap] = useState<Record<string, string>>({});
@@ -204,10 +209,8 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const currentStory = stories.length > 0 ? stories[currentIndex] : null;
   const { cachedUri: currentStoryUri } = useCachedMedia(currentStory?.media_url);
 
-  // Gesture and transition animations
+  // Gesture animation (swipe-down to dismiss)
   const translateY = useRef(new Animated.Value(0)).current;
-  const translateX = useRef(new Animated.Value(0)).current;
-  const [transitioningIndex, setTransitioningIndex] = useState<number | null>(null);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -245,29 +248,17 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     })
   ).current;
 
-  // Defer rendering until transition is finished
-  useEffect(() => {
-    if (isVisible) {
-      const timer = setTimeout(() => {
-        setShouldRender(true);
-      }, 300);
-      return () => clearTimeout(timer);
-    } else {
-      setShouldRender(false);
-    }
-  }, [isVisible]);
-
   // Prefetch stories media when viewer opens
   useEffect(() => {
-    if (isVisible && stories.length > 0 && shouldRender) {
+    if (isVisible && stories.length > 0) {
       const mediaUrls = stories.map(s => s.media_url).filter(Boolean);
       prefetchStoriesMedia(mediaUrls);
     }
-  }, [isVisible, stories, shouldRender]);
+  }, [isVisible, stories]);
 
   // ─── Prefetch usernames for all stories at once ──────────────────────────
   useEffect(() => {
-    if (!isVisible || stories.length === 0 || !shouldRender) return;
+    if (!isVisible || stories.length === 0) return;
     const uniqueIds = [...new Set(stories.map(s => s.user_id))];
     uniqueIds.forEach(uid => {
       if (!usernameMap[uid]) {
@@ -276,7 +267,23 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         });
       }
     });
-  }, [isVisible, stories, shouldRender]);
+  }, [isVisible, stories]);
+
+  // ─── Keyboard tracking: lift the reply bar above the keyboard ────────────
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardOffset(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardOffset(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // ─── Pre-resolve: current story's username ───────────────────────────────
   const currentUsername = currentStory
@@ -285,7 +292,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
 
   // ─── Audio session: override iOS silent switch when viewer opens ────────
   useEffect(() => {
-    if (isVisible && shouldRender) {
+    if (isVisible) {
       Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
         allowsRecordingIOS: false,
@@ -298,7 +305,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         allowsRecordingIOS: false,
       }).catch(() => {});
     }
-  }, [isVisible, shouldRender]);
+  }, [isVisible]);
 
   // ─── Reset on open ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -315,6 +322,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
       progressAnim.setValue(0);
       progressValue.current = 0;
       setFloatingReactions([]);
+      setReplyText('');
     } else {
       if (imageTimerRef.current) {
         imageTimerRef.current.stop();
@@ -392,21 +400,11 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   }, [isPaused]);
 
   // ─── Navigation ─────────────────────────────────────────────────────────
+  // Instant cut, no slide: the 300ms slide (with a second media item mounted
+  // mid-transition) made every tap feel laggy, especially on videos.
   const handleNext = useCallback(() => {
     if (currentIndex < stories.length - 1) {
-      setIsPaused(true);
-      setTransitioningIndex(currentIndex + 1);
-      Animated.timing(translateX, {
-        toValue: -width,
-        duration: 300,
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (finished) {
-          setCurrentIndex(prev => prev + 1);
-          translateX.setValue(0);
-          setTransitioningIndex(null);
-        }
-      });
+      setCurrentIndex(prev => prev + 1);
     } else {
       if (onStoriesEnd) {
         onStoriesEnd();
@@ -414,25 +412,13 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         onClose();
       }
     }
-  }, [currentIndex, stories.length, onClose, translateX, onStoriesEnd]);
+  }, [currentIndex, stories.length, onClose, onStoriesEnd]);
 
   const handlePrev = useCallback(() => {
     if (currentIndex > 0) {
-      setIsPaused(true);
-      setTransitioningIndex(currentIndex - 1);
-      Animated.timing(translateX, {
-        toValue: width,
-        duration: 300,
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (finished) {
-          setCurrentIndex(prev => prev - 1);
-          translateX.setValue(0);
-          setTransitioningIndex(null);
-        }
-      });
+      setCurrentIndex(prev => prev - 1);
     }
-  }, [currentIndex, translateX]);
+  }, [currentIndex]);
 
   // ─── Image loaded → start timer ──────────────────────────────────────────
   const handleImageLoad = useCallback(() => {
@@ -479,10 +465,10 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         videoTimerRef.current.stop();
       }
       
-      // Animate smoothly to the current playback position over 100ms
+      // Animate smoothly to the current playback position over one interval
       const anim = Animated.timing(progressAnim, {
         toValue: Math.min(progress, 1),
-        duration: 100,
+        duration: 250,
         useNativeDriver: false,
       });
       videoTimerRef.current = anim;
@@ -539,6 +525,55 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     );
   }, [currentStory, onRemoveStory, stories.length, currentIndex, onClose]);
 
+  /**
+   * Pushes a story_reaction message (emoji reaction or text reply — both carry
+   * the story thumbnail payload) into the venue chat.
+   */
+  const sendStoryChatMessage = async (
+    message: string,
+    reactions?: Record<string, Record<string, string>>
+  ) => {
+    if (!user || !currentStory?.venue_id) return;
+
+    const senderName = await fetchUsername(user.uid);
+    const chatRef = ref(realtimeDB, `venue_chats/${currentStory.venue_id}`);
+    const newMessageRef = push(chatRef);
+
+    const displayAuthor = currentUsername || 'someone';
+
+    const createdAtVal = currentStory.created_at ? (
+      typeof currentStory.created_at.toDate === 'function'
+        ? currentStory.created_at.toDate().getTime()
+        : (currentStory.created_at.seconds !== undefined ? currentStory.created_at.seconds * 1000 : Date.now())
+    ) : Date.now();
+
+    const expiresAtVal = currentStory.expires_at ? (
+      typeof currentStory.expires_at.toDate === 'function'
+        ? currentStory.expires_at.toDate().getTime()
+        : (currentStory.expires_at.seconds !== undefined ? currentStory.expires_at.seconds * 1000 : Date.now() + 24 * 3600 * 1000)
+    ) : Date.now() + 24 * 3600 * 1000;
+
+    await set(newMessageRef, {
+      user_id: user.uid,
+      username: senderName,
+      message,
+      type: 'story_reaction',
+      timestamp: Date.now(),
+      ...(reactions ? { reactions } : {}),
+      storyData: {
+        id: currentStory.id || '',
+        media_url: currentStory.media_url,
+        media_type: currentStory.media_type,
+        user_id: currentStory.user_id,
+        username: displayAuthor,
+        created_at: createdAtVal,
+        expires_at: expiresAtVal,
+        venue_id: currentStory.venue_id,
+        activeBadge: currentStory.activeBadge || ''
+      }
+    });
+  };
+
   const handleReactToStory = async (emoji: string, index: number) => {
     if (!user || !currentStory?.venue_id) return;
 
@@ -546,7 +581,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     const containerWidth = width - 40 - (canAddStory ? 56 : 0);
     const buttonWidth = containerWidth / 6;
     const startX = 20 + (canAddStory ? 56 : 0) + index * buttonWidth + buttonWidth / 2 - 16;
-    
+
     const reactionId = nextUniqueId.current++;
     setFloatingReactions(prev => [...prev, { id: reactionId, emoji, x: startX }]);
 
@@ -555,46 +590,10 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
 
     try {
       const senderName = await fetchUsername(user.uid);
-      const chatRef = ref(realtimeDB, `venue_chats/${currentStory.venue_id}`);
-      const newMessageRef = push(chatRef);
-
-      const displayAuthor = currentUsername || 'someone';
-
-      const createdAtVal = currentStory.created_at ? (
-        typeof currentStory.created_at.toDate === 'function' 
-          ? currentStory.created_at.toDate().getTime()
-          : (currentStory.created_at.seconds !== undefined ? currentStory.created_at.seconds * 1000 : Date.now())
-      ) : Date.now();
-
-      const expiresAtVal = currentStory.expires_at ? (
-        typeof currentStory.expires_at.toDate === 'function'
-          ? currentStory.expires_at.toDate().getTime()
-          : (currentStory.expires_at.seconds !== undefined ? currentStory.expires_at.seconds * 1000 : Date.now() + 24 * 3600 * 1000)
-      ) : Date.now() + 24 * 3600 * 1000;
-
-      await set(newMessageRef, {
-        user_id: user.uid,
-        username: senderName,
-        message: `Reacted ${emoji} to ${displayAuthor}'s story`,
-        type: 'story_reaction',
-        timestamp: Date.now(),
-        reactions: {
-          [emoji]: {
-            [user.uid]: senderName
-          }
-        },
-        storyData: {
-          id: currentStory.id || '',
-          media_url: currentStory.media_url,
-          media_type: currentStory.media_type,
-          user_id: currentStory.user_id,
-          username: displayAuthor,
-          created_at: createdAtVal,
-          expires_at: expiresAtVal,
-          venue_id: currentStory.venue_id,
-          activeBadge: currentStory.activeBadge || ''
-        }
-      });
+      await sendStoryChatMessage(
+        `Reacted ${emoji} to ${currentUsername || 'someone'}'s story`,
+        { [emoji]: { [user.uid]: senderName } }
+      );
 
       // Briefly show success notification
       Toast.show({
@@ -618,6 +617,34 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         text2: 'Could not deliver reaction to chat.',
       });
       setIsPaused(false);
+    }
+  };
+
+  const handleSendReply = async () => {
+    const text = replyText.trim();
+    if (!text || isSendingReply || !user || !currentStory?.venue_id) return;
+
+    setIsSendingReply(true);
+    try {
+      await sendStoryChatMessage(text);
+      setReplyText('');
+      Keyboard.dismiss();
+      Toast.show({
+        type: 'success',
+        text1: 'Reply Sent',
+        text2: 'Your reply was posted to the venue chat.',
+        position: 'top',
+        visibilityTime: 1500,
+      });
+    } catch (err) {
+      console.warn('[StoryViewer] Failed to send story reply:', err);
+      Toast.show({
+        type: 'error',
+        text1: 'Reply Failed',
+        text2: 'Could not deliver reply to chat.',
+      });
+    } finally {
+      setIsSendingReply(false);
     }
   };
 
@@ -741,11 +768,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
           style={[styles.container, { transform: [{ translateY }] }]}
           {...panResponder.panHandlers}
         >
-          {!shouldRender ? (
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator color="#FFFFFF" size="large" />
-            </View>
-          ) : stories.length === 0 ? (
+          {stories.length === 0 ? (
             /* ── Empty state ─────────────────────────────── */
             <View style={styles.emptyContainer}>
               <Pressable
@@ -766,38 +789,20 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
           ) : currentStory ? (
             <>
               {/* ── Media layer ───────────────────────────── */}
-              <Animated.View style={[StyleSheet.absoluteFillObject, { transform: [{ translateX }] }]}>
-                {/* Current Story Media */}
-                <View style={StyleSheet.absoluteFillObject}>
-                  <StoryMediaItem
-                    story={currentStory}
-                    isActive={transitioningIndex === null}
-                    isPaused={isPaused}
-                    isVisible={isVisible}
-                    onImageLoad={handleImageLoad}
-                    onVideoUpdate={handleVideoUpdate}
-                    onVideoError={() => {
-                      setIsMediaLoading(false);
-                      handleNext();
-                    }}
-                  />
-                </View>
-
-                {/* Transitioning Story Media */}
-                {transitioningIndex !== null && stories[transitioningIndex] && (
-                  <View style={[StyleSheet.absoluteFillObject, { left: transitioningIndex > currentIndex ? width : -width }]}>
-                    <StoryMediaItem
-                      story={stories[transitioningIndex]}
-                      isActive={true}
-                      isPaused={true}
-                      isVisible={isVisible}
-                      onImageLoad={() => {}}
-                      onVideoUpdate={() => {}}
-                      onVideoError={() => {}}
-                    />
-                  </View>
-                )}
-              </Animated.View>
+              <View style={StyleSheet.absoluteFillObject}>
+                <StoryMediaItem
+                  story={currentStory}
+                  isActive={true}
+                  isPaused={isPaused}
+                  isVisible={isVisible}
+                  onImageLoad={handleImageLoad}
+                  onVideoUpdate={handleVideoUpdate}
+                  onVideoError={() => {
+                    setIsMediaLoading(false);
+                    handleNext();
+                  }}
+                />
+              </View>
 
               {/* Floating Reactions Overlay */}
               {floatingReactions.map(reaction => (
@@ -812,7 +817,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
               ))}
 
               {/* ── Loading spinner (shown while media buffers or cache resolves) ── */}
-              {(isMediaLoading || !currentStoryUri) && transitioningIndex === null && (
+              {(isMediaLoading || !currentStoryUri) && (
                 <View style={styles.loadingOverlay}>
                   <ActivityIndicator color="#FFFFFF" size="large" />
                 </View>
@@ -908,44 +913,75 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
 
 
 
-              {/* ── Bottom controls row (unified layout for Add/Remove/React actions) ── */}
+              {/* ── Bottom controls (reply bar + Add/Remove/React actions) ── */}
               <View style={[
-                styles.bottomControlsContainer, 
-                { 
-                  bottom: Math.max(insets.bottom, 20),
-                  justifyContent: (canAddStory || currentStory.user_id !== user?.uid) ? 'space-between' : 'center'
-                }
+                styles.bottomControlsColumn,
+                { bottom: Math.max(insets.bottom, 20) + keyboardOffset }
               ]}>
-                {canAddStory && (
-                  <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
-                    <Plus color="#000" size={22} />
-                  </Pressable>
-                )}
-
-                {currentStory.user_id === user?.uid ? (
-                  onRemoveStory && (
-                    <Pressable
-                      style={styles.removeButtonInline}
-                      onPress={handleRemoveStory}
+                {/* Text reply — only for other users' stories in a venue chat */}
+                {currentStory.user_id !== user?.uid && currentStory.venue_id && (
+                  <View style={styles.replyRow}>
+                    <TextInput
+                      style={styles.replyInput}
+                      value={replyText}
+                      onChangeText={setReplyText}
+                      placeholder={`Reply to ${currentUsername || 'story'}...`}
+                      placeholderTextColor="rgba(255,255,255,0.5)"
+                      maxLength={300}
+                      returnKeyType="send"
+                      onSubmitEditing={handleSendReply}
+                      onFocus={() => setIsPaused(true)}
+                      onBlur={() => setIsPaused(false)}
+                    />
+                    <TouchableOpacity
+                      style={[styles.replySendButton, (!replyText.trim() || isSendingReply) && { opacity: 0.4 }]}
+                      onPress={handleSendReply}
+                      disabled={!replyText.trim() || isSendingReply}
                     >
-                      <Trash2 color="#FF0055" size={16} style={{ marginRight: 6 }} />
-                      <Text style={styles.removeButtonText}>Remove Story</Text>
-                    </Pressable>
-                  )
-                ) : (
-                  <View style={[styles.reactionContainer, { marginLeft: canAddStory ? 12 : 0 }]}>
-                    {['❤️', '🔥', '😂', '👍', '😮', '🍻'].map((emoji, index) => (
-                      <TouchableOpacity
-                        key={emoji}
-                        style={styles.reactionButton}
-                        onPress={() => handleReactToStory(emoji, index)}
-                        activeOpacity={0.6}
-                      >
-                        <Text style={styles.reactionEmojiText}>{emoji}</Text>
-                      </TouchableOpacity>
-                    ))}
+                      {isSendingReply ? (
+                        <ActivityIndicator color="#000" size="small" />
+                      ) : (
+                        <Send color="#000" size={18} />
+                      )}
+                    </TouchableOpacity>
                   </View>
                 )}
+
+                <View style={[
+                  styles.bottomControlsContainer,
+                  { justifyContent: (canAddStory || currentStory.user_id !== user?.uid) ? 'space-between' : 'center' }
+                ]}>
+                  {canAddStory && (
+                    <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
+                      <Plus color="#000" size={22} />
+                    </Pressable>
+                  )}
+
+                  {currentStory.user_id === user?.uid ? (
+                    onRemoveStory && (
+                      <Pressable
+                        style={styles.removeButtonInline}
+                        onPress={handleRemoveStory}
+                      >
+                        <Trash2 color="#FF0055" size={16} style={{ marginRight: 6 }} />
+                        <Text style={styles.removeButtonText}>Remove Story</Text>
+                      </Pressable>
+                    )
+                  ) : (
+                    <View style={[styles.reactionContainer, { marginLeft: canAddStory ? 12 : 0 }]}>
+                      {['❤️', '🔥', '😂', '👍', '😮', '🍻'].map((emoji, index) => (
+                        <TouchableOpacity
+                          key={emoji}
+                          style={styles.reactionButton}
+                          onPress={() => handleReactToStory(emoji, index)}
+                          activeOpacity={0.6}
+                        >
+                          <Text style={styles.reactionEmojiText}>{emoji}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </View>
               </View>
             </>
           ) : null}
@@ -1110,14 +1146,41 @@ const styles = StyleSheet.create({
     padding: 8,
   },
 
-  // ── Bottom controls row (unified layout) ──────────────────────────────────
-  bottomControlsContainer: {
+  // ── Bottom controls (reply bar + action row) ──────────────────────────────
+  bottomControlsColumn: {
     position: 'absolute',
     left: 20,
     right: 20,
+    zIndex: 5,
+  },
+  bottomControlsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 5,
+  },
+  replyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 8,
+  },
+  replyInput: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    color: '#FFF',
+    fontSize: 14,
+  },
+  replySendButton: {
+    backgroundColor: '#00FFCC',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   addButtonFloating: {
     backgroundColor: '#00FFCC',
