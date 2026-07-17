@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const { generateMessage } = require("./generator");
 const { SCENARIOS, getCoreStanceForScenario, getSecondaryStanceForScenario, STRANGER_OK_SCENARIOS } = require("./scenarios");
 const { runCrowdSimulationCycle, getProfile, getAttendanceShape, inferProfileKey } = require("./crowdSimulation");
+const { refreshVenueImages } = require("./venueImages");
 
 // A venue is "alive" for persona chat only when its attendance curve says
 // people are actually there at this hour (bar at 2pm ≈ 0, park at 2pm ≈ 1).
@@ -2109,6 +2110,35 @@ exports.checkRecurringStories = functions.pubsub.schedule("every 5 minutes").onR
   }
   return null;
 });
+
+// Self-healing venue images: stored Google Places photo URLs embed the Maps
+// API key, so a key rotation (or an outage while seeding) breaks them all at
+// once. This scan re-fetches any venue whose Google image is missing or keyed
+// to a stale key. Steady state makes zero Places API calls, and API failures
+// write nothing so the next run retries — recovery is automatic once an
+// outage ends. Key lives in settings/simulation.googleMapsApiKey.
+exports.refreshVenueImages = functions.runWith({ timeoutSeconds: 540, memory: '512MB' })
+  .pubsub.schedule('every 6 hours').onRun(async (context) => {
+    let apiKey = process.env.GOOGLE_MAPS_API_KEY || null;
+    try {
+      const simSettingsDoc = await db.collection('settings').doc('simulation').get();
+      if (simSettingsDoc.exists && simSettingsDoc.data().googleMapsApiKey) {
+        apiKey = simSettingsDoc.data().googleMapsApiKey;
+      }
+    } catch (e) {
+      console.error('[VenueImages] Failed to read settings/simulation:', e);
+    }
+    if (!apiKey) {
+      console.warn('[VenueImages] googleMapsApiKey not set in settings/simulation. Skipping.');
+      return null;
+    }
+    try {
+      await refreshVenueImages(db, apiKey);
+    } catch (error) {
+      console.error('[VenueImages] Refresh run failed:', error);
+    }
+    return null;
+  });
 
 // Scheduled Engagement Notification (runs 1st, 10th, and 20th of every month at 9:00 AM Nairobi time)
 exports.monthlyEngagementNotification = functions.pubsub
