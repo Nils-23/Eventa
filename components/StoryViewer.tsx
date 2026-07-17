@@ -215,22 +215,42 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   // Gesture animation (swipe-down to dismiss)
   const translateY = useRef(new Animated.Value(0)).current;
 
+  // The responder is created once, so it reads navigation through refs that
+  // are refreshed every render (direct closure would capture a stale index).
+  const handleNextRef = useRef<() => void>(() => {});
+  const handlePrevRef = useRef<() => void>(() => {});
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Trigger drag down only when vertical drag is significant and dragging downward
-        return gestureState.dy > 5 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+        // Vertical drag down (dismiss) or a deliberate horizontal swipe (nav)
+        const vertical = gestureState.dy > 5 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+        const horizontal = Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
+        return vertical || horizontal;
       },
       onPanResponderGrant: () => {
         setIsPaused(true);
       },
       onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0) {
+        if (gestureState.dy > 0 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx)) {
           translateY.setValue(gestureState.dy);
         }
       },
       onPanResponderRelease: (_, gestureState) => {
+        // Horizontal swipe: left → next story, right → previous story.
+        // Always unpause: a no-op swipe (e.g. back on the first story) must
+        // not leave the story frozen from the grant-time pause.
+        if (Math.abs(gestureState.dx) > Math.abs(gestureState.dy)) {
+          Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
+          setIsPaused(false);
+          if (gestureState.dx < -50 || gestureState.vx < -0.3) {
+            handleNextRef.current();
+          } else if (gestureState.dx > 50 || gestureState.vx > 0.3) {
+            handlePrevRef.current();
+          }
+          return;
+        }
         if (gestureState.dy > 120 || gestureState.vy > 0.5) {
           Animated.timing(translateY, {
             toValue: height,
@@ -422,6 +442,10 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
       setCurrentIndex(prev => prev - 1);
     }
   }, [currentIndex]);
+
+  // Keep the gesture responder's view of navigation fresh
+  handleNextRef.current = handleNext;
+  handlePrevRef.current = handlePrev;
 
   // ─── Image loaded → start timer ──────────────────────────────────────────
   const handleImageLoad = useCallback(() => {
