@@ -196,6 +196,9 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const [replyText, setReplyText] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
+  // WhatsApp-style: the emoji panel only appears over the story while the
+  // reply input is focused (the focus itself signals intent to react).
+  const [isInputFocused, setIsInputFocused] = useState(false);
 
   // Username cache per-session (avoids re-fetching same uid)
   const [usernameMap, setUsernameMap] = useState<Record<string, string>>({});
@@ -577,10 +580,13 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const handleReactToStory = async (emoji: string, index: number) => {
     if (!user || !currentStory?.venue_id) return;
 
+    // Reacting closes the panel/keyboard, WhatsApp-style
+    Keyboard.dismiss();
+
     // Add floating reaction instantly for immediate feedback!
-    const containerWidth = width - 40 - (canAddStory ? 56 : 0);
+    const containerWidth = width - 40;
     const buttonWidth = containerWidth / 6;
-    const startX = 20 + (canAddStory ? 56 : 0) + index * buttonWidth + buttonWidth / 2 - 16;
+    const startX = 20 + index * buttonWidth + buttonWidth / 2 - 16;
 
     const reactionId = nextUniqueId.current++;
     setFloatingReactions(prev => [...prev, { id: reactionId, emoji, x: startX }]);
@@ -913,52 +919,81 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
 
 
 
-              {/* ── Bottom controls (reply bar + Add/Remove/React actions) ── */}
+              {/* ── Bottom controls (WhatsApp-style reply bar) ── */}
               <View style={[
                 styles.bottomControlsColumn,
                 { bottom: Math.max(insets.bottom, 20) + keyboardOffset }
               ]}>
-                {/* Text reply — only for other users' stories in a venue chat */}
-                {currentStory.user_id !== user?.uid && currentStory.venue_id && (
-                  <View style={styles.replyRow}>
-                    <TextInput
-                      style={styles.replyInput}
-                      value={replyText}
-                      onChangeText={setReplyText}
-                      placeholder={`Reply to ${currentUsername || 'story'}...`}
-                      placeholderTextColor="rgba(255,255,255,0.5)"
-                      maxLength={300}
-                      returnKeyType="send"
-                      onSubmitEditing={handleSendReply}
-                      onFocus={() => setIsPaused(true)}
-                      onBlur={() => setIsPaused(false)}
-                    />
-                    <TouchableOpacity
-                      style={[styles.replySendButton, (!replyText.trim() || isSendingReply) && { opacity: 0.4 }]}
-                      onPress={handleSendReply}
-                      disabled={!replyText.trim() || isSendingReply}
-                    >
-                      {isSendingReply ? (
-                        <ActivityIndicator color="#000" size="small" />
-                      ) : (
-                        <Send color="#000" size={18} />
+                {currentStory.user_id !== user?.uid && currentStory.venue_id ? (
+                  <>
+                    {/* Emoji panel floats over the story only while the input
+                        is focused — focusing signals intent to react. */}
+                    {isInputFocused && (
+                      <View style={styles.emojiPanel}>
+                        {['❤️', '🔥', '😂', '👍', '😮', '🍻'].map((emoji, index) => (
+                          <TouchableOpacity
+                            key={emoji}
+                            style={styles.emojiPanelButton}
+                            onPress={() => handleReactToStory(emoji, index)}
+                            activeOpacity={0.6}
+                          >
+                            <Text style={styles.emojiPanelText}>{emoji}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+
+                    <View style={styles.replyRow}>
+                      {canAddStory && !isInputFocused && (
+                        <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
+                          <Plus color="#000" size={22} />
+                        </Pressable>
                       )}
-                    </TouchableOpacity>
-                  </View>
-                )}
+                      <TextInput
+                        style={styles.replyInput}
+                        value={replyText}
+                        onChangeText={setReplyText}
+                        placeholder={`Reply to ${currentUsername || 'story'}...`}
+                        placeholderTextColor="rgba(255,255,255,0.5)"
+                        maxLength={300}
+                        returnKeyType="send"
+                        onSubmitEditing={handleSendReply}
+                        onFocus={() => {
+                          setIsInputFocused(true);
+                          setIsPaused(true);
+                        }}
+                        onBlur={() => {
+                          setIsInputFocused(false);
+                          setIsPaused(false);
+                        }}
+                      />
+                      {isInputFocused && (
+                        <TouchableOpacity
+                          style={[styles.replySendButton, (!replyText.trim() || isSendingReply) && { opacity: 0.4 }]}
+                          onPress={handleSendReply}
+                          disabled={!replyText.trim() || isSendingReply}
+                        >
+                          {isSendingReply ? (
+                            <ActivityIndicator color="#000" size="small" />
+                          ) : (
+                            <Send color="#000" size={18} />
+                          )}
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </>
+                ) : (
+                  <View style={[
+                    styles.bottomControlsContainer,
+                    { justifyContent: (canAddStory || currentStory.user_id !== user?.uid) ? 'space-between' : 'center' }
+                  ]}>
+                    {canAddStory && (
+                      <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
+                        <Plus color="#000" size={22} />
+                      </Pressable>
+                    )}
 
-                <View style={[
-                  styles.bottomControlsContainer,
-                  { justifyContent: (canAddStory || currentStory.user_id !== user?.uid) ? 'space-between' : 'center' }
-                ]}>
-                  {canAddStory && (
-                    <Pressable style={styles.addButtonFloating} onPress={onAddStory}>
-                      <Plus color="#000" size={22} />
-                    </Pressable>
-                  )}
-
-                  {currentStory.user_id === user?.uid ? (
-                    onRemoveStory && (
+                    {currentStory.user_id === user?.uid && onRemoveStory && (
                       <Pressable
                         style={styles.removeButtonInline}
                         onPress={handleRemoveStory}
@@ -966,22 +1001,9 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                         <Trash2 color="#FF0055" size={16} style={{ marginRight: 6 }} />
                         <Text style={styles.removeButtonText}>Remove Story</Text>
                       </Pressable>
-                    )
-                  ) : (
-                    <View style={[styles.reactionContainer, { marginLeft: canAddStory ? 12 : 0 }]}>
-                      {['❤️', '🔥', '😂', '👍', '😮', '🍻'].map((emoji, index) => (
-                        <TouchableOpacity
-                          key={emoji}
-                          style={styles.reactionButton}
-                          onPress={() => handleReactToStory(emoji, index)}
-                          activeOpacity={0.6}
-                        >
-                          <Text style={styles.reactionEmojiText}>{emoji}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
-                </View>
+                    )}
+                  </View>
+                )}
               </View>
             </>
           ) : null}
@@ -1210,22 +1232,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  reactionContainer: {
-    flex: 1,
+  emojiPanel: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    borderRadius: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    borderRadius: 28,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.15)',
-    paddingVertical: 4,
+    paddingVertical: 10,
     paddingHorizontal: 8,
+    marginBottom: 12,
   },
-  reactionButton: {
+  emojiPanelButton: {
     padding: 6,
   },
-  reactionEmojiText: {
-    fontSize: 20,
+  emojiPanelText: {
+    fontSize: 32,
   },
 });
