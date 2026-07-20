@@ -26,10 +26,13 @@ import { useAuth } from './hooks/useAuth';
 
 import { useAppStore } from './hooks/useAppStore';
 import { useReferralTracker } from './hooks/useReferralTracker';
+import { useCreatorWelcome } from './hooks/useCreatorWelcome';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { CreatorWelcomeModal } from './components/CreatorWelcomeModal';
 import { LiveVenuesProvider } from './contexts/LiveVenuesContext';
 import { useVersionCheck } from './hooks/useVersionCheck';
 import { UpdatePromptModal } from './components/UpdatePromptModal';
+import { navigationRef, navigate } from './navigation/navigationRef';
 import { theme } from './config/theme';
 
 
@@ -88,6 +91,9 @@ export default function App() {
   const isLoading = useAppStore((s) => s.isLoading);
   const hasAgreedToTerms = useAppStore((s) => s.hasAgreedToTerms);
 
+  // First launch after a creator application is approved: congratulations + tour.
+  const creatorWelcome = useCreatorWelcome();
+
   const isBooting = isLoading || hasCompletedOnboarding === null;
 
   // Pulsating "EVENTAS" wordmark for the launch screen — reads as an intentional brand
@@ -132,7 +138,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <LiveVenuesProvider>
-        <NavigationContainer theme={DarkTheme}>
+        <NavigationContainer theme={DarkTheme} ref={navigationRef}>
           <Stack.Navigator
             screenOptions={{
               headerShown: false,
@@ -189,6 +195,12 @@ export default function App() {
         latestVersion={versionInfo.latestVersion}
         updateUrl={versionInfo.updateUrl}
         onClose={() => setHasDismissedFlexibleUpdate(true)}
+      />
+      <CreatorWelcomeModal
+        visible={!!user && hasAgreedToTerms && creatorWelcome.shouldShow}
+        creatorProfile={creatorWelcome.creatorProfile}
+        onDismiss={creatorWelcome.dismiss}
+        onGoToDashboard={() => navigate('CreatorDashboard')}
       />
       <Toast config={toastConfig} topOffset={60} />
     </ErrorBoundary>
