@@ -116,7 +116,8 @@
           "iosGoogleMapsApiKey": ""
         }
       ],
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      "./plugins/withLocationServiceManifestFix"
     ],
     "extra": {
       "eas": {
