@@ -98,6 +98,9 @@ export const EventDetailScreen = () => {
 
   const handleViewOnMap = () => {
     setSelectedMapVenue(event);
+    if (navigation.canGoBack()) {
+      navigation.popToTop();
+    }
     navigation.navigate('Main', { screen: 'Map' });
   };
 

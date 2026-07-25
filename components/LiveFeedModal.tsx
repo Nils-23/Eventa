@@ -15,7 +15,7 @@ import { subscribeToRTDB } from '../utils/firebaseUtils';
 import { realtimeDB } from '../services/firebase';
 import { LiveVenue } from '../contexts/LiveVenuesContext';
 import { StoryData } from '../services/storyService';
-import { MessageSquare, X, ChevronRight } from 'lucide-react-native';
+import { MessageSquare, X, ChevronRight, Map } from 'lucide-react-native';
 import { useAppStore } from '../hooks/useAppStore';
 
 interface LiveFeedModalProps {
@@ -224,9 +224,6 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
             <MessageSquare color="#00FFCC" size={24} style={styles.headerIcon} />
             <Text style={styles.headerTitle}>Active Chats</Text>
           </View>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <X color="#FFF" size={22} />
-          </TouchableOpacity>
         </View>
 
         {/* Chat List */}
@@ -331,10 +328,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.5,
   },
-  closeButton: {
+  mapButton: {
     padding: 8,
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#1A1A1A',
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#333',
   },
   centerContainer: {
     flex: 1,

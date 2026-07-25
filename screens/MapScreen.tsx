@@ -288,6 +288,27 @@ const HEAT_TAP_RADIUS_M = 1500;
 // in/out instead of popping.
 const PIN_FADE_MS = 350;
 
+/**
+ * Calculates a camera center latitude offset so that the target coordinate
+ * (venue pin and heat blob) is positioned in the visible map viewport ABOVE
+ * the bottom venue info popup card, preventing the pin and heat from being covered.
+ */
+const getOffsetCameraCenter = (
+  latitude: number,
+  longitude: number,
+  zoom: number = 18,
+  pixelOffset: number = 110
+) => {
+  const latRad = (latitude * Math.PI) / 180;
+  const degreesPerPixel = (360 / (256 * Math.pow(2, zoom))) * Math.cos(latRad);
+  // Subtracting latitude offset shifts camera center SOUTH, pushing venue coordinate UP on screen
+  const latOffset = pixelOffset * degreesPerPixel;
+  return {
+    latitude: latitude - latOffset,
+    longitude,
+  };
+};
+
 export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
@@ -460,6 +481,21 @@ export const MapScreen = () => {
     return () => subscription.remove();
   }, [navigation]);
 
+  // Pressing the Map tab icon in the bottom navigation menu while on the map screen
+  // closes all active chat windows, feed modals, city pulse popups, and venue info cards,
+  // returning directly to the clean map view.
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('tabPress', () => {
+      setIsLiveFeedVisible(false);
+      setIsChatVisible(false);
+      setChatVenue(null);
+      setIsCityPulseVisible(false);
+      setIsViewerVisible(false);
+      useAppStore.getState().setSelectedMapVenue(null);
+    });
+    return unsubscribe;
+  }, [navigation]);
+
   // Re-enable tracking when returning to this tab via React Navigation. Remount the
   // markers (focusEpoch) so Android draws fresh views, and keep tracking on long enough
   // for the SVG pin icons to finish rendering before the bitmap is captured.
@@ -496,12 +532,11 @@ export const MapScreen = () => {
 
   useEffect(() => {
     if (selectedMapVenue && mapRef.current && isMapReady) {
+      const zoom = 18;
+      const center = getOffsetCameraCenter(selectedMapVenue.latitude, selectedMapVenue.longitude, zoom, 110);
       mapRef.current.animateCamera({
-        center: {
-          latitude: selectedMapVenue.latitude,
-          longitude: selectedMapVenue.longitude,
-        },
-        zoom: 18,
+        center,
+        zoom,
         pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
       }, { duration: 1000 });
     }
@@ -1069,14 +1104,6 @@ export const MapScreen = () => {
           ]}
           {...cardPanResponder.panHandlers}
         >
-        <TouchableOpacity
-          activeOpacity={cardVenue.type === 'Event' ? 0.95 : 1}
-          onPress={() => {
-            if (cardVenue.type === 'Event') {
-              navigation.navigate('EventDetail', { event: cardVenue });
-            }
-          }}
-        >
           {/* Top Banner Image with themed filter */}
           <View style={styles.cardImageContainer}>
             <VenueImage
@@ -1166,7 +1193,6 @@ export const MapScreen = () => {
               </TouchableOpacity>
             </View>
           </View>
-        </TouchableOpacity>
         </Animated.View>
       )}
 
@@ -1227,9 +1253,11 @@ export const MapScreen = () => {
         onSelectVenue={(venueObj) => {
           setIsCityPulseVisible(false);
           setSelectedMapVenue(venueObj);
+          const zoom = 18;
+          const center = getOffsetCameraCenter(venueObj.latitude, venueObj.longitude, zoom, 110);
           mapRef.current?.animateCamera({
-            center: { latitude: venueObj.latitude, longitude: venueObj.longitude },
-            zoom: 18,
+            center,
+            zoom,
             pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
           }, { duration: 1000 });
         }}
@@ -1251,12 +1279,11 @@ export const MapScreen = () => {
         }}
         onFocusVenue={(venueObj) => {
           setSelectedMapVenue(venueObj);
+          const zoom = 18;
+          const center = getOffsetCameraCenter(venueObj.latitude, venueObj.longitude, zoom, 110);
           mapRef.current?.animateCamera({
-            center: {
-              latitude: venueObj.latitude,
-              longitude: venueObj.longitude,
-            },
-            zoom: 18,
+            center,
+            zoom,
             pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
           }, { duration: 1000 });
         }}

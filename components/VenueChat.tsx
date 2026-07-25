@@ -18,7 +18,8 @@ import {
   Image
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { X, Send, CornerUpLeft, Trash2, Flag, Smile } from 'lucide-react-native';
+import { X, Send, CornerUpLeft, Trash2, Flag, Smile, Map } from 'lucide-react-native';
+import { navigate } from '../navigation/navigationRef';
 import { ref, push, set, remove } from 'firebase/database';
 import { subscribeToRTDB } from '../utils/firebaseUtils';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
@@ -1096,9 +1097,6 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
               <Text style={styles.venueName}>{venueName}</Text>
               <Text style={styles.subtitle}>Live Chat (24h)</Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <X color="#FFF" size={24} />
-            </TouchableOpacity>
           </View>
 
           {isLoading ? (
@@ -1450,10 +1448,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  closeButton: {
+  mapButton: {
     padding: 8,
-    backgroundColor: '#333',
+    backgroundColor: '#1A1A1A',
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#333',
   },
   centerContainer: {
     flex: 1,
