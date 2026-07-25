@@ -224,6 +224,9 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
             <MessageSquare color="#00FFCC" size={24} style={styles.headerIcon} />
             <Text style={styles.headerTitle}>Active Chats</Text>
           </View>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <X color="#FFF" size={22} />
+          </TouchableOpacity>
         </View>
 
         {/* Chat List */}
@@ -328,12 +331,10 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.5,
   },
-  mapButton: {
+  closeButton: {
     padding: 8,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#2A2A2A',
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#333',
   },
   centerContainer: {
     flex: 1,

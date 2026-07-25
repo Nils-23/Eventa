@@ -309,6 +309,22 @@ const getOffsetCameraCenter = (
   };
 };
 
+/**
+ * Checks if two map entities share a location via matching ID, venue_id, or lat/lng proximity.
+ */
+const areLocationsColocated = (
+  v1: { id?: string; venue_id?: string; latitude: number; longitude: number },
+  v2: { id?: string; venue_id?: string; latitude: number; longitude: number }
+) => {
+  if (!v1 || !v2) return false;
+  if (v1.id && v2.id && v1.id === v2.id) return true;
+  if (v1.venue_id && v2.id && v1.venue_id === v2.id) return true;
+  if (v2.venue_id && v1.id && v2.venue_id === v1.id) return true;
+  const latDiff = Math.abs(v1.latitude - v2.latitude);
+  const lngDiff = Math.abs(v1.longitude - v2.longitude);
+  return latDiff < 0.00015 && lngDiff < 0.00015;
+};
+
 export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
@@ -940,20 +956,35 @@ export const MapScreen = () => {
     getDistanceInMeters(userLocation.latitude, userLocation.longitude, selectedMapVenue.latitude, selectedMapVenue.longitude) <= 200
     : false;
 
+  // Check if selectedMapVenue shares a location with an existing live venue
+  const colocatedVenue = useMemo(() => {
+    if (!selectedMapVenue) return null;
+    return venues.find((v) => areLocationsColocated(v, selectedMapVenue)) || null;
+  }, [venues, selectedMapVenue]);
+
   const renderedMarkers = useMemo(() => {
-    return venues
+    // Deduplicate venues array in case any raw items share exact coordinates
+    const uniqueVenues: LiveVenue[] = [];
+    for (const v of venues) {
+      if (!uniqueVenues.some((uv) => areLocationsColocated(uv, v))) {
+        uniqueVenues.push(v);
+      }
+    }
+
+    return uniqueVenues
       .slice()
       .sort((a, b) => {
-        const aHasStories = stories.some(s => s.venue_id === a.id);
-        const bHasStories = stories.some(s => s.venue_id === b.id);
+        const aHasStories = stories.some((s) => s.venue_id === a.id);
+        const bHasStories = stories.some((s) => s.venue_id === b.id);
         if (aHasStories && !bHasStories) return 1;
         if (!aHasStories && bHasStories) return -1;
         return 0;
       })
       .map((venue) => {
-        const venueStories = stories.filter(s => s.venue_id === venue.id);
+        const isSelected = colocatedVenue && areLocationsColocated(venue, colocatedVenue);
+        const venueStories = stories.filter((s) => s.venue_id === venue.id);
         const hasStories = venueStories.length > 0;
-        const pinColor = hasStories ? "#FF00CC" : "#00FFCC";
+        const pinColor = hasStories ? '#FF00CC' : '#00FFCC';
 
         return (
           <MarkerAnimated
@@ -964,8 +995,8 @@ export const MapScreen = () => {
               handleMarkerPress(venue);
             }}
             tracksViewChanges={trackMarkerChanges}
-            opacity={pinOpacity}
-            zIndex={hasStories ? 200 : 100}
+            opacity={isSelected ? 1 : pinOpacity}
+            zIndex={isSelected ? 300 : hasStories ? 200 : 100}
             anchor={{ x: 0.5, y: 1 }}
           >
             {/* collapsable={false}: RN's Android view flattening can strip this wrapper,
@@ -979,7 +1010,7 @@ export const MapScreen = () => {
           </MarkerAnimated>
         );
       });
-  }, [venues, stories, trackMarkerChanges, focusEpoch, pinOpacity]);
+  }, [venues, stories, colocatedVenue, trackMarkerChanges, focusEpoch, pinOpacity]);
 
   return (
     <View style={styles.container}>
@@ -1054,6 +1085,46 @@ export const MapScreen = () => {
         )}
         {/* LiveVenue markers — shown only when zoomed in past PIN_VISIBILITY_ZOOM */}
         {pinsVisible && renderedMarkers}
+
+        {/* Dynamic single marker for standalone future/inactive event (not colocated with an existing venue) */}
+        {selectedMapVenue && !colocatedVenue && (
+          <MarkerAnimated
+            key={`selected_standalone_${selectedMapVenue.id}_${focusEpoch}`}
+            coordinate={{ latitude: selectedMapVenue.latitude, longitude: selectedMapVenue.longitude }}
+            onPress={(e) => {
+              e.stopPropagation();
+              handleMarkerPress(selectedMapVenue);
+            }}
+            tracksViewChanges={trackMarkerChanges}
+            zIndex={300}
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <View style={styles.markerContainer} collapsable={false}>
+              <View
+                style={[
+                  styles.pinBubble,
+                  {
+                    backgroundColor: stories.some((s) => s.venue_id === selectedMapVenue.id)
+                      ? '#FF00CC'
+                      : '#00FFCC',
+                  },
+                ]}
+              >
+                <MapPin color="#000" size={14} fill="#000" />
+              </View>
+              <View
+                style={[
+                  styles.pinArrow,
+                  {
+                    borderTopColor: stories.some((s) => s.venue_id === selectedMapVenue.id)
+                      ? '#FF00CC'
+                      : '#00FFCC',
+                  },
+                ]}
+              />
+            </View>
+          </MarkerAnimated>
+        )}
       </MapView>
 
       {/* Story Upload Overlay */}

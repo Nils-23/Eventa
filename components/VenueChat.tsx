@@ -1097,6 +1097,9 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
               <Text style={styles.venueName}>{venueName}</Text>
               <Text style={styles.subtitle}>Live Chat (24h)</Text>
             </View>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <X color="#FFF" size={24} />
+            </TouchableOpacity>
           </View>
 
           {isLoading ? (
@@ -1448,12 +1451,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  mapButton: {
+  closeButton: {
     padding: 8,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#333',
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#333',
   },
   centerContainer: {
     flex: 1,

@@ -292,8 +292,12 @@ export const AdminAICuratorScreen = () => {
       let matchedVenue: any = null;
       snap.forEach((docSnap) => {
         const v = docSnap.data();
-        if (v.name && v.name.toLowerCase() === event.venue.toLowerCase()) {
-          matchedVenue = v;
+        if (v.name && event.venue) {
+          const vName = v.name.toLowerCase();
+          const eVenue = event.venue.toLowerCase();
+          if (vName === eVenue || eVenue.includes(vName) || vName.includes(eVenue)) {
+            matchedVenue = v;
+          }
         }
       });
 
