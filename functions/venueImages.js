@@ -69,15 +69,20 @@ function needsRefresh(venue, apiKey, now) {
   if (venue.customImageUrl) return false;
   if (venue.type === 'Event' && venue.img) return false;
 
+  // Events are never refreshed here. A name lookup for "Detox Fridays" attaches
+  // some random business's photo, and that applies just as much to an event
+  // whose stored Google URL has gone stale: lookupPlacePhoto would re-search by
+  // the *event's* name, not the venue's. Refreshing the host venue is what
+  // matters — the client resolves an imageless event to whatever its host is
+  // showing right now (see buildImageResolver in LiveVenuesContext), so a dead
+  // event URL heals as soon as the host's does.
+  if (venue.type === 'Event') return false;
+
   const googleUrl = [venue.googleImageUrl, venue.imageUrl].find((u) => u && GOOGLE_PHOTO_URL_RE.test(u));
   if (googleUrl) {
     // URL embedding the current key is the one the Places API accepts today.
     return extractEmbeddedKey(googleUrl) !== apiKey;
   }
-
-  // Events without a Google image never had one (posters/flyers, not places);
-  // a name lookup would attach some random venue's photo.
-  if (venue.type === 'Event') return false;
 
   // Google said "no photos for this place" recently — don't burn quota re-asking.
   if (venue.googleImageStatus === 'no_photos' || venue.googleImageStatus === 'not_found') {
@@ -96,10 +101,33 @@ function needsRefresh(venue, apiKey, now) {
 async function refreshVenueImages(db, apiKey, log = console.log) {
   const snap = await db.collection('venues').get();
   const now = Date.now();
-  const summary = { total: snap.size, refreshed: 0, noPhotos: 0, failed: 0, skipped: 0 };
+  const summary = { total: snap.size, refreshed: 0, noPhotos: 0, failed: 0, skipped: 0, eventUrlsCleared: 0 };
 
   for (const doc of snap.docs) {
     const venue = { id: doc.id, ...doc.data() };
+
+    // Events get no Places lookup (see needsRefresh), but one can still be
+    // holding a Google photo URL an admin attached, and those die at key
+    // rotation. Drop the dead URL — costs no API call, and lets the client fall
+    // through to the host venue's live photo instead of rendering a 403.
+    if (venue.type === 'Event') {
+      const update = {};
+      for (const field of ['googleImageUrl', 'imageUrl']) {
+        const url = venue[field];
+        if (url && GOOGLE_PHOTO_URL_RE.test(url) && extractEmbeddedKey(url) !== apiKey) {
+          update[field] = admin.firestore.FieldValue.delete();
+        }
+      }
+      if (Object.keys(update).length > 0) {
+        await doc.ref.update(update);
+        summary.eventUrlsCleared++;
+        log(`[VenueImages] 🧹 Cleared stale Google URL on event ${venue.id} (${venue.name})`);
+      } else {
+        summary.skipped++;
+      }
+      continue;
+    }
+
     if (!needsRefresh(venue, apiKey, now)) {
       summary.skipped++;
       continue;
@@ -142,7 +170,7 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
     await sleep(API_DELAY_MS);
   }
 
-  log(`[VenueImages] Done: ${summary.refreshed} refreshed, ${summary.noPhotos} without photos, ${summary.failed} failed, ${summary.skipped} healthy/skipped of ${summary.total}.`);
+  log(`[VenueImages] Done: ${summary.refreshed} refreshed, ${summary.noPhotos} without photos, ${summary.failed} failed, ${summary.eventUrlsCleared} stale event URLs cleared, ${summary.skipped} healthy/skipped of ${summary.total}.`);
   return summary;
 }
 

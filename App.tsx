@@ -28,6 +28,7 @@ import { useAppStore } from './hooks/useAppStore';
 import { useReferralTracker } from './hooks/useReferralTracker';
 import { useCreatorWelcome } from './hooks/useCreatorWelcome';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { EdgeSwipeBack } from './components/EdgeSwipeBack';
 import { CreatorWelcomeModal } from './components/CreatorWelcomeModal';
 import { LiveVenuesProvider } from './contexts/LiveVenuesContext';
 import { useVersionCheck } from './hooks/useVersionCheck';
@@ -140,11 +141,23 @@ export default function App() {
       <LiveVenuesProvider>
         <NavigationContainer theme={DarkTheme} ref={navigationRef}>
           <Stack.Navigator
+            // Android has no native-stack back gesture, so every screen is wrapped
+            // in the edge-swipe handler. It no-ops on iOS, and no-ops at the root
+            // of the stack where there is nothing to pop.
+            screenLayout={({ children }) => <EdgeSwipeBack>{children}</EdgeSwipeBack>}
             screenOptions={{
               headerShown: false,
               contentStyle: { backgroundColor: theme.background },
+              // Swipe-to-go-back. NOTE: native-stack only implements this on iOS —
+              // on Android the option is a no-op and the system back gesture/button
+              // is what pops the stack.
               gestureEnabled: true,
-              fullScreenGestureEnabled: true,
+              // Must stay false, and must be set EXPLICITLY: with it on, the back
+              // swipe fires from anywhere on the screen, so any stray horizontal drag
+              // mid-scroll pops the screen. False restricts it to the screen edge.
+              // Explicit because on iOS 26+ this defaults to `true` — omitting the
+              // line would silently bring the whole-screen gesture back.
+              fullScreenGestureEnabled: false,
             }}
           >
             {!hasCompletedOnboarding ? (

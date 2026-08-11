@@ -5,7 +5,8 @@ import { ref } from 'firebase/database';
 import { subscribeToRTDB } from '../utils/firebaseUtils';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, firestore, realtimeDB } from '../services/firebase';
-import { resolveVenueImages } from '../utils/venueImageUtils';
+import { resolveVenueImages, realImageOrNull, assignEventFallbacks } from '../utils/venueImageUtils';
+import { findHostVenue } from '../utils/venueMatching';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppStore } from '../hooks/useAppStore';
 
@@ -29,6 +30,11 @@ export interface LiveVenue {
   isOverride?: boolean;
   maxCapacity?: number;
   type?: 'Club' | 'Bar' | 'Food' | 'Activity' | 'Event';
+  // Events only: the curator category ('Club' | 'Bar' | 'Food' | ...), the host
+  // venue's free-text name as curated, and the resolved host venue id.
+  category?: string;
+  venue?: string;
+  hostVenueId?: string;
   ticketLink?: string;
   price?: string;
   expirationDate?: number; // timestamp in ms
@@ -74,6 +80,9 @@ interface RawVenue {
   maxCapacity?: number;
   simPopularityScore?: number;
   type?: 'Club' | 'Bar' | 'Food' | 'Activity' | 'Event';
+  category?: string;
+  venue?: string;
+  hostVenueId?: string;
   ticketLink?: string;
   price?: string;
   expirationDate?: number;
@@ -102,6 +111,114 @@ const HEAT_REF_FLOOR = 50;
 const TREND_SAMPLE_MS = 60 * 1000;
 const TREND_WINDOW_MS = 35 * 60 * 1000;
 const TREND_MIN_AGE_MS = 10 * 60 * 1000;
+
+// ─── Image resolution ────────────────────────────────────────────────────────
+/**
+ * Builds the per-venue image lookup for one pass over the venue list.
+ *
+ * Events are the reason this is a whole-list operation rather than a per-venue
+ * expression. An event rarely has its own photo — most curated ones are text
+ * listings with no poster — and the honest picture for "Detox Fridays at The
+ * Alchemist" is The Alchemist. So an event resolves, in order:
+ *
+ *   1. admin override → 2. its own poster → 3. a Google photo of it
+ *   → 4. a stored imageUrl, unless that is one of our own placeholders
+ *   → 5. whatever the HOST VENUE is currently showing
+ *   → 6. a pooled fallback, assigned across the whole feed so no two collide
+ *
+ * Step 5 reads the host's *live* image rather than a copy taken at approval
+ * time, so an event inherits the host's Google photo the moment
+ * refreshVenueImages heals it — no event-side backfill needed.
+ */
+function buildImageResolver(
+  venues: RawVenue[],
+  resolvedImages: Record<string, string>
+): (venue: RawVenue) => string | undefined {
+  const places = venues.filter((v) => v.type !== 'Event');
+  const placeById = new Map(places.map((v) => [v.id, v]));
+
+  // A real photograph of this place, or null. Never a placeholder.
+  const realImageFor = (v?: RawVenue | null): string | null => {
+    if (!v) return null;
+    return (
+      v.customImageUrl ||
+      v.googleImageUrl ||
+      realImageOrNull(v.imageUrl) ||
+      realImageOrNull(resolvedImages[v.id]) ||
+      null
+    );
+  };
+
+  const ownEventImage = (v: RawVenue): string | null =>
+    v.customImageUrl ||
+    v.img ||
+    v.googleImageUrl ||
+    realImageOrNull(v.imageUrl) ||
+    realImageOrNull(resolvedImages[v.id]) ||
+    null;
+
+  // Resolve each event's host once per pass, preferring the id stored at
+  // approval time and falling back to matching the curated venue string.
+  const hostImageByEvent = new Map<string, string | null>();
+  const needFallback: Array<{ id: string; category?: string }> = [];
+
+  for (const v of venues) {
+    if (v.type !== 'Event') continue;
+    if (ownEventImage(v)) continue;
+
+    const host =
+      (v.hostVenueId ? placeById.get(v.hostVenueId) : null) ||
+      findHostVenue(v.venue || v.address, places);
+    const hostImage = realImageFor(host);
+    hostImageByEvent.set(v.id, hostImage);
+    if (!hostImage) needFallback.push({ id: v.id, category: v.category });
+  }
+
+  const pooledFallbacks = assignEventFallbacks(needFallback);
+
+  return (venue: RawVenue): string | undefined => {
+    if (venue.type === 'Event') {
+      return (
+        ownEventImage(venue) ||
+        hostImageByEvent.get(venue.id) ||
+        pooledFallbacks[venue.id] ||
+        undefined
+      );
+    }
+    return (
+      venue.customImageUrl ||
+      venue.googleImageUrl ||
+      venue.imageUrl ||
+      resolvedImages[venue.id] ||
+      undefined
+    );
+  };
+}
+
+// Host matching normalizes and scores ~40 events against ~60 venues; processData
+// runs every couple of seconds, so cache the resolver against the inputs it
+// actually depends on. Both are replaced by reference when they change.
+let imageResolverCache: {
+  venues: RawVenue[];
+  resolvedImages: Record<string, string>;
+  resolve: (venue: RawVenue) => string | undefined;
+} | null = null;
+
+function getImageResolver(
+  venues: RawVenue[],
+  resolvedImages: Record<string, string>
+): (venue: RawVenue) => string | undefined {
+  if (
+    imageResolverCache &&
+    imageResolverCache.venues === venues &&
+    imageResolverCache.resolvedImages === resolvedImages
+  ) {
+    return imageResolverCache.resolve;
+  }
+  const resolve = buildImageResolver(venues, resolvedImages);
+  imageResolverCache = { venues, resolvedImages, resolve };
+  return resolve;
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -359,6 +476,7 @@ function computeLiveData(
   resolvedImages: Record<string, string>
 ): { venues: LiveVenue[]; scheduledVenues: LiveVenue[]; heatPoints: HeatPoint[]; hash: string } {
   const now = Date.now();
+  const resolveImage = getImageResolver(venues, resolvedImages);
 
   const realActiveLocs = Object.values(realLocations).filter(
     (loc) => loc.latitude && loc.longitude && now - loc.timestamp < STALE_MS
@@ -457,10 +575,7 @@ function computeLiveData(
         ? Math.round(haversineMeters(userLat, userLng, venue.latitude, venue.longitude) / 10) * 10 / 1000
         : null;
 
-    const resolvedImageUrl =
-      venue.type === 'Event'
-        ? (venue.customImageUrl || venue.img || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id])
-        : (venue.customImageUrl || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id]);
+    const resolvedImageUrl = resolveImage(venue);
 
     // Filter out future scheduled events/activities/venues that haven't started yet
     if (venue.startDate && venue.startDate > now) {
@@ -547,6 +662,7 @@ function computePredictedData(
   resolvedImages: Record<string, string>
 ): { venues: LiveVenue[]; scheduledVenues: LiveVenue[]; heatPoints: HeatPoint[] } {
   const now = Date.now();
+  const resolveImage = getImageResolver(venues, resolvedImages);
   const liveVenues: LiveVenue[] = [];
   const scheduledVenues: LiveVenue[] = [];
   const heatPoints: HeatPoint[] = [];
@@ -561,10 +677,7 @@ function computePredictedData(
         ? Math.round(haversineMeters(userLat, userLng, venue.latitude, venue.longitude) / 10) * 10 / 1000
         : null;
 
-    const resolvedImageUrl =
-      venue.type === 'Event'
-        ? (venue.customImageUrl || venue.img || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id])
-        : (venue.customImageUrl || venue.googleImageUrl || venue.imageUrl || resolvedImages[venue.id]);
+    const resolvedImageUrl = resolveImage(venue);
 
     if (venue.startDate && venue.startDate > now) {
       scheduledVenues.push({

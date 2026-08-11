@@ -1,10 +1,10 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MapScreen } from '../screens/MapScreen';
-import { ListScreen } from '../screens/ListScreen';
+import { ExploreScreen } from '../screens/ExploreScreen';
 import { LeaderboardScreen } from '../screens/LeaderboardScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
-import { Map, List, Trophy, User } from 'lucide-react-native';
+import { Map, Compass, Trophy, User } from 'lucide-react-native';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useVisitTracker } from '../hooks/useVisitTracker';
@@ -52,11 +52,10 @@ export const MainTabs = () => {
         }}
       />
       <Tab.Screen
-        name="List"
-        component={ListScreen}
+        name="Explore"
+        component={ExploreScreen}
         options={{
-          tabBarLabel: 'Explore',
-          tabBarIcon: ({ color, size }) => <List color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Compass color={color} size={size} />,
         }}
       />
       <Tab.Screen 

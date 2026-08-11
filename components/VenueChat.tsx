@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Modal,
   View,
@@ -18,7 +18,9 @@ import {
   Image
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { X, Send, CornerUpLeft, Trash2, Flag, Smile, Map } from 'lucide-react-native';
+import * as Location from 'expo-location';
+import { Video, ResizeMode } from 'expo-av';
+import { X, Send, CornerUpLeft, Trash2, Flag, Camera } from 'lucide-react-native';
 import { navigate } from '../navigation/navigationRef';
 import { ref, push, set, remove } from 'firebase/database';
 import { subscribeToRTDB } from '../utils/firebaseUtils';
@@ -34,6 +36,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import * as Icons from 'lucide-react-native';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
+import { getDistanceInMeters } from '../utils/locationUtils';
+import { useLiveVenues } from '../hooks/useLiveVenues';
 import { StoryViewer } from './StoryViewer';
 
 interface Message {
@@ -42,7 +46,10 @@ interface Message {
   username: string;
   message: string;
   timestamp: number;
-  type?: 'text' | 'sticker' | 'custom_sticker' | 'story_reaction';
+  // 'sticker' / 'custom_sticker' are legacy: the emoji picker was replaced by the
+  // camera, but messages live for 24h so old ones still have to render.
+  type?: 'text' | 'sticker' | 'custom_sticker' | 'story_reaction' | 'media';
+  mediaType?: 'image' | 'video';
   activeBadge?: string;
   reactions?: Record<string, Record<string, string>>; // emoji -> userId -> username
   replyTo?: {
@@ -68,9 +75,22 @@ interface VenueChatProps {
   onClose: () => void;
   venueId: string;
   venueName: string;
+  // Optional venue coordinates for the camera's proximity gate. When omitted the
+  // venue is looked up in the live venues feed by id, so callers that only hold an
+  // id/name pair (e.g. ChatListScreen) still get the gate.
+  venueLatitude?: number;
+  venueLongitude?: number;
 }
 
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+// Same radius the stories feature uses to unlock posting — camera messages are
+// meant to prove you're actually at the venue right now.
+const MEDIA_RADIUS_METERS = 200;
+// "Short videos": anything longer gets cut off by the picker itself.
+const MAX_VIDEO_SECONDS = 15;
+// Ceiling on how long a tap waits for a GPS fix before falling back to the cached one.
+const LOCATION_FIX_TIMEOUT_MS = 4000;
 
 const CHAT_SUGGESTIONS = [
   "What's the vibe? 🔥",
@@ -146,12 +166,8 @@ const SwipeableMessage: React.FC<SwipeableMessageProps> = ({ children, onSwipe, 
   );
 };
 
-const CURATED_STICKERS = [
-  '🎉', '🔥', '🍻', '🍹', '💃', '🕺',
-  '🎧', '👑', '✨', '💯', '👾', '🦄',
-  '🍕', '🎈', '🤩', '🍾', '🌮', '🙌'
-];
-
+// Legacy renderers: stickers can no longer be sent (the picker became the camera),
+// but any sent in the last 24h still need to display.
 const FloatingSticker: React.FC<{ sticker: string }> = ({ sticker }) => {
   const floatAnim = useRef(new Animated.Value(0)).current;
 
@@ -206,7 +222,14 @@ const FloatingCustomSticker: React.FC<{ uri: string }> = ({ uri }) => {
   );
 };
 
-export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueId, venueName }) => {
+export const VenueChat: React.FC<VenueChatProps> = ({
+  isVisible,
+  onClose,
+  venueId,
+  venueName,
+  venueLatitude,
+  venueLongitude,
+}) => {
   const [shouldRender, setShouldRender] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -259,16 +282,19 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     recordSimPersonaPresence(p.id);
     return p;
   };
-  const [isStickerPickerVisible, setIsStickerPickerVisible] = useState(false);
-  const [isUploadingCustom, setIsUploadingCustom] = useState(false);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const [isCheckingLocation, setIsCheckingLocation] = useState(false);
+  const [mediaViewer, setMediaViewer] = useState<{ url: string; mediaType: 'image' | 'video' } | null>(null);
   const [selectedStoryForViewer, setSelectedStoryForViewer] = useState<any[]>([]);
   const [isStoryViewerVisible, setIsStoryViewerVisible] = useState(false);
-  
+
   const user = useAppStore((s) => s.user);
   const hiddenUsers = useAppStore((s) => s.hiddenUsers);
   const setHiddenUsers = useAppStore((s) => s.setHiddenUsers);
   const isAdmin = useAppStore((s) => s.isAdmin);
   const updateLastViewedChat = useAppStore((s) => s.updateLastViewedChat);
+  const userLocation = useAppStore((s) => s.userLocation);
+  const { venues, ensureLocationWatch } = useLiveVenues();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -358,10 +384,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => {
-        setKeyboardVisible(true);
-        setIsStickerPickerVisible(false);
-      }
+      () => setKeyboardVisible(true)
     );
     const hideSubscription = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
@@ -408,6 +431,82 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     return () => unsubscribe();
   }, [isVisible, venueId, shouldRender]);
 
+  // Reply previews quote the original text. Media and stickers have no text worth
+  // quoting (the raw value is a storage URL), so they get a short label instead.
+  const replyPreview = (msg: Message) => {
+    if (msg.type === 'media') return msg.mediaType === 'video' ? '🎥 Video' : '📷 Photo';
+    if (msg.type === 'custom_sticker') return '🖼️ Sticker';
+    return msg.message;
+  };
+
+  // Shared tail of every send path: resolves the sender identity (pinned admin
+  // persona or the real account), writes the message, then updates stats and
+  // presence in the background.
+  const postMessage = async (
+    payload: { message: string; type: Message['type']; mediaType?: 'image' | 'video' },
+    previousReplyTo: Message | null
+  ) => {
+    if (!user || !venueId) return;
+
+    let senderId = user.uid;
+    let senderName = '';
+    let senderBadge: string | null = activeBadge;
+
+    if (isAdmin && sendAsSimulated) {
+      const persona = await ensureSimPersona();
+      senderId = persona.id;
+      senderName = persona.name;
+      senderBadge = null; // Simulated users don't get the admin's active badge
+    } else {
+      senderName = await fetchUsername(user.uid);
+    }
+
+    const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
+    const newMessageRef = push(chatRef);
+
+    await set(newMessageRef, {
+      user_id: senderId,
+      username: senderName,
+      message: payload.message,
+      type: payload.type,
+      timestamp: Date.now(),
+      ...(payload.mediaType ? { mediaType: payload.mediaType } : {}),
+      ...(senderBadge ? { activeBadge: senderBadge } : {}),
+      ...(previousReplyTo ? {
+        replyTo: {
+          messageId: previousReplyTo.id,
+          username: previousReplyTo.username,
+          message: replyPreview(previousReplyTo)
+        }
+      } : {})
+    });
+
+    // Update stats and check achievements in the background only for the actual admin account
+    if (!sendAsSimulated) {
+      const userDocRef = doc(firestore, 'users', user.uid);
+      updateDoc(userDocRef, { chatMessageCount: increment(1) })
+        .then(() => checkAndUnlockAchievements(user.uid))
+        .catch((err) => console.warn('[VenueChat] Failed to update user message count/achievements:', err));
+    }
+
+    // Register the interaction in the user's active chats list (non-blocking)
+    const userChatRef = ref(realtimeDB, `user_chats/${user.uid}/${venueId}`);
+    set(userChatRef, {
+      venueName: venueName,
+      lastInteractionTime: Date.now()
+    }).catch((err) => console.warn('[VenueChat] Failed to update user_chats:', err));
+
+    // Register the user as an active member of this venue's chat (non-blocking)
+    const venueMemberRef = ref(realtimeDB, `venue_members/${venueId}/${user.uid}`);
+    set(venueMemberRef, {
+      lastInteractionTime: Date.now()
+    }).catch((err) => console.warn('[VenueChat] Failed to update venue_members:', err));
+
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  };
+
   const handleSend = async () => {
     const textToSend = inputText.trim();
     if (!textToSend || !user || !venueId) return;
@@ -428,62 +527,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     setIsSending(true);
 
     try {
-      let senderId = user.uid;
-      let senderName = '';
-      let senderBadge: string | null = activeBadge;
-
-      if (isAdmin && sendAsSimulated) {
-        const persona = await ensureSimPersona();
-        senderId = persona.id;
-        senderName = persona.name;
-        senderBadge = null; // Simulated users don't get the admin's active badge
-      } else {
-        senderName = await fetchUsername(user.uid);
-      }
-
-      const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
-      const newMessageRef = push(chatRef);
-      
-      await set(newMessageRef, {
-        user_id: senderId,
-        username: senderName,
-        message: textToSend,
-        type: 'text',
-        timestamp: Date.now(),
-        ...(senderBadge ? { activeBadge: senderBadge } : {}),
-        ...(previousReplyTo ? {
-          replyTo: {
-            messageId: previousReplyTo.id,
-            username: previousReplyTo.username,
-            message: previousReplyTo.message
-          }
-        } : {})
-      });
-      
-      // Update stats and check achievements in the background only for the actual admin account
-      if (!sendAsSimulated) {
-        const userDocRef = doc(firestore, 'users', user.uid);
-        updateDoc(userDocRef, { chatMessageCount: increment(1) })
-          .then(() => checkAndUnlockAchievements(user.uid))
-          .catch((err) => console.warn('[VenueChat] Failed to update user message count/achievements:', err));
-      }
-
-      // Register the interaction in the user's active chats list (non-blocking)
-      const userChatRef = ref(realtimeDB, `user_chats/${user.uid}/${venueId}`);
-      set(userChatRef, {
-        venueName: venueName,
-        lastInteractionTime: Date.now()
-      }).catch((err) => console.warn('[VenueChat] Failed to update user_chats:', err));
-
-      // Register the user as an active member of this venue's chat (non-blocking)
-      const venueMemberRef = ref(realtimeDB, `venue_members/${venueId}/${user.uid}`);
-      set(venueMemberRef, {
-        lastInteractionTime: Date.now()
-      }).catch((err) => console.warn('[VenueChat] Failed to update venue_members:', err));
-
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+      await postMessage({ message: textToSend, type: 'text' }, previousReplyTo);
     } catch (error) {
       console.warn("Error sending message:", error);
       // Restore input text and replyingState if sending fails
@@ -499,69 +543,93 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     }
   };
 
-  const sendSticker = async (sticker: string) => {
+  // ── Camera messages (proximity-gated, like stories) ─────────────────────
+  // Coordinates come from the caller when it has them, otherwise from the live
+  // venues feed. Without either we can't verify presence, so the camera stays locked.
+  const venueCoords = useMemo(() => {
+    if (typeof venueLatitude === 'number' && typeof venueLongitude === 'number') {
+      return { latitude: venueLatitude, longitude: venueLongitude };
+    }
+    const match = venues.find((v) => v.id === venueId);
+    return match ? { latitude: match.latitude, longitude: match.longitude } : null;
+  }, [venueLatitude, venueLongitude, venues, venueId]);
+
+  // Drives the lock affordance on the camera button. The authoritative check runs
+  // again on tap against a freshly fetched position.
+  const isNearVenue = useMemo(() => {
+    if (!venueCoords || !userLocation) return false;
+    return getDistanceInMeters(
+      userLocation.latitude,
+      userLocation.longitude,
+      venueCoords.latitude,
+      venueCoords.longitude
+    ) <= MEDIA_RADIUS_METERS;
+  }, [venueCoords, userLocation]);
+
+  // Re-checks proximity against a LIVE position rather than the cached store value:
+  // the background watcher only pushes after ~20m of movement or every 15s, so it
+  // lags real movement and can leave the camera stuck "locked" (same reasoning as
+  // the story add button on the map).
+  // `promptForPermission` is only set on the tap paths — the passive check on open
+  // must never pop a system dialog at someone who just wanted to read the chat.
+  const verifyProximity = async (promptForPermission = false): Promise<boolean> => {
+    if (!venueCoords) return false;
+
+    let coords = userLocation;
+    try {
+      let { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== 'granted' && promptForPermission) {
+        ({ status } = await Location.requestForegroundPermissionsAsync());
+        if (status === 'granted') ensureLocationWatch();
+      }
+      if (status === 'granted') {
+        // getCurrentPositionAsync can hang indefinitely rather than reject — a
+        // simulator with Location set to "None", or a real device with no fix
+        // (basement, airplane mode). Without this race the tap never resolves and
+        // the button looks dead, so we time out and use the last known position.
+        const fresh = await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), LOCATION_FIX_TIMEOUT_MS)),
+        ]);
+        if (fresh) {
+          coords = { latitude: fresh.coords.latitude, longitude: fresh.coords.longitude };
+          useAppStore.getState().setUserLocation(coords); // keep store (and lock UI) in sync
+        } else {
+          console.warn('[VenueChat] Location fix timed out; falling back to cached position.');
+        }
+      }
+    } catch {
+      // Fall back to whatever cached location we have.
+    }
+
+    if (!coords) return false;
+    return getDistanceInMeters(
+      coords.latitude,
+      coords.longitude,
+      venueCoords.latitude,
+      venueCoords.longitude
+    ) <= MEDIA_RADIUS_METERS;
+  };
+
+  // Refresh the fix once per open so the lock affordance reflects where the user
+  // actually is rather than a cached position from before they walked in.
+  useEffect(() => {
+    if (isVisible && shouldRender && venueCoords) {
+      verifyProximity().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVisible, shouldRender, venueCoords]);
+
+  const sendMedia = async (downloadUrl: string, mediaType: 'image' | 'video') => {
     if (!user || !venueId) return;
 
-    setIsStickerPickerVisible(false);
     const previousReplyTo = replyingTo;
     setReplyingTo(null);
 
     try {
-      let senderId = user.uid;
-      let senderName = '';
-      let senderBadge: string | null = activeBadge;
-
-      if (isAdmin && sendAsSimulated) {
-        const persona = await ensureSimPersona();
-        senderId = persona.id;
-        senderName = persona.name;
-        senderBadge = null;
-      } else {
-        senderName = await fetchUsername(user.uid);
-      }
-
-      const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
-      const newMessageRef = push(chatRef);
-      
-      await set(newMessageRef, {
-        user_id: senderId,
-        username: senderName,
-        message: sticker,
-        type: 'sticker',
-        timestamp: Date.now(),
-        ...(senderBadge ? { activeBadge: senderBadge } : {}),
-        ...(previousReplyTo ? {
-          replyTo: {
-            messageId: previousReplyTo.id,
-            username: previousReplyTo.username,
-            message: previousReplyTo.message
-          }
-        } : {})
-      });
-      
-      if (!sendAsSimulated) {
-        const userDocRef = doc(firestore, 'users', user.uid);
-        updateDoc(userDocRef, { chatMessageCount: increment(1) })
-          .then(() => checkAndUnlockAchievements(user.uid))
-          .catch((err) => console.warn('[VenueChat] Failed to update user message count/achievements:', err));
-      }
-
-      const userChatRef = ref(realtimeDB, `user_chats/${user.uid}/${venueId}`);
-      set(userChatRef, {
-        venueName: venueName,
-        lastInteractionTime: Date.now()
-      }).catch((err) => console.warn('[VenueChat] Failed to update user_chats:', err));
-
-      const venueMemberRef = ref(realtimeDB, `venue_members/${venueId}/${user.uid}`);
-      set(venueMemberRef, {
-        lastInteractionTime: Date.now()
-      }).catch((err) => console.warn('[VenueChat] Failed to update venue_members:', err));
-
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+      await postMessage({ message: downloadUrl, type: 'media', mediaType }, previousReplyTo);
     } catch (error) {
-      console.warn("Error sending sticker:", error);
+      console.warn('Error sending media:', error);
       setReplyingTo(previousReplyTo);
       Toast.show({
         type: 'error',
@@ -571,130 +639,101 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     }
   };
 
-  const sendCustomSticker = async (downloadUrl: string) => {
+  // Camera only, no gallery: what lands in a venue chat has to be shot there and
+  // then. A library picker would let any old photo pose as what's happening now.
+  const launchMediaPicker = async () => {
     if (!user || !venueId) return;
-
-    setIsStickerPickerVisible(false);
-    const previousReplyTo = replyingTo;
-    setReplyingTo(null);
-
     try {
-      let senderId = user.uid;
-      let senderName = '';
-      let senderBadge: string | null = activeBadge;
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
 
-      if (isAdmin && sendAsSimulated) {
-        const persona = await ensureSimPersona();
-        senderId = persona.id;
-        senderName = persona.name;
-        senderBadge = null;
-      } else {
-        senderName = await fetchUsername(user.uid);
-      }
-
-      const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
-      const newMessageRef = push(chatRef);
-      
-      await set(newMessageRef, {
-        user_id: senderId,
-        username: senderName,
-        message: downloadUrl,
-        type: 'custom_sticker',
-        timestamp: Date.now(),
-        ...(senderBadge ? { activeBadge: senderBadge } : {}),
-        ...(previousReplyTo ? {
-          replyTo: {
-            messageId: previousReplyTo.id,
-            username: previousReplyTo.username,
-            message: previousReplyTo.message
-          }
-        } : {})
-      });
-      
-      if (!sendAsSimulated) {
-        const userDocRef = doc(firestore, 'users', user.uid);
-        updateDoc(userDocRef, { chatMessageCount: increment(1) })
-          .then(() => checkAndUnlockAchievements(user.uid))
-          .catch((err) => console.warn('[VenueChat] Failed to update user message count/achievements:', err));
-      }
-
-      const userChatRef = ref(realtimeDB, `user_chats/${user.uid}/${venueId}`);
-      set(userChatRef, {
-        venueName: venueName,
-        lastInteractionTime: Date.now()
-      }).catch((err) => console.warn('[VenueChat] Failed to update user_chats:', err));
-
-      const venueMemberRef = ref(realtimeDB, `venue_members/${venueId}/${user.uid}`);
-      set(venueMemberRef, {
-        lastInteractionTime: Date.now()
-      }).catch((err) => console.warn('[VenueChat] Failed to update venue_members:', err));
-
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    } catch (error) {
-      console.warn("Error sending custom sticker:", error);
-      setReplyingTo(previousReplyTo);
-      Toast.show({
-        type: 'error',
-        text1: 'Message Failed',
-        text2: getFriendlyErrorMessage(error)
-      });
-    }
-  };
-
-  const handleCustomStickerUpload = async () => {
-    if (!user || !venueId) return;
-
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
         Toast.show({
           type: 'error',
           text1: 'Permission Denied',
-          text2: 'Gallery access is required to upload custom stickers.'
+          text2: 'Camera access is required.'
         });
         return;
       }
 
       const options: ImagePicker.ImagePickerOptions = {
-        mediaTypes: ['images'],
+        mediaTypes: ['images', 'videos'],
         allowsEditing: true,
-        aspect: [1, 1],
         quality: 0.7,
+        videoMaxDuration: MAX_VIDEO_SECONDS,
       };
 
-      const result = await ImagePicker.launchImageLibraryAsync(options);
+      const result = await ImagePicker.launchCameraAsync(options);
 
-      if (!result.canceled && result.assets.length > 0) {
-        setIsUploadingCustom(true);
-        const uri = result.assets[0].uri;
+      if (result.canceled || result.assets.length === 0) return;
 
-        // Upload to Firebase Storage
-        const fileExtension = uri.split('.').pop() || 'jpg';
-        const fileName = `stories/${user.uid}_sticker_${Date.now()}.${fileExtension}`;
-        const stRef = storageRef(storage, fileName);
+      const asset = result.assets[0];
+      const mediaType: 'image' | 'video' = asset.type === 'video' ? 'video' : 'image';
 
-        const response = await fetch(uri);
-        const blob = await response.blob();
-
-        const uploadTask = await uploadBytesResumable(stRef, blob);
-        const downloadUrl = await getDownloadURL(uploadTask.ref);
-
-        // Send Custom Sticker
-        await sendCustomSticker(downloadUrl);
+      // A slow shot/upload gives plenty of time to walk away, so re-verify presence
+      // right before the message goes out.
+      if (!(await verifyProximity(true))) {
+        Toast.show({
+          type: 'error',
+          text1: 'Too far away',
+          text2: `You must be within ${MEDIA_RADIUS_METERS}m to post here!`
+        });
+        return;
       }
+
+      setIsUploadingMedia(true);
+
+      // Kept under the stories/ prefix on purpose: that path is already writable by
+      // signed-in users under the deployed Storage rules.
+      const fileExtension = asset.uri.split('.').pop() || (mediaType === 'video' ? 'mp4' : 'jpg');
+      const fileName = `stories/${user.uid}_chat_${Date.now()}.${fileExtension}`;
+      const stRef = storageRef(storage, fileName);
+
+      const response = await fetch(asset.uri);
+      const blob = await response.blob();
+
+      const uploadTask = await uploadBytesResumable(stRef, blob);
+      const downloadUrl = await getDownloadURL(uploadTask.ref);
+
+      await sendMedia(downloadUrl, mediaType);
     } catch (error) {
-      console.warn('Custom Sticker Upload Error:', error);
+      console.warn('Chat media upload error:', error);
       Toast.show({
         type: 'error',
         text1: 'Upload Failed',
         text2: getFriendlyErrorMessage(error),
       });
     } finally {
-      setIsUploadingCustom(false);
+      setIsUploadingMedia(false);
     }
   };
+
+  const handleCameraPress = async () => {
+    if (!user || !venueId || isUploadingMedia || isCheckingLocation) return;
+
+    // The fix can take a second or two; without this the button reads as dead.
+    setIsCheckingLocation(true);
+    let near = false;
+    try {
+      near = await verifyProximity(true);
+    } finally {
+      setIsCheckingLocation(false);
+    }
+
+    if (!near) {
+      Alert.alert(
+        'Vibe Check Restricted',
+        `You must be within ${MEDIA_RADIUS_METERS} meters of ${venueName} to share photos or videos here. This keeps the Eventas live feed real and local to what is happening right now!`,
+        [{ text: 'Got it' }]
+      );
+      return;
+    }
+
+    // Straight to the camera — with the gallery gone there is nothing to choose
+    // between, and a confirmation dialog would just be a tap in the way.
+    Keyboard.dismiss();
+    launchMediaPicker();
+  };
+
 
   const toggleReaction = async (messageId: string, emoji: string) => {
     if (!user || !venueId) return;
@@ -953,6 +992,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
     const isSticker = item.type === 'sticker';
     const isCustomSticker = item.type === 'custom_sticker';
     const isStoryReaction = item.type === 'story_reaction' && item.storyData;
+    const isMedia = item.type === 'media';
 
     return (
       <>
@@ -997,6 +1037,8 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                 };
                 setSelectedStoryForViewer([storyObj]);
                 setIsStoryViewerVisible(true);
+              } else if (isMedia) {
+                setMediaViewer({ url: item.message, mediaType: item.mediaType === 'video' ? 'video' : 'image' });
               }
             }}
           >
@@ -1023,6 +1065,37 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
                   </View>
                 </View>
                 <Text style={[styles.timeText, styles.storyReactionTime]}>
+                  {formatTime(item.timestamp)}
+                </Text>
+              </View>
+            ) : isMedia ? (
+              <View style={[styles.mediaBubble, isMe ? styles.myMediaBubble : styles.otherMediaBubble]}>
+                {renderReplyHeader(item, isMe)}
+                <View style={styles.mediaFrame} pointerEvents="none">
+                  {item.mediaType === 'video' ? (
+                    // Paused Video renders the first frame as the thumbnail; actual
+                    // playback (with sound and controls) happens in the full-screen viewer.
+                    <>
+                      <Video
+                        source={{ uri: item.message }}
+                        style={styles.mediaImage}
+                        resizeMode={ResizeMode.COVER}
+                        shouldPlay={false}
+                        isMuted
+                      />
+                      <View style={styles.mediaPlayBadge}>
+                        <Icons.Play size={20} color="#000" fill="#000" />
+                      </View>
+                      <View style={styles.mediaTypePill}>
+                        <Icons.Video size={10} color="#FFF" />
+                        <Text style={styles.mediaTypePillText}>Video</Text>
+                      </View>
+                    </>
+                  ) : (
+                    <Image source={{ uri: item.message }} style={styles.mediaImage} resizeMode="cover" />
+                  )}
+                </View>
+                <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
                   {formatTime(item.timestamp)}
                 </Text>
               </View>
@@ -1086,11 +1159,6 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           style={styles.modalOverlay} 
           behavior="padding"
         >
-          {/* Left-edge swipe strip: sits above everything, captures swipe-right on the left 40px to close */}
-          <View
-            style={styles.swipeEdgeStrip}
-            {...swipeClosePanResponder.panHandlers}
-          />
           <View style={[styles.chatContainer, { paddingTop: insets.top }]}>
           <View style={styles.header}>
             <View>
@@ -1102,33 +1170,46 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             </TouchableOpacity>
           </View>
 
-          {isLoading ? (
-            <View style={styles.centerContainer}>
-              <ActivityIndicator color="#00FFCC" size="large" />
-            </View>
-          ) : messages.length === 0 ? (
-            <View style={styles.centerContainer}>
-              <Text style={styles.emptyText}>No recent messages.</Text>
-              <Text style={styles.emptySubText}>Be the first to say something!</Text>
-            </View>
-          ) : (
-            <FlatList
-              ref={flatListRef}
-              data={visibleMessages}
-              keyExtractor={item => item.id}
-              renderItem={renderMessage}
-              contentContainerStyle={styles.messagesList}
-              onContentSizeChange={handleListReady}
-              onLayout={handleListReady}
-              onScrollToIndexFailed={(info) => {
-                // Virtualized rows may not be measured yet — jump close, retry.
-                flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
-                setTimeout(() => {
-                  flatListRef.current?.scrollToIndex({ index: info.index, viewPosition: 0.2, animated: false });
-                }, 120);
-              }}
+          {/* Message area. The left-edge swipe strip lives INSIDE this region so it can
+              never reach the input bar below it — it used to span the whole modal at
+              zIndex 9999 and swallow taps on the left 40px, which is exactly where the
+              camera button sits. */}
+          <View style={styles.listArea}>
+            {isLoading ? (
+              <View style={styles.centerContainer}>
+                <ActivityIndicator color="#00FFCC" size="large" />
+              </View>
+            ) : messages.length === 0 ? (
+              <View style={styles.centerContainer}>
+                <Text style={styles.emptyText}>No recent messages.</Text>
+                <Text style={styles.emptySubText}>Be the first to say something!</Text>
+              </View>
+            ) : (
+              <FlatList
+                ref={flatListRef}
+                data={visibleMessages}
+                keyExtractor={item => item.id}
+                renderItem={renderMessage}
+                contentContainerStyle={styles.messagesList}
+                onContentSizeChange={handleListReady}
+                onLayout={handleListReady}
+                onScrollToIndexFailed={(info) => {
+                  // Virtualized rows may not be measured yet — jump close, retry.
+                  flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
+                  setTimeout(() => {
+                    flatListRef.current?.scrollToIndex({ index: info.index, viewPosition: 0.2, animated: false });
+                  }, 120);
+                }}
+              />
+            )}
+
+            {/* Swipe-right on the left edge of the messages to close. Last child so it
+                sits above the list, but bounded by listArea. */}
+            <View
+              style={styles.swipeEdgeStrip}
+              {...swipeClosePanResponder.panHandlers}
             />
-          )}
+          </View>
 
           {messages.length === 0 && !inputText.trim() && !isLoading && (
             <View style={styles.suggestionsContainer}>
@@ -1156,7 +1237,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
               <View style={styles.replyBarVerticalLine} />
               <View style={styles.replyBarContent}>
                 <Text style={styles.replyBarUser}>Replying to {replyingTo.username}</Text>
-                <Text style={styles.replyBarText} numberOfLines={1}>{replyingTo.message}</Text>
+                <Text style={styles.replyBarText} numberOfLines={1}>{replyPreview(replyingTo)}</Text>
               </View>
               <TouchableOpacity onPress={() => setReplyingTo(null)} style={styles.replyBarClose}>
                 <X color="#888" size={16} />
@@ -1205,60 +1286,25 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
             </View>
           )}
 
-          {/* Sticker Picker Panel */}
-          {isStickerPickerVisible && (
-            <View style={styles.stickerPickerPanel}>
-              <FlatList
-                data={['CUSTOM_UPLOAD', ...CURATED_STICKERS]}
-                keyExtractor={(item) => item}
-                numColumns={6}
-                renderItem={({ item }) => {
-                  if (item === 'CUSTOM_UPLOAD') {
-                    return (
-                      <TouchableOpacity 
-                        style={[styles.stickerItem, styles.customUploadItem]}
-                        onPress={handleCustomStickerUpload}
-                        disabled={isUploadingCustom}
-                      >
-                        {isUploadingCustom ? (
-                          <ActivityIndicator color="#00FFCC" size="small" />
-                        ) : (
-                          <Icons.Plus color="#00FFCC" size={28} />
-                        )}
-                      </TouchableOpacity>
-                    );
-                  }
-                  return (
-                    <TouchableOpacity 
-                      style={styles.stickerItem}
-                      onPress={() => sendSticker(item)}
-                    >
-                      <Text style={styles.stickerItemText}>{item}</Text>
-                    </TouchableOpacity>
-                  );
-                }}
-                contentContainerStyle={styles.stickerGrid}
-                scrollEnabled={false}
-              />
-            </View>
-          )}
-
-          <View style={[
-            styles.inputContainer,
-            { paddingBottom: keyboardVisible ? 12 : Math.max(12, insets.bottom) }
-          ]}>
-            <TouchableOpacity 
+          <View
+            style={[
+              styles.inputContainer,
+              { paddingBottom: keyboardVisible ? 12 : Math.max(12, insets.bottom) }
+            ]}
+          >
+            <TouchableOpacity
               style={styles.iconButton}
-              onPress={() => {
-                if (isStickerPickerVisible) {
-                  setIsStickerPickerVisible(false);
-                } else {
-                  Keyboard.dismiss();
-                  setIsStickerPickerVisible(true);
-                }
-              }}
+              onPress={handleCameraPress}
+              disabled={isUploadingMedia || isCheckingLocation}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <Smile color={isStickerPickerVisible ? "#00FFCC" : "#FFF"} size={24} />
+              {isUploadingMedia || isCheckingLocation ? (
+                <ActivityIndicator color="#00FFCC" size="small" />
+              ) : (
+                // Same affordance as the story add bubble: greyed out until you're
+                // actually at the venue, then it lights up.
+                <Camera color={isNearVenue ? '#00FFCC' : '#777'} size={24} />
+              )}
             </TouchableOpacity>
             <TextInput
               style={styles.textInput}
@@ -1266,7 +1312,6 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
               placeholderTextColor="#888"
               value={inputText}
               onChangeText={setInputText}
-              onFocus={() => setIsStickerPickerVisible(false)}
               maxLength={80}
               multiline
             />
@@ -1398,6 +1443,40 @@ export const VenueChat: React.FC<VenueChatProps> = ({ isVisible, onClose, venueI
           </TouchableWithoutFeedback>
         </Modal>
 
+        {/* Full-screen viewer for camera messages */}
+        <Modal
+          visible={!!mediaViewer}
+          transparent={false}
+          animationType="fade"
+          onRequestClose={() => setMediaViewer(null)}
+          statusBarTranslucent={true}
+        >
+          <View style={styles.mediaViewerContainer}>
+            {mediaViewer?.mediaType === 'video' ? (
+              <Video
+                source={{ uri: mediaViewer.url }}
+                style={styles.mediaViewerContent}
+                resizeMode={ResizeMode.CONTAIN}
+                shouldPlay
+                isLooping
+                useNativeControls
+              />
+            ) : mediaViewer ? (
+              <Image
+                source={{ uri: mediaViewer.url }}
+                style={styles.mediaViewerContent}
+                resizeMode="contain"
+              />
+            ) : null}
+            <TouchableOpacity
+              style={[styles.mediaViewerClose, { top: insets.top + 12 }]}
+              onPress={() => setMediaViewer(null)}
+            >
+              <X color="#FFF" size={24} />
+            </TouchableOpacity>
+          </View>
+        </Modal>
+
         <StoryViewer
           isVisible={isStoryViewerVisible}
           onClose={() => {
@@ -1420,13 +1499,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#121212',
   },
+  listArea: {
+    flex: 1,
+  },
   swipeEdgeStrip: {
     position: 'absolute',
     top: 0,
     left: 0,
     bottom: 0,
     width: 40,
-    zIndex: 9999,
   },
   chatContainer: {
     flex: 1,
@@ -1865,42 +1946,92 @@ const styles = StyleSheet.create({
     marginTop: 4,
     alignSelf: 'flex-start',
   },
-  stickerPickerPanel: {
-    backgroundColor: '#1A1A1A',
-    borderTopWidth: 1,
-    borderTopColor: '#333',
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-  },
-  stickerGrid: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stickerItem: {
-    width: 50,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-    margin: 4,
-  },
-  stickerItemText: {
-    fontSize: 32,
-  },
   iconButton: {
-    padding: 8,
-    marginRight: 8,
+    // Explicit 44x44 — Apple/Android minimum touch target — so the whole icon is
+    // pressable rather than just the glyph's bounding box.
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
   },
   customStickerImage: {
     width: 100,
     height: 100,
     borderRadius: 8,
   },
-  customUploadItem: {
-    backgroundColor: '#222',
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#00FFCC',
-    borderRadius: 12,
+
+  // 📸 Camera message styles
+  mediaBubble: {
+    padding: 6,
+    borderRadius: 20,
+  },
+  myMediaBubble: {
+    backgroundColor: '#FF00CC',
+    borderBottomRightRadius: 4,
+  },
+  otherMediaBubble: {
+    backgroundColor: '#333',
+    borderBottomLeftRadius: 4,
+  },
+  mediaFrame: {
+    width: 200,
+    height: 260,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#111',
+    position: 'relative',
+  },
+  mediaImage: {
+    width: '100%',
+    height: '100%',
+  },
+  mediaPlayBadge: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginLeft: -22,
+    marginTop: -22,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaTypePill: {
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  },
+  mediaTypePillText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  mediaViewerContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaViewerContent: {
+    width: '100%',
+    height: '100%',
+  },
+  mediaViewerClose: {
+    position: 'absolute',
+    right: 16,
+    padding: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 20,
   },
   storyReactionBubble: {
     padding: 10,

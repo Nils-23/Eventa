@@ -101,8 +101,12 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
 
             const nonHiddenMsg = sortedMsgs.find(msg => !hiddenUsers.includes(msg.user_id));
             if (nonHiddenMsg) {
+              // Anything whose `message` is a storage URL rather than text needs a
+              // label here, or the preview renders a raw Firebase link.
               let displayMsg = nonHiddenMsg.message || '';
-              if (nonHiddenMsg.type === 'custom_sticker' || nonHiddenMsg.type === 'Sticker') {
+              if (nonHiddenMsg.type === 'media') {
+                displayMsg = nonHiddenMsg.mediaType === 'video' ? 'Video' : 'Image';
+              } else if (nonHiddenMsg.type === 'custom_sticker' || nonHiddenMsg.type === 'Sticker') {
                 displayMsg = 'Sticker';
               }
               setLatestMessages((prev) => ({

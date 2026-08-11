@@ -35,6 +35,7 @@ import { firestore, functions } from '../services/firebase';
 import { doc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import Toast from 'react-native-toast-message';
+import { findHostVenue, LOCATION_MATCH_THRESHOLD } from '../utils/venueMatching';
 
 interface PendingEvent {
   id: string;
@@ -61,14 +62,6 @@ interface PendingEvent {
   img?: string;
 }
 
-const CATEGORY_IMAGES: Record<string, string> = {
-  Club: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&q=80&w=600',
-  Bar: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&q=80&w=600',
-  Activity: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&q=80&w=600',
-  Event: 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80&w=600',
-  Food: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&q=80&w=600',
-  Default: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&q=80&w=600',
-};
 
 const CATEGORIES = ['Bar', 'Club', 'Food', 'Activity', 'Event'];
 
@@ -286,20 +279,17 @@ export const AdminAICuratorScreen = () => {
     setIsLoading(true);
     setLoadingStatus('Approving event...');
     try {
-      const venuesRef = collection(firestore, 'venues');
-      const q = query(venuesRef);
-      const snap = await getDocs(q);
-      let matchedVenue: any = null;
-      snap.forEach((docSnap) => {
-        const v = docSnap.data();
-        if (v.name && event.venue) {
-          const vName = v.name.toLowerCase();
-          const eVenue = event.venue.toLowerCase();
-          if (vName === eVenue || eVenue.includes(vName) || vName.includes(eVenue)) {
-            matchedVenue = v;
-          }
-        }
-      });
+      const snap = await getDocs(query(collection(firestore, 'venues')));
+      const allVenues = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      // Two matches at different confidences — see LOCATION_MATCH_THRESHOLD.
+      // `matchedVenue` is the host we are willing to attribute an event to (and
+      // borrow a photo from); `locationVenue` only decides where the pin goes,
+      // and a weak guess there still beats dropping the event on the CBD default
+      // along with every other unmatched one. Curator events carry no
+      // coordinates of their own, so this is the only thing positioning them.
+      const matchedVenue = findHostVenue(event.venue, allVenues);
+      const locationVenue =
+        matchedVenue || findHostVenue(event.venue, allVenues, LOCATION_MATCH_THRESHOLD);
 
       const parsed = parseDateTime(event.date, event.time);
       const startDate = event.startDate !== undefined && event.startDate !== null ? event.startDate : parsed.startDate;
@@ -308,12 +298,24 @@ export const AdminAICuratorScreen = () => {
       const venueId = `event_ai_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       const docRef = doc(firestore, 'venues', venueId);
 
-      const address = event.address || (matchedVenue ? matchedVenue.address : event.venue);
-      const latitude = event.latitude !== undefined && event.latitude !== null ? event.latitude : (matchedVenue ? matchedVenue.latitude : -1.286389);
-      const longitude = event.longitude !== undefined && event.longitude !== null ? event.longitude : (matchedVenue ? matchedVenue.longitude : 36.817223);
+      const address = event.address || (locationVenue ? locationVenue.address : event.venue);
+      const latitude = event.latitude !== undefined && event.latitude !== null ? event.latitude : (locationVenue ? locationVenue.latitude : -1.286389);
+      const longitude = event.longitude !== undefined && event.longitude !== null ? event.longitude : (locationVenue ? locationVenue.longitude : 36.817223);
 
-      // Poster priority: admin-provided poster (img) > Google venue photo > category fallback
-      const imageUrl = event.img || event.googleImageUrl || CATEGORY_IMAGES[event.category] || CATEGORY_IMAGES.Default;
+      // Only ever store an image that belongs to *this event*: its own poster, or
+      // a Google photo looked up for it. Everything below that is left to the
+      // client, which resolves the host venue's photo and then a pooled fallback.
+      //
+      // Two things must not be written here. A category placeholder (the old
+      // behaviour) gave every event in a category the same photograph forever and
+      // was indistinguishable from a real image downstream — that is what put
+      // identical stock photos side by side in the Explore feed. A *copy* of the
+      // host's photo is just as bad: Google photo URLs embed the Maps API key, so
+      // the copy dies at the next rotation while the host self-heals, and an
+      // event holding a Google URL makes needsRefresh re-look-up the *event's*
+      // name and attach an unrelated business's photo. Resolving the host at
+      // render time instead means the event always shows what the host shows now.
+      const imageUrl = event.img || event.googleImageUrl || null;
 
       const venueData = {
         id: venueId,
@@ -322,6 +324,11 @@ export const AdminAICuratorScreen = () => {
         address,
         latitude,
         longitude,
+        // Kept so the client can resolve the host's *current* photo later and
+        // pick a category-appropriate fallback when there is no host.
+        category: event.category || 'Event',
+        venue: event.venue || null,
+        hostVenueId: matchedVenue ? matchedVenue.id : null,
         // Curated items are DATED events: nightlife/food categories still publish
         // as type Event so they get the start/end attendance envelope (a food
         // festival is an Event; a permanent restaurant is created as type Food
@@ -374,13 +381,20 @@ export const AdminAICuratorScreen = () => {
         const startDate = event.startDate !== undefined && event.startDate !== null ? event.startDate : parsed.startDate;
         const expirationDate = event.expirationDate !== undefined && event.expirationDate !== null ? event.expirationDate : parsed.expirationDate;
 
-        // Poster priority: admin-provided poster (img) > Google venue photo > category fallback
-        const imageUrl = event.img || event.googleImageUrl || CATEGORY_IMAGES[event.category] || CATEGORY_IMAGES.Default;
+        // Same poster rule as approval — see the note there on why neither a
+        // category placeholder nor a copy of the host's photo is written.
+        const cleanupSnap = await getDocs(query(collection(firestore, 'venues')));
+        const cleanupVenues = cleanupSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        const cleanupHost = findHostVenue(event.venue, cleanupVenues);
+        const imageUrl = event.img || event.googleImageUrl || null;
 
         const updateData: any = {
           name: event.name,
           description: event.description,
           address: event.venue,
+          category: event.category || 'Event',
+          venue: event.venue || null,
+          hostVenueId: cleanupHost ? cleanupHost.id : null,
           // Curated items are DATED events: nightlife/food categories still publish
         // as type Event so they get the start/end attendance envelope (a food
         // festival is an Event; a permanent restaurant is created as type Food

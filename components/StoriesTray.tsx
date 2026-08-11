@@ -96,7 +96,7 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
                   when imageUrl is missing AND when the URL fails to load — so a story bubble
                   never renders blank (this is what the raw <Image> got wrong). */}
               <VenueImage
-                venue={{ imageUrl: v.imageUrl, type: v.type }}
+                venue={{ id: v.id, imageUrl: v.imageUrl, type: v.type, category: v.category }}
                 style={styles.thumb}
                 imageStyle={{ opacity: 1 }}
                 isThumbnail

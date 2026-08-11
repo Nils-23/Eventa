@@ -733,41 +733,17 @@ export const MapScreen = () => {
       return;
     }
 
-    Alert.alert(
-      "Add Story",
-      "Would you like to take a new photo/video or select from your gallery?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel"
-        },
-        {
-          text: "Camera",
-          onPress: async () => {
-            const { status } = await ImagePicker.requestCameraPermissionsAsync();
-            if (status !== 'granted') {
-              Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Camera access is required.' });
-              return;
-            }
-            launchPicker(true, targetVenue);
-          }
-        },
-        {
-          text: "Gallery",
-          onPress: async () => {
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') {
-              Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Gallery access is required.' });
-              return;
-            }
-            launchPicker(false, targetVenue);
-          }
-        }
-      ]
-    );
+    // Camera only, no gallery: a story has to be shot where you are, right now.
+    // Letting people post from the library lets any old photo pose as live.
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Toast.show({ type: 'error', text1: 'Permission Denied', text2: 'Camera access is required.' });
+      return;
+    }
+    launchPicker(targetVenue);
   };
 
-  const launchPicker = async (useCamera: boolean, targetVenue: LiveVenue) => {
+  const launchPicker = async (targetVenue: LiveVenue) => {
     try {
       const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ['images', 'videos'],
@@ -775,9 +751,7 @@ export const MapScreen = () => {
         quality: 0.7,
       };
 
-      const result = useCamera
-        ? await ImagePicker.launchCameraAsync(options)
-        : await ImagePicker.launchImageLibraryAsync(options);
+      const result = await ImagePicker.launchCameraAsync(options);
 
       if (!result.canceled && result.assets.length > 0) {
         setIsUploading(true);

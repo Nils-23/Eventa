@@ -316,6 +316,8 @@ export const EventDetailScreen = () => {
         onClose={() => setIsChatVisible(false)}
         venueId={event.id}
         venueName={event.name}
+        venueLatitude={event.latitude}
+        venueLongitude={event.longitude}
       />
 
       {/* Floating Action Bar */}

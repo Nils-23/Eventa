@@ -286,7 +286,10 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
 
       // Construct WhatsApp-style body content
       let messageText = messageData.message || '';
-      if (messageData.type === 'custom_sticker') {
+      if (messageData.type === 'media') {
+        // The raw value is a Storage URL — never surface it in a notification.
+        messageText = messageData.mediaType === 'video' ? '🎥 sent a video' : '📷 sent a photo';
+      } else if (messageData.type === 'custom_sticker') {
         messageText = '📷 sent a custom sticker';
       } else if (messageData.type === 'sticker') {
         messageText = `${messageData.message} (sticker)`;
