@@ -67,7 +67,7 @@
       "usesAppleSignIn": true
     },
     "android": {
-      "versionCode": 34,
+      "versionCode": 35,
       "runtimeVersion": "1.0.7",
       "adaptiveIcon": {
         "foregroundImage": "./assets/App_icon.png",
