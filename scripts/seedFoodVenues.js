@@ -90,6 +90,7 @@ async function resolvePlace(query) {
   }
   const r = detailsData.result;
   return {
+    placeId,
     latitude: r.geometry.location.lat,
     longitude: r.geometry.location.lng,
     address: r.formatted_address,
@@ -115,7 +116,22 @@ async function seed() {
         longitude: place.longitude,
         type: 'Food',
         venueProfile: v.venueProfile,
-        ...(place.imageUrl ? { imageUrl: place.imageUrl } : {}),
+        // googlePlaceId lets refreshVenueImages re-fetch a photo without paying
+        // for a fresh text search, and googleImageUrl is the field the healer
+        // and the client both treat as canonical — seeding only the legacy
+        // imageUrl left these venues outside the heal path entirely.
+        googlePlaceId: place.placeId,
+        ...(place.imageUrl
+          ? {
+              imageUrl: place.imageUrl,
+              googleImageUrl: place.imageUrl,
+              googleImageStatus: 'ok',
+              // Deliberately NOT stamping googleImageVerifiedAt: a seeded URL is
+              // unproven until refreshVenueImages probes it. Leaving it unset is
+              // what puts these venues in the verification queue on the next run.
+              googleImageCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }
+          : {}),
       };
       await db.collection('venues').doc(v.id).set(docData, { merge: true });
       console.log(`  ✅ ${v.name} @ (${place.latitude.toFixed(5)}, ${place.longitude.toFixed(5)}) ${place.imageUrl ? '📷' : '(no photo)'}`);

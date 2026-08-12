@@ -5,7 +5,12 @@ import { ref } from 'firebase/database';
 import { subscribeToRTDB } from '../utils/firebaseUtils';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, firestore, realtimeDB } from '../services/firebase';
-import { resolveVenueImages, realImageOrNull, assignEventFallbacks } from '../utils/venueImageUtils';
+import {
+  resolveVenueImages,
+  realImageOrNull,
+  assignFallbackImages,
+  FallbackSubject,
+} from '../utils/venueImageUtils';
 import { findHostVenue } from '../utils/venueMatching';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppStore } from '../hooks/useAppStore';
@@ -160,7 +165,7 @@ function buildImageResolver(
   // Resolve each event's host once per pass, preferring the id stored at
   // approval time and falling back to matching the curated venue string.
   const hostImageByEvent = new Map<string, string | null>();
-  const needFallback: Array<{ id: string; category?: string }> = [];
+  const needFallback: FallbackSubject[] = [];
 
   for (const v of venues) {
     if (v.type !== 'Event') continue;
@@ -171,10 +176,20 @@ function buildImageResolver(
       findHostVenue(v.venue || v.address, places);
     const hostImage = realImageFor(host);
     hostImageByEvent.set(v.id, hostImage);
-    if (!hostImage) needFallback.push({ id: v.id, category: v.category });
+    if (!hostImage) needFallback.push({ id: v.id, kind: 'event', category: v.category });
   }
 
-  const pooledFallbacks = assignEventFallbacks(needFallback);
+  // Places need the same treatment. A place with no real photo used to return
+  // undefined here and let VenueImage pick per-venue, which meant a set of
+  // venues that lost their photos together (a dead Google URL, a key rotation)
+  // rendered as one repeated thumbnail. Assigning them alongside the events
+  // gives the whole feed distinct imagery from a single shared pass.
+  for (const v of places) {
+    if (realImageFor(v)) continue;
+    needFallback.push({ id: v.id, kind: 'place', type: v.type });
+  }
+
+  const pooledFallbacks = assignFallbackImages(needFallback);
 
   return (venue: RawVenue): string | undefined => {
     if (venue.type === 'Event') {
@@ -185,13 +200,11 @@ function buildImageResolver(
         undefined
       );
     }
-    return (
-      venue.customImageUrl ||
-      venue.googleImageUrl ||
-      venue.imageUrl ||
-      resolvedImages[venue.id] ||
-      undefined
-    );
+    // Mirrors the `realImageFor` test above so the set of places that were
+    // assigned a fallback is exactly the set that reaches for one — and so a
+    // stored placeholder (the curator used to persist these) is treated as
+    // absent rather than pinned forever.
+    return realImageFor(venue) || pooledFallbacks[venue.id] || undefined;
   };
 }
 

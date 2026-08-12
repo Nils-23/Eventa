@@ -10,6 +10,17 @@ const GOOGLE_PHOTO_URL_RE = /maps\.googleapis\.com\/maps\/api\/place\/photo/;
 // outages/errors never write this stamp, so they retry on the next run.
 const NO_PHOTOS_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
+// How long a URL we have actually seen serve an image is trusted before being
+// probed again. See `needsVerify` for why inferring health from the embedded
+// key is not enough.
+const VERIFY_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
+
+// A photo probe is a billed Places request, so the first run after deploy (when
+// nothing carries a verification stamp) is spread over several runs instead of
+// probing the whole collection at once. At every-6-hours this drains a ~100
+// venue backlog inside a day.
+const MAX_VERIFY_PER_RUN = 25;
+
 const API_DELAY_MS = 300;
 
 function extractEmbeddedKey(url) {
@@ -78,7 +89,7 @@ function needsRefresh(venue, apiKey, now) {
   // event URL heals as soon as the host's does.
   if (venue.type === 'Event') return false;
 
-  const googleUrl = [venue.googleImageUrl, venue.imageUrl].find((u) => u && GOOGLE_PHOTO_URL_RE.test(u));
+  const googleUrl = storedGoogleUrl(venue);
   if (googleUrl) {
     // URL embedding the current key is the one the Places API accepts today.
     return extractEmbeddedKey(googleUrl) !== apiKey;
@@ -94,14 +105,83 @@ function needsRefresh(venue, apiKey, now) {
   return true;
 }
 
+function storedGoogleUrl(venue) {
+  return [venue.googleImageUrl, venue.imageUrl].find((u) => u && GOOGLE_PHOTO_URL_RE.test(u)) || null;
+}
+
+function toMillis(ts) {
+  return ts && ts.toMillis ? ts.toMillis() : 0;
+}
+
+/**
+ * True when a URL that `needsRefresh` considers healthy should still be probed.
+ *
+ * The key check above is necessary but not sufficient: it only catches the
+ * failure mode where a key rotation invalidates every URL at once. A stored URL
+ * can embed the *current* key and still be dead, because the `photo_reference`
+ * inside it has its own lifetime — Google expires them, and a place that
+ * re-uploads or removes its photos invalidates them immediately. Those URLs
+ * return 400 forever while looking perfectly healthy to a key comparison, so
+ * without an actual probe they are never repaired. That is exactly how the
+ * seeded food venues ended up serving 400s for months while the healer reported
+ * them "healthy/skipped".
+ *
+ * Venues written outside this module (seed scripts, admin tooling) carry no
+ * stamp at all, so they are probed on the first run that sees them.
+ */
+function needsVerify(venue, apiKey, now) {
+  if (venue.customImageUrl) return false;
+  if (venue.type === 'Event') return false;
+
+  const googleUrl = storedGoogleUrl(venue);
+  if (!googleUrl) return false;
+  if (extractEmbeddedKey(googleUrl) !== apiKey) return false; // needsRefresh owns this
+
+  return now - toMillis(venue.googleImageVerifiedAt) >= VERIFY_INTERVAL_MS;
+}
+
+/**
+ * Probes a stored photo URL without downloading the image.
+ *
+ * Returns 'alive' | 'dead' | 'unknown'. Only a definitive client error means
+ * dead — a 5xx, a timeout or a network blip is 'unknown' and leaves the venue
+ * untouched so a Google outage can never wipe every stored URL in one run.
+ */
+async function verifyPhotoUrl(url) {
+  let res;
+  try {
+    res = await fetch(url, { method: 'GET', redirect: 'manual', timeout: 10000 });
+  } catch (e) {
+    return 'unknown';
+  }
+  // The photo endpoint answers with a redirect to the actual image bytes.
+  if (res.status >= 200 && res.status < 400) return 'alive';
+  if (res.status === 400 || res.status === 403 || res.status === 404) return 'dead';
+  return 'unknown';
+}
+
 /**
  * Scan all venues and (re)fetch Google Maps photos where the stored URL is
- * missing or embeds a stale API key. Zero API calls in the steady state.
+ * missing, embeds a stale API key, or no longer serves an image.
+ *
+ * Steady state is a handful of cheap liveness probes per run (each venue is
+ * re-probed at most every VERIFY_INTERVAL_MS) and zero Places lookups.
  */
 async function refreshVenueImages(db, apiKey, log = console.log) {
   const snap = await db.collection('venues').get();
   const now = Date.now();
-  const summary = { total: snap.size, refreshed: 0, noPhotos: 0, failed: 0, skipped: 0, eventUrlsCleared: 0 };
+  const summary = {
+    total: snap.size,
+    refreshed: 0,
+    noPhotos: 0,
+    failed: 0,
+    skipped: 0,
+    eventUrlsCleared: 0,
+    verified: 0,
+    verifyDead: 0,
+    verifyDeferred: 0,
+  };
+  let verifiedThisRun = 0;
 
   for (const doc of snap.docs) {
     const venue = { id: doc.id, ...doc.data() };
@@ -128,7 +208,41 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
       continue;
     }
 
-    if (!needsRefresh(venue, apiKey, now)) {
+    let mustRefresh = needsRefresh(venue, apiKey, now);
+
+    // The URL looks healthy by key. Confirm it actually serves an image before
+    // trusting it for another VERIFY_INTERVAL_MS — a live 400 is the only way to
+    // catch an expired photo_reference.
+    if (!mustRefresh && needsVerify(venue, apiKey, now)) {
+      if (verifiedThisRun >= MAX_VERIFY_PER_RUN) {
+        summary.verifyDeferred++;
+        summary.skipped++;
+        continue;
+      }
+      verifiedThisRun++;
+      const health = await verifyPhotoUrl(storedGoogleUrl(venue));
+      await sleep(API_DELAY_MS);
+
+      if (health === 'alive') {
+        await doc.ref.update({
+          googleImageVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        summary.verified++;
+        summary.skipped++;
+        continue;
+      }
+      if (health === 'dead') {
+        summary.verifyDead++;
+        log(`[VenueImages] 💀 Stored photo URL dead for ${venue.id} (${venue.name}); re-fetching`);
+        mustRefresh = true;
+      } else {
+        // Transient — leave the venue exactly as it is and retry next run.
+        summary.skipped++;
+        continue;
+      }
+    }
+
+    if (!mustRefresh) {
       summary.skipped++;
       continue;
     }
@@ -141,6 +255,9 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
       if (found.status === 'ok') {
         update.googleImageStatus = 'ok';
         update.googleImageUrl = found.photoUrl;
+        // Straight from the Places API, so it is verified by construction — no
+        // need to spend a probe on it until the next interval comes round.
+        update.googleImageVerifiedAt = admin.firestore.FieldValue.serverTimestamp();
         // Legacy venues carry the Google URL in imageUrl; keep it in sync so no
         // dead key-rotated URL survives as a "fallback".
         if (venue.imageUrl && GOOGLE_PHOTO_URL_RE.test(venue.imageUrl)) {
@@ -170,8 +287,23 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
     await sleep(API_DELAY_MS);
   }
 
-  log(`[VenueImages] Done: ${summary.refreshed} refreshed, ${summary.noPhotos} without photos, ${summary.failed} failed, ${summary.eventUrlsCleared} stale event URLs cleared, ${summary.skipped} healthy/skipped of ${summary.total}.`);
+  log(
+    `[VenueImages] Done: ${summary.refreshed} refreshed, ${summary.noPhotos} without photos, ` +
+    `${summary.failed} failed, ${summary.eventUrlsCleared} stale event URLs cleared, ` +
+    `${summary.verified} verified alive, ${summary.verifyDead} found dead, ` +
+    `${summary.verifyDeferred} verifications deferred to next run, ` +
+    `${summary.skipped} healthy/skipped of ${summary.total}.`
+  );
   return summary;
 }
 
-module.exports = { refreshVenueImages, needsRefresh, GOOGLE_PHOTO_URL_RE };
+module.exports = {
+  refreshVenueImages,
+  needsRefresh,
+  needsVerify,
+  verifyPhotoUrl,
+  storedGoogleUrl,
+  GOOGLE_PHOTO_URL_RE,
+  VERIFY_INTERVAL_MS,
+  MAX_VERIFY_PER_RUN,
+};

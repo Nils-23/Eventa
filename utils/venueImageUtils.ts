@@ -100,10 +100,67 @@ const EVENT_FALLBACK_POOLS: Record<string, string[]> = {
   ],
 };
 
+// ─── Place fallback pools ────────────────────────────────────────────────────
+// Real places (type Food/Bar/Club/Activity) used to share ONE image per type via
+// TYPE_FALLBACK_IMAGES, so a Google photo URL going dead across a set of venues
+// rendered as the same thumbnail repeated down the whole feed — which is exactly
+// what happened to the seeded food venues when their photo_references expired.
+//
+// A place pool is deliberately shot-type-specific: a restaurant wants interiors
+// and plated food, a bar wants the counter and the glass, a club wants the room
+// at night. These are separate from the event pools above because an event's
+// imagery is about the *occasion* and a place's is about the *room*.
+
+const FOOD_PLACE_SCENES = [
+  unsplash('photo-1590846406792-0adc7f938f1d'), // dining room under warm pendants
+  unsplash('photo-1559339352-11d035aa65de'), // terrace restaurant, golden hour
+  unsplash('photo-1466978913421-dad2ebd01d17'), // shared table overhead, burgers
+  unsplash('photo-1600891964092-4316c288032e'), // steak and fries plated
+  unsplash('photo-1504674900247-0877df9cc836'), // spread of plates, overhead
+  unsplash('photo-1476224203421-9ac39bcb3327'), // grilled platter with sides
+  unsplash('photo-1481931098730-318b6f776db0'), // pasta plates and red wine
+  unsplash('photo-1533777324565-a040eb52facd'), // restaurant spread on marble
+  unsplash('photo-1559925393-8be0ec4767c8'), // street-side café terrace
+  unsplash('photo-1517701550927-30cf4ba1dba5'), // iced coffee, café table
+];
+
+const BAR_PLACE_SCENES = [
+  unsplash('photo-1497644083578-611b798c60f3'), // bar counter and stools
+  unsplash('photo-1470337458703-46ad1756a187'), // cocktail poured over ice
+  unsplash('photo-1551024709-8f23befc6f87'), // three cocktails on the bar
+  unsplash('photo-1584225064785-c62a8b43d148'), // beer flight on a wood bar
+  unsplash('photo-1436076863939-06870fe779c2'), // bottles clinked at sunset
+  unsplash('photo-1470158499416-75be9aa0c4db'), // wine poured, sun behind
+];
+
+const CLUB_PLACE_SCENES = [
+  unsplash('photo-1566737236500-c8ac43014a67'), // neon corridor into a club room
+  ...NIGHTLIFE_SCENES.slice(0, 6),
+];
+
+const ACTIVITY_PLACE_SCENES = [
+  unsplash('photo-1517649763962-0c623066013b'), // cycling peloton
+  unsplash('photo-1461896836934-ffe607ba8211'), // sprinter on the blocks
+  unsplash('photo-1552674605-db6ffd4facb5'), // runners at dusk
+  unsplash('photo-1546484475-7f7bd55792da'), // beach loungers at sunset
+  unsplash('photo-1571019613454-1cb2f99b2d8b'), // gym floor session
+  ...DAYTIME_SCENES,
+];
+
+const PLACE_FALLBACK_POOLS: Record<string, string[]> = {
+  Food: FOOD_PLACE_SCENES,
+  Bar: BAR_PLACE_SCENES,
+  Club: CLUB_PLACE_SCENES,
+  Activity: ACTIVITY_PLACE_SCENES,
+  // A typeless venue could be anything; lean on the widest neutral mix.
+  Default: [...BAR_PLACE_SCENES, ...FOOD_PLACE_SCENES.slice(0, 4)],
+};
+
 /** Every URL this module can hand out as a stand-in rather than a real photo. */
 const ALL_FALLBACK_URLS = new Set<string>([
   ...Object.values(TYPE_FALLBACK_IMAGES),
   ...Object.values(EVENT_FALLBACK_POOLS).flat(),
+  ...Object.values(PLACE_FALLBACK_POOLS).flat(),
 ]);
 
 /**
@@ -205,8 +262,30 @@ function poolFor(category?: string): string[] {
   return EVENT_FALLBACK_POOLS[normalizeEventCategory(category)] || EVENT_FALLBACK_POOLS.Event;
 }
 
+function placePoolFor(type?: string): string[] {
+  return (type && PLACE_FALLBACK_POOLS[type]) || PLACE_FALLBACK_POOLS.Default;
+}
+
 /**
- * Stable pooled fallback for a single event. Prefer `assignEventFallbacks` when
+ * One entry to assign a fallback to. `kind` picks which family of pools applies:
+ * an event draws on occasion imagery keyed by its curator category, a place
+ * draws on room imagery keyed by its venue type.
+ */
+export interface FallbackSubject {
+  id: string;
+  kind: 'event' | 'place';
+  /** Curator category — events only. */
+  category?: string;
+  /** Venue type (Food/Bar/Club/Activity) — places only. */
+  type?: string;
+}
+
+function poolForSubject(subject: FallbackSubject): string[] {
+  return subject.kind === 'event' ? poolFor(subject.category) : placePoolFor(subject.type);
+}
+
+/**
+ * Stable pooled fallback for a single event. Prefer `assignFallbackImages` when
  * resolving a whole feed — this one can hand the same photo to two events.
  */
 export function getEventFallbackImage(eventId: string, category?: string): string {
@@ -215,37 +294,50 @@ export function getEventFallbackImage(eventId: string, category?: string): strin
 }
 
 /**
- * Collision-free pooled fallbacks for a set of events.
+ * Stable pooled fallback for a single place. Same caveat as the event version:
+ * it is the per-render safety net, not the feed-wide assignment.
+ */
+export function getPlaceFallbackImage(venueId: string, type?: string): string {
+  const pool = placePoolFor(type);
+  return pool[hash32(venueId) % pool.length];
+}
+
+/**
+ * Collision-free pooled fallbacks for a set of events and places.
  *
- * Hashing alone gives a 1-in-poolSize chance that two events sitting next to
+ * Hashing alone gives a 1-in-poolSize chance that two entries sitting next to
  * each other in the feed draw the same photo, which is exactly the artefact
  * these pools exist to remove. So the hash only picks a *starting* slot and
  * taken images are linearly probed past until a free one is found.
  *
  * Claiming is tracked by URL across every pool, not per pool: the pools overlap
- * on purpose (a bar event and a generic event can both suit a nightlife shot),
- * so per-pool bookkeeping still let two categories hand out the same photo in
- * one feed. Once a pool's images are all on screen its round resets, which is
- * the earliest point a repeat is unavoidable.
+ * on purpose (a bar event and a generic event can both suit a nightlife shot,
+ * and a club place shares the nightlife scenes outright), so per-pool
+ * bookkeeping still let two categories hand out the same photo in one feed.
+ * Once a pool's images are all on screen its round resets, which is the
+ * earliest point a repeat is unavoidable.
  *
- * Assignment is sorted by id so the result depends only on the set of events,
+ * Events and places are assigned in ONE pass over a shared `used` set so an
+ * event and the venue hosting it can't land on the same stock photo.
+ *
+ * Assignment is sorted by id so the result depends only on the set of subjects,
  * not on the order Firestore happened to return them.
  */
-export function assignEventFallbacks(
-  events: Array<{ id: string; category?: string }>
-): Record<string, string> {
+export function assignFallbackImages(subjects: FallbackSubject[]): Record<string, string> {
   const out: Record<string, string> = {};
   const used = new Set<string>();
 
-  for (const event of [...events].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
-    const pool = poolFor(event.category);
+  for (const subject of [...subjects].sort((a, b) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+  )) {
+    const pool = poolForSubject(subject);
 
     // Every image in this pool is already on screen — start a fresh round.
     if (pool.every((url) => used.has(url))) {
       for (const url of pool) used.delete(url);
     }
 
-    const start = hash32(event.id) % pool.length;
+    const start = hash32(subject.id) % pool.length;
     let chosen = pool[start];
     for (let i = 0; i < pool.length; i++) {
       const candidate = pool[(start + i) % pool.length];
@@ -256,7 +348,7 @@ export function assignEventFallbacks(
     }
 
     used.add(chosen);
-    out[event.id] = chosen;
+    out[subject.id] = chosen;
   }
 
   return out;
@@ -349,12 +441,20 @@ async function searchInternetUncached(venueName: string): Promise<string | null>
 /**
  * Returns the fallback image URL based on the venue type.
  *
- * `seed` (pass the venue id) varies the result for types backed by a pool, so a
- * run of fallbacks doesn't render as the same photo repeated. Without it the
- * behaviour is the single legacy image per type, unchanged.
+ * `seed` (pass the venue id) varies the result across the pool for that type, so
+ * a run of fallbacks doesn't render as the same photo repeated. This used to
+ * apply to events only — every other type fell through to a single image per
+ * type, which is why a set of food venues whose stored photo URLs all died at
+ * once rendered as the identical thumbnail down the entire feed.
+ *
+ * Without a seed the behaviour is the single legacy image per type, unchanged:
+ * callers like the admin venue-type preview want a stable, representative shot
+ * rather than a varying one.
  */
 export function getFallbackImageByType(type?: string, seed?: string): string {
-  if (type === 'Event' && seed) return getEventFallbackImage(seed);
+  if (seed) {
+    return type === 'Event' ? getEventFallbackImage(seed) : getPlaceFallbackImage(seed, type);
+  }
   if (!type) return TYPE_FALLBACK_IMAGES['Default'];
   return TYPE_FALLBACK_IMAGES[type] || TYPE_FALLBACK_IMAGES['Default'];
 }
