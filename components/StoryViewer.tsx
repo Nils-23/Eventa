@@ -176,6 +176,17 @@ const FloatingReactionItem: React.FC<{
 const { width, height } = Dimensions.get('window');
 const IMAGE_DURATION_MS = 5000;
 
+// Floor for a resumed image timer. A resume computed from a progress value of
+// ~1 yields a near-zero duration, and a zero-duration Animated.timing can
+// complete before the interaction that triggered it settles — enough of a floor
+// that the advance is always a visible, ordinary transition.
+const MIN_RESUME_MS = 250;
+
+// A video that never leaves the buffering state produces no playback updates to
+// advance on, so the viewer would sit on a spinner indefinitely. After this long
+// the story is treated as unplayable and skipped, the same as an onError.
+const VIDEO_STALL_TIMEOUT_MS = 15000;
+
 export const StoryViewer: React.FC<StoryViewerProps> = ({
   isVisible,
   onClose,
@@ -211,11 +222,31 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
 
   const progressAnim = useRef(new Animated.Value(0)).current;
   const progressValue = useRef(0);
+  // Animation completion callbacks fire long after the render that created
+  // them, so reading `isPaused` from the closure there can resume a story the
+  // user is still holding, or advance one they paused. Mirrored in a ref that
+  // callbacks read instead.
+  const isPausedRef = useRef(false);
+  isPausedRef.current = isPaused;
   const imageTimerRef = useRef<ReturnType<typeof Animated.timing> | null>(null);
   const videoTimerRef = useRef<ReturnType<typeof Animated.timing> | null>(null);
   const videoRef = useRef<Video>(null);
 
-  const currentStory = stories.length > 0 ? stories[currentIndex] : null;
+  // `stories` is live: a story can expire on its 24h TTL, be deleted by its
+  // author, or drop out of the hiddenUsers filter while it is on screen. When
+  // the array shrinks under a currentIndex sitting at the end, stories[index] is
+  // undefined — and the render treats "no current story" as render-nothing while
+  // the non-empty branch is taken, producing a black screen with no close
+  // button. Clamping makes that state unreachable rather than relying on the
+  // reset effect to repair it a frame later.
+  const safeIndex = stories.length > 0 ? Math.min(currentIndex, stories.length - 1) : 0;
+  const currentStory = stories.length > 0 ? stories[safeIndex] : null;
+
+  // Which story the user is actually watching, so a live change to the list can
+  // keep them on it instead of resetting their position.
+  const viewedStoryIdRef = useRef<string | undefined>(undefined);
+  // Latched "entered this venue backwards" instruction; see where it is consumed.
+  const startAtEndPending = useRef(false);
   const { cachedUri: currentStoryUri } = useCachedMedia(currentStory?.media_url);
 
   // Gesture animation (swipe-down to dismiss)
@@ -273,6 +304,19 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
             setIsPaused(false);
           });
         }
+      },
+      // Once this drag owns the gesture, keep it. Handing the responder to
+      // another view mid-drag ends the gesture through onPanResponderTerminate
+      // instead of onPanResponderRelease, which is the Android-specific path
+      // that used to strand the viewer.
+      onPanResponderTerminationRequest: () => false,
+      // Reached when the responder is taken anyway (the OS can force it, e.g.
+      // on a system gesture or when the modal loses focus). Release never runs,
+      // so without this the grant-time pause and any partial drag offset are
+      // permanent: the story sits still, half off-screen, and no tap resumes it.
+      onPanResponderTerminate: () => {
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
+        setIsPaused(false);
       },
     })
   ).current;
@@ -352,6 +396,10 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
       progressValue.current = 0;
       setFloatingReactions([]);
       setReplyText('');
+      // A fresh open starts at the first story, so nothing from the previous
+      // session should influence re-anchoring.
+      viewedStoryIdRef.current = undefined;
+      startAtEndPending.current = false;
     } else {
       if (imageTimerRef.current) {
         imageTimerRef.current.stop();
@@ -372,13 +420,48 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     return () => progressAnim.removeListener(listener);
   }, []);
 
-  // Reset index when stories list changes (e.g. switching venue). Entering a
-  // venue backwards (swipe-right past the first story) lands on its LAST
-  // story, matching how Instagram steps back into the previous user's set.
+  // `startAtEnd` is a one-shot instruction ("you entered this venue backwards"),
+  // not a standing mode. It was being read on every story-list change, so once
+  // MapScreen set it for a backwards step it kept re-anchoring to the end on any
+  // later change to the same venue's list. Latch it, then consume it below.
   useEffect(() => {
-    setCurrentIndex(startAtEnd ? Math.max(stories.length - 1, 0) : 0);
+    if (startAtEnd) startAtEndPending.current = true;
+  }, [startAtEnd]);
+
+  // Re-anchor when the story list changes.
+  //
+  // The list is live, so it changes for two very different reasons and the old
+  // code treated them alike — it reset to index 0 unconditionally. Someone
+  // posting a story to the venue you are watching would throw you back to the
+  // first story mid-view, over and over as posts arrived.
+  //
+  // A change only means "navigate" when the story you were on is gone (a venue
+  // switch, or that story expiring). If it is still in the list, stay on it and
+  // just follow it to its new position.
+  useEffect(() => {
+    const previousId = viewedStoryIdRef.current;
+    const stillPresent = previousId
+      ? stories.findIndex((s) => s.id === previousId)
+      : -1;
+
+    if (stillPresent !== -1) {
+      startAtEndPending.current = false;
+      setCurrentIndex(stillPresent);
+      return;
+    }
+
+    const enteringBackwards = startAtEndPending.current;
+    startAtEndPending.current = false;
+    setCurrentIndex(enteringBackwards ? Math.max(stories.length - 1, 0) : 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storiesSerialized]);
+
+  // Records which story is on screen, for the re-anchoring above. Declared after
+  // that effect on purpose: effects run in order, so the effect above still sees
+  // the previously-viewed id in the same commit that delivers a new list.
+  useEffect(() => {
+    viewedStoryIdRef.current = currentStory?.id;
+  }, [currentStory?.id]);
 
   // ─── Per-story reset ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -396,6 +479,32 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     setIsMediaLoading(true);
   }, [currentIndex, storiesSerialized]);
 
+  // ─── Stall watchdog ──────────────────────────────────────────────────────
+  // Every automatic advance is driven by media making progress: an image's
+  // onLoad, or a video's playback updates. When the media never becomes ready
+  // — a cache resolve that never settles, a video stuck buffering on a bad
+  // connection, an onLoad that never fires — nothing schedules anything, and
+  // the viewer waits on a spinner with no timer running and no way forward.
+  // That dead state, not a crash, is what users report as the app freezing.
+  //
+  // Only armed while genuinely waiting: it is torn down the moment the media
+  // reports ready, and it never runs against a paused story (a deliberate
+  // press-and-hold must be able to last as long as the user wants).
+  useEffect(() => {
+    if (!isVisible || !currentStory || !isMediaLoading || isPaused) return;
+
+    const timer = setTimeout(() => {
+      // Still stalled. Treat it as unplayable and move on rather than sit here.
+      console.warn(
+        `[StoryViewer] Story ${currentStory.id} stalled for ${VIDEO_STALL_TIMEOUT_MS}ms; skipping`
+      );
+      setIsMediaLoading(false);
+      handleNextRef.current();
+    }, VIDEO_STALL_TIMEOUT_MS);
+
+    return () => clearTimeout(timer);
+  }, [isVisible, currentStory?.id, isMediaLoading, isPaused]);
+
   // ─── Image pause/resume ──────────────────────────────────────────────────
   useEffect(() => {
     if (!isVisible || !currentStory || currentStory.media_type !== 'image') return;
@@ -405,19 +514,36 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         imageTimerRef.current.stop();
         imageTimerRef.current = null;
       }
-    } else if (progressValue.current > 0) {
-      const remaining = IMAGE_DURATION_MS * (1 - progressValue.current);
-      const anim = Animated.timing(progressAnim, {
-        toValue: 1,
-        duration: remaining,
-        useNativeDriver: false,
-      });
-      imageTimerRef.current = anim;
-      anim.start(({ finished }) => {
-        if (finished) handleNext();
-      });
+      return;
     }
-  }, [isPaused]);
+
+    // Resuming. This used to require progressValue > 0, which quietly stranded
+    // the story whenever a pause landed at exactly 0 — press-and-hold the
+    // instant an image appears, or a per-story reset that zeroes progress while
+    // a press is still down. The image had already fired onLoad, so nothing was
+    // left to restart the timer and the story sat at 0% forever with no way
+    // forward. Any progress value, 0 included, must be resumable.
+    //
+    // Nothing to time until the image is actually on screen. handleImageLoad
+    // clearing isMediaLoading re-runs this effect, which is what starts the
+    // first timer — this effect is the only place an image timer is created, so
+    // there can never be two animations driving progress and double-advancing.
+    if (isMediaLoading) return;
+
+    const remaining = Math.max(
+      IMAGE_DURATION_MS * (1 - progressValue.current),
+      MIN_RESUME_MS
+    );
+    const anim = Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: remaining,
+      useNativeDriver: false,
+    });
+    imageTimerRef.current = anim;
+    anim.start(({ finished }) => {
+      if (finished && !isPausedRef.current) handleNextRef.current();
+    });
+  }, [isPaused, isMediaLoading]);
 
   // ─── Video pause/resume ──────────────────────────────────────────────────
   useEffect(() => {
@@ -434,9 +560,11 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   // ─── Navigation ─────────────────────────────────────────────────────────
   // Instant cut, no slide: the 300ms slide (with a second media item mounted
   // mid-transition) made every tap feel laggy, especially on videos.
+  // Stepping is computed from safeIndex, not the raw state, so a stale
+  // out-of-range index can never produce another out-of-range one.
   const handleNext = useCallback(() => {
-    if (currentIndex < stories.length - 1) {
-      setCurrentIndex(prev => prev + 1);
+    if (safeIndex < stories.length - 1) {
+      setCurrentIndex(safeIndex + 1);
     } else {
       if (onStoriesEnd) {
         onStoriesEnd();
@@ -444,34 +572,31 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         onClose();
       }
     }
-  }, [currentIndex, stories.length, onClose, onStoriesEnd]);
+  }, [safeIndex, stories.length, onClose, onStoriesEnd]);
 
   const handlePrev = useCallback(() => {
-    if (currentIndex > 0) {
-      setCurrentIndex(prev => prev - 1);
+    if (safeIndex > 0) {
+      setCurrentIndex(safeIndex - 1);
     } else if (onStoriesStart) {
       onStoriesStart();
     }
-  }, [currentIndex, onStoriesStart]);
+  }, [safeIndex, onStoriesStart]);
 
   // Keep the gesture responder's view of navigation fresh
   handleNextRef.current = handleNext;
   handlePrevRef.current = handlePrev;
 
-  // ─── Image loaded → start timer ──────────────────────────────────────────
+  // ─── Image loaded ────────────────────────────────────────────────────────
+  // Flipping isMediaLoading is all this does. Starting the timer here as well
+  // as in the pause/resume effect meant two live animations driving the same
+  // progress value, each firing handleNext on completion — a story got skipped.
+  // The effect is the single owner of the image timer; this only reports that
+  // there is something to time.
   const handleImageLoad = useCallback(() => {
-    setIsMediaLoading(false);
     progressAnim.setValue(0);
-    const anim = Animated.timing(progressAnim, {
-      toValue: 1,
-      duration: IMAGE_DURATION_MS,
-      useNativeDriver: false,
-    });
-    imageTimerRef.current = anim;
-    anim.start(({ finished }) => {
-      if (finished && !isPaused) handleNext();
-    });
-  }, [isPaused, handleNext]);
+    progressValue.current = 0;
+    setIsMediaLoading(false);
+  }, [progressAnim]);
 
   // ─── Video playback status ───────────────────────────────────────────────
   const handleVideoUpdate = useCallback((status: any) => {
@@ -554,14 +679,14 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
             // If this was the last story, close the viewer
             if (stories.length <= 1) {
               onClose();
-            } else if (currentIndex >= stories.length - 1) {
-              setCurrentIndex(prev => prev - 1);
+            } else if (safeIndex >= stories.length - 1) {
+              setCurrentIndex(Math.max(safeIndex - 1, 0));
             }
           },
         },
       ]
     );
-  }, [currentStory, onRemoveStory, stories.length, currentIndex, onClose]);
+  }, [currentStory, onRemoveStory, stories.length, safeIndex, onClose]);
 
   /**
    * Pushes a story_reaction message (emoji reaction or text reply — both carry
@@ -720,7 +845,13 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
             }
           }
         }
-      ]
+      ],
+      // On Android an alert is dismissible by the back button or an outside tap,
+      // and neither fires a button handler — the pause taken above would never
+      // be released and the story would sit frozen with the UI still live. This
+      // is the second half of the same escape-hatch problem as the modal's
+      // onRequestClose.
+      { cancelable: true, onDismiss: () => setIsPaused(false) }
     );
   };
 
@@ -745,11 +876,12 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
           text: "Spam / Scams", 
           onPress: () => submitStoryReport("Spam or scams")
         },
-        { 
-          text: "Hate Speech", 
+        {
+          text: "Hate Speech",
           onPress: () => submitStoryReport("Hate Speech")
         }
-      ]
+      ],
+      { cancelable: true, onDismiss: () => setIsPaused(false) }
     );
   };
 
@@ -802,8 +934,20 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     extrapolate: 'clamp',
   });
 
+  // onRequestClose is what makes the Android hardware/gesture back button
+  // dismiss this modal. Without it the back press is swallowed, so any state
+  // that stalls playback (a buffering video, a stuck pause) leaves the user with
+  // no way out at all and the app reads as fully frozen — the reported "had to
+  // close the app and reopen". It is the escape hatch of last resort and must
+  // stay wired even after the individual stalls are fixed.
   return (
-    <Modal visible={isVisible} animationType="none" transparent statusBarTranslucent>
+    <Modal
+      visible={isVisible}
+      animationType="none"
+      transparent
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
       <Animated.View style={[styles.modalOverlay, { backgroundColor: backdropOpacity }]}>
         <Animated.View
           style={[styles.container, { transform: [{ translateY }] }]}
@@ -894,8 +1038,8 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                 <View style={styles.progressContainer}>
                   {stories.map((_, index) => {
                     let widthValue: any;
-                    if (index < currentIndex) widthValue = '100%';
-                    else if (index === currentIndex) widthValue = progressInterpolation;
+                    if (index < safeIndex) widthValue = '100%';
+                    else if (index === safeIndex) widthValue = progressInterpolation;
                     else widthValue = '0%';
 
                     return (
@@ -912,7 +1056,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                     <View style={styles.avatar}>
                       <UserIcon color="#FFF" size={16} />
                     </View>
-                    <View>
+                    <View style={styles.userTextBlock}>
                       <View style={styles.usernameRow}>
                         {currentStory.activeBadge ? (() => {
                           const badgeObj = ACHIEVEMENTS.find(a => a.id === currentStory.activeBadge);
@@ -921,14 +1065,14 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                           if (!BadgeIcon || !badgeObj) return null;
                           return <BadgeIcon color={badgeObj.glowColor} size={14} style={{ marginRight: 6 }} />;
                         })() : null}
-                        <Text style={styles.usernameText}>
+                        <Text style={styles.usernameText} numberOfLines={1} ellipsizeMode="tail">
                           {currentUsername || ' '}
                         </Text>
                       </View>
-                      {venueName ? <Text style={styles.venueName}>{venueName}</Text> : null}
+                      {venueName ? <Text style={styles.venueName} numberOfLines={1} ellipsizeMode="tail">{venueName}</Text> : null}
                     </View>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <View style={styles.metadataActions}>
                     <View style={styles.timeBlock}>
                       <Text style={styles.timeText}>{calculateHoursAgo(currentStory.created_at)}h</Text>
                     </View>
@@ -1147,11 +1291,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
   },
+  // The author block absorbs the free space and truncates; the action buttons
+  // on the right keep their intrinsic size so a long venue name can't push
+  // them past the screen edge.
   userInfoBlock: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  userTextBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  metadataActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexShrink: 0,
   },
   usernameRow: {
     flexDirection: 'row',
