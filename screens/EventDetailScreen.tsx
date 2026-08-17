@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Calendar, Navigation, MapPin, Share as ShareIcon, Ticket, Clock, Info, MessageSquare, Users, BadgeCheck, Star, CheckCircle2 } from 'lucide-react-native';
+import { ArrowLeft, Calendar, Navigation, MapPin, Share as ShareIcon, Ticket, Clock, Info, MessageSquare, Users, BadgeCheck, Star, CheckCircle2, Bell, BellRing } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
 import { LiveVenue, useLiveVenues } from '../hooks/useLiveVenues';
 import { VenueImage } from '../components/VenueImage';
@@ -22,6 +22,7 @@ import { useCreatorStatus } from '../hooks/useCreatorStatus';
 import {
   CreatorAttendance, subscribeCreatorsAttending, markGoing, cancelGoing,
 } from '../services/creatorService';
+import { saveEvent, unsaveEvent, subscribeIsEventSaved } from '../services/savedEventService';
 
 const { width } = Dimensions.get('window');
 
@@ -40,6 +41,45 @@ export const EventDetailScreen = () => {
   const event = venues.find((v) => v.id === eventParam.id) ?? eventParam;
 
   const isOngoing = event.startDate ? Date.now() >= event.startDate : false;
+
+  // ── Save event + reminders ────────────────────────────────────────────────
+  const [isSaved, setIsSaved] = useState(false);
+  const [togglingSave, setTogglingSave] = useState(false);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setIsSaved(false);
+      return;
+    }
+    return subscribeIsEventSaved(event.id, user.uid, setIsSaved);
+  }, [event.id, user?.uid]);
+
+  // Saving exists to earn a reminder, so it is offered only while a reminder is
+  // still possible: something already under way or finished can't be reminded
+  // about, and a TBA event has no date to schedule against.
+  const canSave = !!user?.uid && typeof event.startDate === 'number' && !isOngoing;
+
+  const handleToggleSave = async () => {
+    if (!user?.uid || togglingSave) return;
+    setTogglingSave(true);
+    try {
+      if (isSaved) {
+        await unsaveEvent(event.id, user.uid);
+        Toast.show({ type: 'success', text1: 'Reminder removed' });
+      } else {
+        await saveEvent(event.id, event.name, event.startDate, user.uid);
+        Toast.show({
+          type: 'success',
+          text1: 'Event saved',
+          text2: "We'll remind you the day before and on the day.",
+        });
+      }
+    } catch (err: any) {
+      Toast.show({ type: 'error', text1: "Couldn't save event", text2: err.message });
+    } finally {
+      setTogglingSave(false);
+    }
+  };
 
   // ── Creator Program: "I'm Going" + Creators Attending ─────────────────────
   // The section is visible to everyone; the button only to approved creators.
@@ -201,6 +241,36 @@ export const EventDetailScreen = () => {
                 <Text style={styles.cardSubtitle}>Local time in Nairobi</Text>
               </View>
             </View>
+
+            {/* Sits inside the date card because that is what it acts on: the
+                promise is about this date, not about the event generally. */}
+            {canSave && (
+              <>
+                <View style={styles.divider} />
+                <TouchableOpacity
+                  style={[styles.saveButton, isSaved && styles.saveButtonActive]}
+                  onPress={handleToggleSave}
+                  disabled={togglingSave}
+                  activeOpacity={0.8}
+                >
+                  {isSaved ? (
+                    <BellRing color="#121212" size={18} />
+                  ) : (
+                    <Bell color="#00FFCC" size={18} />
+                  )}
+                  <View style={styles.saveButtonTextBlock}>
+                    <Text style={[styles.saveButtonText, isSaved && styles.saveButtonTextActive]}>
+                      {isSaved ? 'Reminder set' : 'Save this event'}
+                    </Text>
+                    <Text style={[styles.saveButtonHint, isSaved && styles.saveButtonHintActive]}>
+                      {isSaved
+                        ? 'We\'ll remind you the day before and on the day'
+                        : 'Get reminded the day before and on the day'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
 
           {/* Location Card */}
@@ -563,6 +633,44 @@ const styles = StyleSheet.create({
   },
   goingButtonTextActive: {
     color: '#121212',
+  },
+  // Mirrors goingButton, in the app's primary accent rather than creator gold —
+  // saving is for every user, not only approved creators.
+  saveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 204, 0.5)',
+    backgroundColor: 'rgba(0, 255, 204, 0.08)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  saveButtonActive: {
+    backgroundColor: '#00FFCC',
+    borderColor: '#00FFCC',
+  },
+  saveButtonTextBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  saveButtonText: {
+    color: '#00FFCC',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  saveButtonTextActive: {
+    color: '#121212',
+  },
+  saveButtonHint: {
+    color: 'rgba(255, 255, 255, 0.55)',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  saveButtonHintActive: {
+    color: 'rgba(18, 18, 18, 0.75)',
   },
   descriptionContainer: {
     marginTop: 10,

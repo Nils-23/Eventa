@@ -2164,6 +2164,187 @@ exports.refreshVenueImages = functions.runWith({ timeoutSeconds: 540, memory: '5
     return null;
   });
 
+// ── Saved-event reminders ───────────────────────────────────────────────────
+// Users save an event from the detail screen (services/savedEventService.ts) and
+// get two pushes: one the day before, one on the day. Both are scoped to the
+// user who saved it — the doc carries their uid and nothing else is notified.
+
+// Reminders land at this Nairobi hour. A "day before" ping delivered at 03:00
+// because that is when a cron happened to fire would be worse than none.
+const SAVED_EVENT_REMINDER_HOUR = 10;
+
+// Only saves for events this far out are examined, which keeps the scan small
+// however many events a user has saved. Wide enough that an event whose start
+// time was edited still enters the window well before its reminder is due.
+const SAVED_EVENT_LOOKAHEAD_MS = 8 * 24 * 60 * 60 * 1000;
+
+// Calendar day in Nairobi, as YYYY-MM-DD. Comparing day keys rather than
+// subtracting 24h is what makes "the day before" mean the actual previous
+// calendar day for the user, regardless of the time of day the event starts.
+function nairobiDayKey(ms) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi' }).format(new Date(ms));
+}
+
+function nairobiTimeLabel(ms) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Nairobi',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(new Date(ms));
+}
+
+exports.sendSavedEventReminders = functions
+  .runWith({ timeoutSeconds: 540, memory: '512MB' })
+  .pubsub.schedule('every 60 minutes')
+  .onRun(async () => {
+    const { hour } = getPersonaNairobiTime();
+    if (hour < SAVED_EVENT_REMINDER_HOUR) {
+      console.log(`[SavedEvents] ${hour}:00 EAT — before the ${SAVED_EVENT_REMINDER_HOUR}:00 send hour. Skipping.`);
+      return null;
+    }
+
+    const now = Date.now();
+    const todayKey = nairobiDayKey(now);
+    const tomorrowKey = nairobiDayKey(now + 24 * 60 * 60 * 1000);
+
+    // remindedDayOf false is the "still has something owed" filter: once the
+    // day-of ping is sent a row is permanently out of scope.
+    let snap;
+    try {
+      snap = await db
+        .collection('savedEvents')
+        .where('remindedDayOf', '==', false)
+        .where('startDate', '<=', now + SAVED_EVENT_LOOKAHEAD_MS)
+        .get();
+    } catch (err) {
+      console.error('[SavedEvents] Query failed (is the composite index deployed?):', err.message);
+      return null;
+    }
+
+    if (snap.empty) {
+      console.log('[SavedEvents] No saved events due a reminder.');
+      return null;
+    }
+
+    // Many users can save the same event; read each event once.
+    const eventCache = new Map();
+    const loadEvent = async (eventId) => {
+      if (eventCache.has(eventId)) return eventCache.get(eventId);
+      let data = null;
+      try {
+        const doc = await db.collection('venues').doc(eventId).get();
+        data = doc.exists ? doc.data() : null;
+      } catch (err) {
+        console.warn(`[SavedEvents] Event lookup failed for ${eventId}:`, err.message);
+      }
+      eventCache.set(eventId, data);
+      return data;
+    };
+
+    const summary = { scanned: snap.size, dayBefore: 0, dayOf: 0, passed: 0, skipped: 0, resynced: 0 };
+
+    for (const docSnap of snap.docs) {
+      const saved = docSnap.data();
+      if (!saved.userId || !saved.eventId) {
+        summary.skipped++;
+        continue;
+      }
+
+      const event = await loadEvent(saved.eventId);
+      if (!event) {
+        // Deleted or renamed event. Leave the row alone rather than guessing —
+        // it simply never becomes due.
+        summary.skipped++;
+        continue;
+      }
+
+      // The event is the authority on its own start time, not the copy taken
+      // when the user saved it. Re-read it so a rescheduled event reminds on
+      // its real date, and heal the stored copy so the query window agrees.
+      const startDate = event.startDate;
+      if (typeof startDate !== 'number') {
+        summary.skipped++;
+        continue;
+      }
+      if (startDate !== saved.startDate) {
+        try {
+          await docSnap.ref.update({ startDate });
+          summary.resynced++;
+        } catch (err) {
+          console.warn(`[SavedEvents] startDate resync failed for ${docSnap.id}:`, err.message);
+        }
+      }
+
+      // Under way or over: there is nothing left to remind anyone about, which
+      // is what "disabled once the date passes" means in practice. The row is
+      // left in place as the user's own record of what they saved.
+      if (startDate <= now) {
+        summary.passed++;
+        continue;
+      }
+
+      const eventKey = nairobiDayKey(startDate);
+      const timeLabel = nairobiTimeLabel(startDate);
+      const title = event.name || saved.eventName || 'Saved event';
+
+      let body = null;
+      let update = null;
+
+      if (eventKey === todayKey) {
+        body = `Today at ${timeLabel}. You saved this event.`;
+        // remindedDayBefore is set too, for the user who saves an event ON the
+        // day it happens: their day-before window is already in the past, and
+        // marking it spent stops the row being reconsidered for a ping that can
+        // never be correct.
+        update = { remindedDayOf: true, remindedDayBefore: true };
+      } else if (eventKey === tomorrowKey && !saved.remindedDayBefore) {
+        body = `Tomorrow at ${timeLabel}. You saved this event.`;
+        update = { remindedDayBefore: true };
+      }
+
+      if (!body) {
+        summary.skipped++;
+        continue;
+      }
+
+      // bypassLimits: the user explicitly asked to be reminded about this one
+      // event, and there are at most two pings per save ever. Letting the
+      // general daily cap silently swallow it would break the promise the
+      // save button made.
+      const sent = await sendRateLimitedPushNotification(
+        saved.userId,
+        title,
+        body,
+        { venueId: saved.eventId, type: 'saved_event' },
+        null,
+        0,
+        true
+      );
+
+      // Only record the reminder if it actually went out, so a user without a
+      // push token yet still gets the ping once they have one.
+      if (sent) {
+        try {
+          await docSnap.ref.update(update);
+          if (update.remindedDayOf) summary.dayOf++;
+          else summary.dayBefore++;
+        } catch (err) {
+          console.warn(`[SavedEvents] Flag update failed for ${docSnap.id}:`, err.message);
+        }
+      } else {
+        summary.skipped++;
+      }
+    }
+
+    console.log(
+      `[SavedEvents] Done: scanned ${summary.scanned}, ${summary.dayBefore} day-before, ` +
+      `${summary.dayOf} day-of, ${summary.passed} already started, ` +
+      `${summary.resynced} start times resynced, ${summary.skipped} skipped.`
+    );
+    return null;
+  });
+
 // Scheduled Engagement Notification (runs 1st, 10th, and 20th of every month at 9:00 AM Nairobi time)
 exports.monthlyEngagementNotification = functions.pubsub
   .schedule("0 9 1,10,20 * *")

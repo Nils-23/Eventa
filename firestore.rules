@@ -114,5 +114,29 @@ service cloud.firestore {
         isAuthenticated() && resource.data.userId == request.auth.uid
       );
     }
+
+    // ── Saved events ("remind me") ────────────────────────────────────────
+    // Strictly private, unlike creatorAttendance: a saved event is nobody
+    // else's business, so read is owner-only rather than app-wide. This is
+    // also what guarantees a reminder reaches only the user who asked for it.
+    //
+    // The remindedDayBefore / remindedDayOf flags are server-owned. A create
+    // must start with both false and clients can never update the doc, so a
+    // user can neither replay a reminder nor silence one by pre-marking it
+    // sent; the scheduled function writes them through the Admin SDK, which
+    // bypasses these rules.
+    match /savedEvents/{savedEventId} {
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.remindedDayBefore == false
+        && request.resource.data.remindedDayOf == false;
+      allow delete: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
+      allow update: if isAdmin();
+    }
   }
 }
