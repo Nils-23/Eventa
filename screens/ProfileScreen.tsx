@@ -15,6 +15,16 @@ import { useNavigation } from '@react-navigation/native';
 import { ACHIEVEMENTS } from '../services/achievementService';
 import * as Icons from 'lucide-react-native';
 
+// created_at is a Firestore Timestamp on profiles made by createUserProfile, but
+// accounts predating that write don't have it — hence the Auth metadata fallback,
+// which arrives as an ISO/RFC string.
+const formatJoinDate = (value: any): string | null => {
+  if (!value) return null;
+  const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+  if (isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+};
+
 export const ProfileScreen = () => {
   const user = useAppStore((s) => s.user);
   const { stories } = useStories();
@@ -25,6 +35,7 @@ export const ProfileScreen = () => {
   const [isSaving, setIsSaving] = useState(false);
   
   const [stats, setStats] = useState({ venues: 0, points: 0 });
+  const [joinDate, setJoinDate] = useState<string | null>(null);
   const [unlockedAchievements, setUnlockedAchievements] = useState<string[]>([]);
   const navigation = useNavigation();
   // Real-time creator state: the badge and stage name appear on approval and
@@ -35,11 +46,17 @@ export const ProfileScreen = () => {
   useEffect(() => {
     if (user?.uid) {
       fetchUsername(user.uid).then(name => setUsername(name));
-      
+
+      // Shown until the doc arrives, and kept if created_at is missing or still
+      // pending (serverTimestamp resolves to null in the local snapshot).
+      const authFallback = formatJoinDate(user.metadata?.creationTime);
+      setJoinDate(authFallback);
+
       const userDocRef = doc(firestore, 'users', user.uid);
       const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
+          setJoinDate(formatJoinDate(data.created_at) ?? authFallback);
           const attendedVenues = data.attendedVenues || [];
           const points = data.points || 0;
           setStats({
@@ -161,9 +178,11 @@ export const ProfileScreen = () => {
               <Text style={styles.creatorChipText}>{creatorProfile.category} Creator</Text>
             </View>
           )}
-          <Text style={styles.joinDate}>
-            Joined April 2026
-          </Text>
+          {joinDate && (
+            <Text style={styles.joinDate}>
+              Joined {joinDate}
+            </Text>
+          )}
         </View>
 
         <View style={styles.statsContainer}>

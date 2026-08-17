@@ -13,13 +13,40 @@ const NO_PHOTOS_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 // How long a URL we have actually seen serve an image is trusted before being
 // probed again. See `needsVerify` for why inferring health from the embedded
 // key is not enough.
-const VERIFY_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
+//
+// This is a backstop for a photo dying *early* (a place deletes or replaces its
+// photo). It deliberately sits well below PHOTO_REFERENCE_MAX_AGE_MS: a probe
+// only proves the URL was alive at that instant, so any trust window is time a
+// URL can spend dead and unnoticed. Routine expiry is handled by age, not here.
+const VERIFY_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A photo_reference has its own lifetime, independent of the API key and of
+// whether the place still exists. Observed: references issued 2026-07-17 all
+// began returning HTTP 400 around 2026-08-16 — roughly 30 days — and did so as
+// one cohort, because they had been fetched in one batch.
+//
+// Probing alone cannot fix this. A probe says "alive right now"; it can't say
+// "alive tomorrow", so a reference that dies the day after a probe stays dead
+// for the whole trust window. The only stable fix is to rotate references
+// *before* Google expires them, so the age of the reference — not its observed
+// health — is what triggers a re-fetch. Kept comfortably under the ~30-day
+// observed lifetime so a run that fails or is skipped still has slack.
+//
+// Cost is trivial: one Place Details call per venue per three weeks (~3/day at
+// 100 venues), and it replaces probes that were being spent on the same URLs.
+const PHOTO_REFERENCE_MAX_AGE_MS = 21 * 24 * 60 * 60 * 1000;
 
 // A photo probe is a billed Places request, so the first run after deploy (when
 // nothing carries a verification stamp) is spread over several runs instead of
 // probing the whole collection at once. At every-6-hours this drains a ~100
 // venue backlog inside a day.
 const MAX_VERIFY_PER_RUN = 25;
+
+// Age-based rotation retires URLs in whatever cohorts they were fetched in, so
+// one run can legitimately want to refresh the entire collection at once. Cap
+// the burst; at every-6-hours this still clears 120 venues a day, and anything
+// deferred is picked up by the next run because nothing about it was written.
+const MAX_REFRESH_PER_RUN = 30;
 
 const API_DELAY_MS = 300;
 
@@ -92,7 +119,17 @@ function needsRefresh(venue, apiKey, now) {
   const googleUrl = storedGoogleUrl(venue);
   if (googleUrl) {
     // URL embedding the current key is the one the Places API accepts today.
-    return extractEmbeddedKey(googleUrl) !== apiKey;
+    if (extractEmbeddedKey(googleUrl) !== apiKey) return true;
+
+    // Key is current, but the photo_reference inside the URL ages out on its
+    // own (~30 days). googleImageCheckedAt is stamped in the same write that
+    // stores the URL, so it dates the reference. Rotate before it expires
+    // rather than waiting for a probe to find it dead.
+    //
+    // A missing stamp means the URL came from a seed script or admin tooling
+    // and its age is unknown — treat it as due, since an unknown-age reference
+    // is exactly the kind that turns out to be long expired.
+    return now - toMillis(venue.googleImageCheckedAt) >= PHOTO_REFERENCE_MAX_AGE_MS;
   }
 
   // Google said "no photos for this place" recently — don't burn quota re-asking.
@@ -180,8 +217,11 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
     verified: 0,
     verifyDead: 0,
     verifyDeferred: 0,
+    expired: 0,
+    refreshDeferred: 0,
   };
   let verifiedThisRun = 0;
+  let refreshedThisRun = 0;
 
   for (const doc of snap.docs) {
     const venue = { id: doc.id, ...doc.data() };
@@ -190,11 +230,54 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
     // holding a Google photo URL an admin attached, and those die at key
     // rotation. Drop the dead URL — costs no API call, and lets the client fall
     // through to the host venue's live photo instead of rendering a 403.
+    //
+    // A stale key is not the only way they die: an event URL carries a
+    // photo_reference that expires like any other, so a URL embedding the
+    // current key can still be dead. Since an event can never be re-fetched,
+    // the only repair available is removing the URL so the host venue's photo
+    // shows through — which means health has to be observed here too, exactly
+    // as it is for places. Probing is budgeted alongside the place probes and
+    // stamped, so a healthy event costs one request per VERIFY_INTERVAL_MS.
     if (venue.type === 'Event') {
       const update = {};
+      let deadByProbe = false;
+      const eventUrl = storedGoogleUrl(venue);
+
+      if (
+        eventUrl &&
+        extractEmbeddedKey(eventUrl) === apiKey &&
+        now - toMillis(venue.googleImageVerifiedAt) >= VERIFY_INTERVAL_MS
+      ) {
+        if (verifiedThisRun >= MAX_VERIFY_PER_RUN) {
+          summary.verifyDeferred++;
+          summary.skipped++;
+          continue;
+        }
+        verifiedThisRun++;
+        const health = await verifyPhotoUrl(eventUrl);
+        await sleep(API_DELAY_MS);
+
+        if (health === 'alive') {
+          await doc.ref.update({
+            googleImageVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          summary.verified++;
+          summary.skipped++;
+          continue;
+        }
+        if (health === 'dead') {
+          deadByProbe = true;
+          summary.verifyDead++;
+        } else {
+          // Transient — leave it alone and retry next run.
+          summary.skipped++;
+          continue;
+        }
+      }
+
       for (const field of ['googleImageUrl', 'imageUrl']) {
         const url = venue[field];
-        if (url && GOOGLE_PHOTO_URL_RE.test(url) && extractEmbeddedKey(url) !== apiKey) {
+        if (url && GOOGLE_PHOTO_URL_RE.test(url) && (deadByProbe || extractEmbeddedKey(url) !== apiKey)) {
           update[field] = admin.firestore.FieldValue.delete();
         }
       }
@@ -209,6 +292,12 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
     }
 
     let mustRefresh = needsRefresh(venue, apiKey, now);
+
+    // Distinguish routine age-out from a stale key purely for the log — both
+    // take the same path from here.
+    if (mustRefresh && storedGoogleUrl(venue) && extractEmbeddedKey(storedGoogleUrl(venue)) === apiKey) {
+      summary.expired++;
+    }
 
     // The URL looks healthy by key. Confirm it actually serves an image before
     // trusting it for another VERIFY_INTERVAL_MS — a live 400 is the only way to
@@ -246,6 +335,15 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
       summary.skipped++;
       continue;
     }
+
+    // Over budget for this run. Nothing is written, so needsRefresh reaches the
+    // same verdict next run and the backlog drains in order.
+    if (refreshedThisRun >= MAX_REFRESH_PER_RUN) {
+      summary.refreshDeferred++;
+      summary.skipped++;
+      continue;
+    }
+    refreshedThisRun++;
 
     try {
       const found = await lookupPlacePhoto(venue, apiKey);
@@ -288,11 +386,12 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
   }
 
   log(
-    `[VenueImages] Done: ${summary.refreshed} refreshed, ${summary.noPhotos} without photos, ` +
+    `[VenueImages] Done: ${summary.refreshed} refreshed ` +
+    `(${summary.expired} due to reference age), ${summary.noPhotos} without photos, ` +
     `${summary.failed} failed, ${summary.eventUrlsCleared} stale event URLs cleared, ` +
     `${summary.verified} verified alive, ${summary.verifyDead} found dead, ` +
-    `${summary.verifyDeferred} verifications deferred to next run, ` +
-    `${summary.skipped} healthy/skipped of ${summary.total}.`
+    `${summary.verifyDeferred} verifications and ${summary.refreshDeferred} refreshes ` +
+    `deferred to next run, ${summary.skipped} healthy/skipped of ${summary.total}.`
   );
   return summary;
 }
@@ -306,4 +405,6 @@ module.exports = {
   GOOGLE_PHOTO_URL_RE,
   VERIFY_INTERVAL_MS,
   MAX_VERIFY_PER_RUN,
+  PHOTO_REFERENCE_MAX_AGE_MS,
+  MAX_REFRESH_PER_RUN,
 };
