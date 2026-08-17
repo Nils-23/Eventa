@@ -304,14 +304,15 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
         // Check if user is actively engaged in chat (last interaction within 1 hour)
         const isEngaged = members[user.id] && (now - (members[user.id].lastInteractionTime || 0) < ONE_HOUR);
 
-        if (isPersonaMessage) {
-          // Persona messages already notify engaged users inside runPersonaActivity — skip here to avoid doubles.
-          // Non-engaged users should not receive push notifications for simulated persona banter.
-          continue;
-        }
-
+        // Persona messages notify on the same path as real ones. They used to be
+        // dropped here and notified separately inside the two persona writers,
+        // but those only ever pinged "engaged" members — someone who had opened
+        // THIS venue's chat within the last hour, which is exactly the person
+        // already looking at the screen. In practice a persona message reached
+        // almost nobody. Both bespoke blocks are gone; this is the only place a
+        // chat message turns into a push, so there is no double-send.
         if (isEngaged) {
-          // Real user messages: engaged users get unlimited notifications (bypass all limits)
+          // Engaged users get unlimited notifications (bypass all limits)
           await sendRateLimitedPushNotification(
             user.id,
             venueName,
@@ -324,6 +325,13 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
         } else {
           // Non-engaged users: max 2 chat activity notifications per venue per hour (30-min throttle).
           // The throttle key ensures only the first message in each 30-min window pings them.
+          //
+          // The daily cap is the one limit personas do NOT get to bypass. A real
+          // person messaging a venue is worth interrupting someone's day for; a
+          // persona is seasoning (see the depth-over-range principle), so its
+          // pings live inside the normal 5/day budget and can never crowd out a
+          // real notification. Flip this to `true` for parity if the volume
+          // turns out to be too quiet.
           await sendRateLimitedPushNotification(
             user.id,
             venueName,
@@ -332,7 +340,7 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
             `chat_${venueId}`,
             30 * 60 * 1000, // 30-minute throttle → max 2 pings/hour per venue
             false, // bypassLimits
-            true // bypassDailyLimit
+            !isPersonaMessage // bypassDailyLimit
           );
         }
       }
@@ -745,27 +753,9 @@ exports.onNewChatMessage = functions.runWith({ timeoutSeconds: 360, memory: '512
                   }, { merge: true });
                 });
 
-                // Push notification to members
-                try {
-                  const oneHourMs = 60 * 60 * 1000;
-                  for (const [memberId, memberData] of Object.entries(members)) {
-                    if (memberId.startsWith('sim_') || memberId.startsWith('persona_') || memberId === selectedPersona.id) continue;
-                    const isEngaged = memberData.lastInteractionTime && (Date.now() - memberData.lastInteractionTime < oneHourMs);
-                    if (!isEngaged) continue;
-
-                    await sendRateLimitedPushNotification(
-                      memberId,
-                      venueName,
-                      `${selectedPersona.username}: ${replyText}`,
-                      { venueId, type: 'chat' },
-                      null,
-                      0,
-                      true
-                    );
-                  }
-                } catch (pushErr) {
-                  console.warn('[Persona Message Reply] Push notification dispatch failed (non-fatal):', pushErr.message);
-                }
+                // No push dispatch here. Writing the reply above re-enters
+                // onNewChatMessage, which notifies for persona and real messages
+                // alike — notifying here too would double-send to engaged users.
               }
             }
           }
@@ -3161,36 +3151,11 @@ exports.runPersonaActivity = functions.runWith({ timeoutSeconds: 540, memory: '5
       console.warn(`[Persona] Cooldown write failed for ${cooldownId} (non-fatal):`, err.message);
     }
 
-    // ── h. Push notification to engaged venue chat members ────────────────
-    // Only notify users who interacted with this venue chat in the last hour.
-    // This mimics a real user message arriving in a chat they're part of.
-    try {
-      const membersSnap = await rtdb.ref(`venue_members/${targetVenue.id}`).once('value');
-      if (membersSnap.exists()) {
-        const members = membersSnap.val();
-        const oneHourMs = 60 * 60 * 1000;
-
-        for (const [memberId, memberData] of Object.entries(members)) {
-          // Skip non-human IDs
-          if (memberId.startsWith('sim_') || memberId.startsWith('persona_')) continue;
-
-          const isEngaged = memberData.lastInteractionTime && (nowMs - memberData.lastInteractionTime < oneHourMs);
-          if (!isEngaged) continue;
-
-          await sendRateLimitedPushNotification(
-            memberId,
-            targetVenue.name,
-            `${persona.username}: ${messageText}`,
-            { venueId: targetVenue.id, type: 'chat' },
-            null,
-            0,
-            true // bypassLimits — engaged users get chat pings without throttle
-          );
-        }
-      }
-    } catch (err) {
-      console.warn(`[Persona] Push notification dispatch failed for ${targetVenue.name} (non-fatal):`, err.message);
-    }
+    // ── h. Push notifications ─────────────────────────────────────────────
+    // Handled by onNewChatMessage, which fires on the RTDB write above and
+    // treats persona and real messages identically. This block used to notify
+    // engaged members only, which meant a persona post reached just the people
+    // already watching that chat; sending from here as well would now double up.
   }
 
   // ── 7. Leaderboard presence: award points to personas active tonight ─────
