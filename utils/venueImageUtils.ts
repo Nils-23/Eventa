@@ -204,6 +204,60 @@ function hash32(str: string): number {
   return h >>> 0;
 }
 
+/**
+ * Rewrites an image URL to ask for roughly the pixels we are actually going to
+ * draw.
+ *
+ * Both sources we use size on the server: Google Places photos take `maxwidth`
+ * (stored at 800 by functions/venueImages.js) and Unsplash takes `w` (600 from
+ * the `unsplash()` helper above). A story-tray avatar renders about 56pt wide,
+ * so it was pulling an 800px photo — most of a slow thumbnail's cost is bytes
+ * nobody ever sees.
+ *
+ * Unknown hosts are returned untouched: guessing at another CDN's parameters
+ * risks a 400, and a working oversized image beats a broken right-sized one.
+ */
+export function resizeImageUrl(url: string, targetWidth: number): string {
+  if (!url) return url;
+  const w = Math.max(1, Math.round(targetWidth));
+
+  if (url.includes('maps.googleapis.com/maps/api/place/photo')) {
+    return /[?&]maxwidth=\d+/.test(url)
+      ? url.replace(/([?&]maxwidth=)\d+/, `$1${w}`)
+      : `${url}${url.includes('?') ? '&' : '?'}maxwidth=${w}`;
+  }
+
+  if (url.includes('images.unsplash.com')) {
+    return /[?&]w=\d+/.test(url)
+      ? url.replace(/([?&]w=)\d+/, `$1${w}`)
+      : `${url}${url.includes('?') ? '&' : '?'}w=${w}`;
+  }
+
+  return url;
+}
+
+// Dark, low-saturation blocks that sit comfortably under the map's palette. A
+// placeholder is meant to read as "a photo is arriving here", so these stay
+// muted — anything vivid competes with the real image that replaces it.
+const PLACEHOLDER_COLORS = [
+  '#1E1B2E', '#1B242E', '#241B2E', '#2E1B22',
+  '#1B2E27', '#2A2418', '#1F1F2B', '#2B1F26',
+];
+
+/**
+ * A deterministic colour to paint immediately, before any pixel has been
+ * fetched. The point is that a card is NEVER blank and never shows a spinner:
+ * the block appears on the first frame and the photo fades in over it.
+ *
+ * Local by necessity — the fallback images are themselves remote Unsplash URLs,
+ * so they can't stand in for "instant". Seeded per venue so a feed reads as a
+ * set of distinct cards while it fills in, rather than one grey wall.
+ */
+export function getPlaceholderColor(seed?: string): string {
+  if (!seed) return PLACEHOLDER_COLORS[0];
+  return PLACEHOLDER_COLORS[hash32(seed) % PLACEHOLDER_COLORS.length];
+}
+
 // The curator writes a free-form category, not our pool keys. Live data carries
 // Other (the plurality), Event, Club, Activity, Bar, Food & Drink, Festival,
 // Music, Conference, Arts & Culture and Entertainment, and the admin screen
