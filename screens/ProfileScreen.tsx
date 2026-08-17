@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LogOut, Settings, Award, CircleUserRound, Edit2, Check, UserPlus, BadgeCheck, Star } from 'lucide-react-native';
+import { LogOut, Settings, Award, CircleUserRound, Edit2, Check, UserPlus, BadgeCheck, Star, Bell, Trash2 } from 'lucide-react-native';
+import Toast from 'react-native-toast-message';
 import { useCreatorStatus } from '../hooks/useCreatorStatus';
 import { useAppStore } from '../hooks/useAppStore';
 import { auth } from '../services/firebase';
@@ -14,6 +15,8 @@ import { firestore } from '../services/firebase';
 import { useNavigation } from '@react-navigation/native';
 import { ACHIEVEMENTS } from '../services/achievementService';
 import * as Icons from 'lucide-react-native';
+import { SavedEvent, subscribeSavedEvents, unsaveEvent } from '../services/savedEventService';
+import { useLiveVenues } from '../hooks/useLiveVenues';
 
 // created_at is a Firestore Timestamp on profiles made by createUserProfile, but
 // accounts predating that write don't have it — hence the Auth metadata fallback,
@@ -36,6 +39,10 @@ export const ProfileScreen = () => {
   
   const [stats, setStats] = useState({ venues: 0, points: 0 });
   const [joinDate, setJoinDate] = useState<string | null>(null);
+  const [savedEvents, setSavedEvents] = useState<SavedEvent[]>([]);
+  const [removingEventId, setRemovingEventId] = useState<string | null>(null);
+  // Used only to decide whether a saved event is still a real, openable event.
+  const { venues } = useLiveVenues();
   const [unlockedAchievements, setUnlockedAchievements] = useState<string[]>([]);
   const navigation = useNavigation();
   // Real-time creator state: the badge and stage name appear on approval and
@@ -70,6 +77,68 @@ export const ProfileScreen = () => {
       return () => unsubscribe();
     }
   }, [user?.uid]);
+
+  // ── Saved events ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.uid) {
+      setSavedEvents([]);
+      return;
+    }
+    return subscribeSavedEvents(user.uid, setSavedEvents);
+  }, [user?.uid]);
+
+  // Upcoming first, soonest at the top; anything already started falls below it,
+  // most recent first. Past saves are deliberately still listed — the reminder
+  // scheduler leaves them alone, so this section is the only place a user can
+  // clear them out, which is the point of it.
+  const { upcomingSaved, endedSaved } = React.useMemo(() => {
+    const now = Date.now();
+    const upcoming: SavedEvent[] = [];
+    const ended: SavedEvent[] = [];
+    savedEvents.forEach((s) => {
+      // A TBA event (null startDate) has nothing to have passed yet.
+      if (typeof s.startDate !== 'number' || s.startDate > now) upcoming.push(s);
+      else ended.push(s);
+    });
+    upcoming.sort((a, b) => (a.startDate ?? Infinity) - (b.startDate ?? Infinity));
+    ended.sort((a, b) => (b.startDate ?? 0) - (a.startDate ?? 0));
+    return { upcomingSaved: upcoming, endedSaved: ended };
+  }, [savedEvents]);
+
+  const handleRemoveSaved = async (eventId: string) => {
+    if (!user?.uid || removingEventId) return;
+    setRemovingEventId(eventId);
+    try {
+      await unsaveEvent(eventId, user.uid);
+      Toast.show({ type: 'success', text1: 'Removed from saved events' });
+    } catch (err: any) {
+      Toast.show({ type: 'error', text1: "Couldn't remove", text2: err.message });
+    } finally {
+      setRemovingEventId(null);
+    }
+  };
+
+  const handleOpenSaved = (saved: SavedEvent) => {
+    // Navigate only with the real venue object. EventDetailScreen re-resolves by
+    // id but falls back to whatever it was handed, and a saved row carries only
+    // a name and a date — passing that would render a stripped-down screen.
+    const venue = venues.find((v) => v.id === saved.eventId);
+    // `navigation` here is the untyped useNavigation(), whose overloads reject a
+    // params argument; the screen itself reads route.params as LiveVenue.
+    if (venue) (navigation as any).navigate('EventDetail', { event: venue });
+  };
+
+  const formatSavedWhen = (startDate: number | null): string => {
+    if (typeof startDate !== 'number') return 'Date to be announced';
+    return new Date(startDate).toLocaleString('en-GB', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Africa/Nairobi',
+    });
+  };
 
   const myStories = stories.filter(s => s.user_id === user?.uid);
   const hasStories = myStories.length > 0;
@@ -195,6 +264,78 @@ export const ProfileScreen = () => {
             <Text style={styles.statValue}>{stats.points}</Text>
             <Text style={styles.statLabel}>Points</Text>
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Saved Events</Text>
+          {savedEvents.length === 0 ? (
+            <Text style={styles.emptyBadgesText}>
+              Save an event to get reminded the day before and on the day.
+            </Text>
+          ) : (
+            <>
+              {upcomingSaved.map((saved) => {
+                const openable = venues.some((v) => v.id === saved.eventId);
+                return (
+                  <TouchableOpacity
+                    key={saved.eventId}
+                    style={styles.savedRow}
+                    onPress={() => handleOpenSaved(saved)}
+                    disabled={!openable}
+                    activeOpacity={0.7}
+                  >
+                    <Bell color="#00FFCC" size={18} />
+                    <View style={styles.savedRowText}>
+                      <Text style={styles.savedRowName} numberOfLines={1}>
+                        {saved.eventName}
+                      </Text>
+                      <Text style={styles.savedRowWhen}>{formatSavedWhen(saved.startDate)}</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleRemoveSaved(saved.eventId)}
+                      disabled={removingEventId === saved.eventId}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      style={styles.savedRemoveButton}
+                    >
+                      {removingEventId === saved.eventId ? (
+                        <ActivityIndicator size="small" color="#FF0055" />
+                      ) : (
+                        <Trash2 color="#FF0055" size={18} />
+                      )}
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                );
+              })}
+
+              {/* Kept visible rather than hidden: these no longer remind, and
+                  this is the only place they can be cleared. */}
+              {endedSaved.map((saved) => (
+                <View key={saved.eventId} style={[styles.savedRow, styles.savedRowEnded]}>
+                  <Bell color="#555" size={18} />
+                  <View style={styles.savedRowText}>
+                    <Text style={[styles.savedRowName, styles.savedRowNameEnded]} numberOfLines={1}>
+                      {saved.eventName}
+                    </Text>
+                    <Text style={styles.savedRowWhen}>
+                      Ended · {formatSavedWhen(saved.startDate)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => handleRemoveSaved(saved.eventId)}
+                    disabled={removingEventId === saved.eventId}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    style={styles.savedRemoveButton}
+                  >
+                    {removingEventId === saved.eventId ? (
+                      <ActivityIndicator size="small" color="#FF0055" />
+                    ) : (
+                      <Trash2 color="#FF0055" size={18} />
+                    )}
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </>
+          )}
         </View>
 
         <View style={styles.section}>
@@ -405,6 +546,41 @@ const styles = StyleSheet.create({
   topBadgesContainer: {
     flexDirection: 'row',
     gap: 12,
+  },
+  savedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 10,
+  },
+  savedRowEnded: {
+    opacity: 0.6,
+  },
+  savedRowText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  savedRowName: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  savedRowNameEnded: {
+    color: '#999999',
+  },
+  savedRowWhen: {
+    color: '#888888',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  savedRemoveButton: {
+    padding: 4,
   },
   emptyBadgesText: {
     color: '#666',
