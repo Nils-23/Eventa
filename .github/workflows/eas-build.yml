@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main # Triggers when you push to the main branch
+    paths-ignore:
+      - 'eventas_curator_events.json' # curator data commits shouldn't trigger app builds
 
 jobs:
   build_and_submit:
