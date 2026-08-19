@@ -1,0 +1,54 @@
+name: Curator write
+
+# Writes curator events to Firestore pendingEvents whenever the events JSON changes.
+# The Monday Cowork task commits eventas_curator_events.json; this job does the write
+# (the Cowork sandbox has no network to Firestore). Approval stays in the Admin dashboard.
+on:
+  push:
+    paths:
+      - "eventas_curator_events.json"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: curator-write
+  cancel-in-progress: false
+
+jobs:
+  write:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Install firebase-admin in an isolated dir so we don't build the full Expo tree.
+      - name: Install firebase-admin (isolated)
+        run: |
+          mkdir -p "$RUNNER_TEMP/dep" && cd "$RUNNER_TEMP/dep"
+          npm init -y >/dev/null 2>&1
+          npm install firebase-admin@^13.8.0 --no-audit --no-fund
+
+      # Materialize the service account from the repo secret (path is gitignored).
+      - name: Provision service account
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT secret is not set"; exit 1
+          fi
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > scripts/serviceAccountKey.json
+
+      - name: Write pending events to Firestore
+        env:
+          NODE_PATH: ${{ runner.temp }}/dep/node_modules
+          CURATOR_REHOST: "1"
+        run: node scripts/curatorWriteProposals.js eventas_curator_events.json
+
+      - name: Scrub service account
+        if: always()
+        run: rm -f scripts/serviceAccountKey.json
