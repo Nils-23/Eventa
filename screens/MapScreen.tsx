@@ -328,7 +328,17 @@ const areLocationsColocated = (
 export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
-  const { venues, heatPoints, ensureLocationWatch } = useLiveVenues();
+  const { venues, scheduledVenues, heatPoints, ensureLocationWatch } = useLiveVenues();
+  // The live feed lists venues that have chat activity, and a chat opens the
+  // moment an event is published — hours before it starts. Scheduled events are
+  // therefore included here even though they are not live yet, or a chat people
+  // are already using would be unreachable until the doors open. The feed only
+  // renders venues with a message in the last 24h, so the ones with no
+  // conversation never surface.
+  const chatFeedVenues = useMemo(
+    () => [...venues, ...scheduledVenues],
+    [venues, scheduledVenues]
+  );
   const user = useAppStore((s) => s.user);
   const userLocation = useAppStore((s) => s.userLocation);
   const selectedMapVenue = useAppStore((s) => s.selectedMapVenue);
@@ -1312,7 +1322,7 @@ export const MapScreen = () => {
       <LiveFeedModal
         isVisible={isLiveFeedVisible}
         onClose={() => setIsLiveFeedVisible(false)}
-        venues={venues}
+        venues={chatFeedVenues}
         stories={stories}
         onOpenChat={(venueId, venueName) => {
           setChatVenue({ id: venueId, name: venueName });
