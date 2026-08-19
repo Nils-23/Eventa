@@ -28,6 +28,7 @@ export interface LiveVenue {
   description: string;
   imageUrl?: string;
   googleImageUrl?: string;
+  googlePhotoCdnUrl?: string;
   customImageUrl?: string;
   img?: string;
   address?: string;
@@ -77,6 +78,7 @@ interface RawVenue {
   description: string;
   imageUrl?: string;
   googleImageUrl?: string;
+  googlePhotoCdnUrl?: string;
   customImageUrl?: string;
   img?: string;
   address?: string;
@@ -147,6 +149,10 @@ function buildImageResolver(
     if (!v) return null;
     return (
       v.customImageUrl ||
+      // Keyless CDN form of the same Google photo, derived server-side. Loading
+      // it costs no billed Places request, so it is what the app asks for
+      // whenever refreshVenueImages has minted one.
+      v.googlePhotoCdnUrl ||
       v.googleImageUrl ||
       realImageOrNull(v.imageUrl) ||
       realImageOrNull(resolvedImages[v.id]) ||
@@ -157,6 +163,7 @@ function buildImageResolver(
   const ownEventImage = (v: RawVenue): string | null =>
     v.customImageUrl ||
     v.img ||
+    v.googlePhotoCdnUrl ||
     v.googleImageUrl ||
     realImageOrNull(v.imageUrl) ||
     realImageOrNull(resolvedImages[v.id]) ||
@@ -296,7 +303,8 @@ function areVenuesEqual(a: LiveVenue[], b: LiveVenue[]): boolean {
       va.startDate !== vb.startDate ||
       va.expirationDate !== vb.expirationDate ||
       va.customImageUrl !== vb.customImageUrl ||
-      va.googleImageUrl !== vb.googleImageUrl
+      va.googleImageUrl !== vb.googleImageUrl ||
+      va.googlePhotoCdnUrl !== vb.googlePhotoCdnUrl
     ) {
       return false;
     }

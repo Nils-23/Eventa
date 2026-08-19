@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, Image, Animated, ViewStyle, ImageStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -24,6 +24,29 @@ const TARGET_WIDTHS = { thumbnail: 216, banner: 400, hero: 600, default: 400 };
 const PREVIEW_WIDTH = 48;
 const PREVIEW_BLUR = 6;
 
+// ─── Recovery policy ─────────────────────────────────────────────────────────
+// A mobile image request has a third outcome besides success and error: it can
+// simply never come back. A socket stalls behind a lost connection, or the
+// loader drops the request while scrolling, and neither onLoad nor onError ever
+// fires — so a card that has no other way to give up sits on its placeholder for
+// the rest of the session. That is the "stuck blurred" and "loaded earlier, gone
+// now" state: nothing about the URL is wrong, the request just never finished.
+//
+// So every attempt is on a clock. A stalled attempt is retried once (stalls are
+// usually per-socket, and the second try lands), then we move to the pooled
+// fallback, then we stop and leave the colour block. The timeout is deliberately
+// generous — some event posters are ~1MB from origins with no resizing, and
+// swapping a real poster for a stock photo too eagerly is the worse failure.
+const LOAD_TIMEOUT_MS = 10_000;
+const ATTEMPTS_PER_SOURCE = 2;
+const RETRY_DELAY_MS = 700;
+
+// The overlay hides the photo until it has loaded, so its removal must not
+// depend on an animation completing. The fade is the nicety; the timer is the
+// guarantee.
+const OVERLAY_FADE_MS = 180;
+const OVERLAY_FADE_SAFETY_MS = 600;
+
 interface VenueImageProps {
   venue: {
     id?: string;
@@ -42,6 +65,14 @@ interface VenueImageProps {
   isHero?: boolean;
 }
 
+type Source = {
+  raw: string;
+  // True once we have fallen through to the pooled stand-in, so a second failure
+  // ends the chain instead of looping between the two.
+  isFallback: boolean;
+  attempt: number;
+};
+
 export const VenueImage: React.FC<VenueImageProps> = ({
   venue,
   style,
@@ -50,32 +81,52 @@ export const VenueImage: React.FC<VenueImageProps> = ({
   isBanner = false,
   isHero = false,
 }) => {
-  const [error, setError] = useState(false);
-  // Drives the fade so a photo arriving late eases in over the placeholder
-  // instead of popping. Starts opaque-zero on every new source.
-  const fadeAnim = React.useRef(new Animated.Value(0)).current;
-
-  // Fallback if imageUrl is empty or failed to load. LiveVenuesContext already
-  // resolves a varied fallback for anything it feeds us; this covers the runtime
-  // case (a URL that 404s or times out mid-session) and callers that pass a raw
-  // venue. Seeding on the venue id keeps a run of failures from collapsing into
-  // the same photo repeated down the feed.
-  const rawUri =
-    error || !venue.imageUrl
-      ? venue.type === 'Event' && venue.id
-        ? getEventFallbackImage(venue.id, venue.category)
-        : getFallbackImageByType(venue.type, venue.id)
-      : venue.imageUrl;
-
   const variant = isThumbnail ? 'thumbnail' : isHero ? 'hero' : isBanner ? 'banner' : 'default';
-  const uri = resizeImageUrl(rawUri, TARGET_WIDTHS[variant]);
+
+  // The stand-in for a venue with no usable photo. Deterministic per venue, so a
+  // run of failures doesn't collapse into the same picture repeated down a feed.
+  // LiveVenuesContext already assigns varied fallbacks for anything it feeds us;
+  // this covers callers that pass a raw venue, and any URL that dies at runtime.
+  const fallbackRaw =
+    venue.type === 'Event' && venue.id
+      ? getEventFallbackImage(venue.id, venue.category)
+      : getFallbackImageByType(venue.type, venue.id);
+
+  const primaryRaw = venue.imageUrl || null;
+
+  const [source, setSource] = useState<Source>({
+    raw: primaryRaw ?? fallbackRaw,
+    isFallback: !primaryRaw,
+    attempt: 0,
+  });
+  // What the props said last time we (re)started the chain. Comparing during
+  // render rather than in an effect is what keeps this correct: an effect that
+  // resets "has it loaded" runs *after* the native loader may already have
+  // reported success, so a cached image could report onLoad and then be marked
+  // unloaded again — permanently invisible, since nothing reloads a decoded
+  // image. Deriving it in render leaves no such window.
+  const [propUri, setPropUri] = useState<string | null>(primaryRaw);
+  // The exact uri that has actually painted. Plain committed state, never an
+  // animated value: what the user sees must survive a native view being recycled
+  // or an animation being dropped.
+  const [loadedUri, setLoadedUri] = useState<string | null>(null);
+
+  if (propUri !== primaryRaw) {
+    setPropUri(primaryRaw);
+    setSource({ raw: primaryRaw ?? fallbackRaw, isFallback: !primaryRaw, attempt: 0 });
+    setLoadedUri(null);
+  }
+
+  const uri = resizeImageUrl(source.raw, TARGET_WIDTHS[variant]);
 
   // Only worth a second request where the full image is genuinely heavy, and
   // only when the URL actually supports server-side sizing — if resizeImageUrl
   // left it untouched (an unrecognised host) the "preview" would be the very
   // same full-size file, so requesting it would double the cost for nothing.
-  const previewUri = resizeImageUrl(rawUri, PREVIEW_WIDTH);
-  const usePreview = variant !== 'thumbnail' && previewUri !== rawUri;
+  const previewUri = resizeImageUrl(source.raw, PREVIEW_WIDTH);
+  const usePreview = variant !== 'thumbnail' && previewUri !== source.raw;
+
+  const loaded = loadedUri === uri;
 
   // Painted on the first frame, before a single byte is fetched, and left in
   // place underneath the photo. This is what makes a card never blank: the
@@ -83,71 +134,121 @@ export const VenueImage: React.FC<VenueImageProps> = ({
   // than the real photo and cannot serve as the instant state. The spinner this
   // replaces was actively counterproductive — a spinner reads as "slow", while a
   // filled block reads as "loaded, detail arriving".
-  const placeholderColor = getPlaceholderColor(venue.id || venue.type || rawUri);
+  const placeholderColor = getPlaceholderColor(venue.id || venue.type || source.raw);
 
-  // Where the fade lands. Each variant dims differently to stay legible against
+  // Where the photo rests. Each variant dims differently to stay legible against
   // the map, but a caller can override it (the stories tray wants full strength
-  // inside its ring) — and since opacity is animated here, that override has to
-  // become the fade's end value or it would be silently discarded.
+  // inside its ring).
   const callerOpacity = (imageStyle as { opacity?: number } | undefined)?.opacity;
   const restingOpacity =
     typeof callerOpacity === 'number'
       ? callerOpacity
       : isHero ? 1 : isThumbnail ? 0.85 : 0.75;
 
-  // Reset fade and error state when the source image URL changes
-  React.useEffect(() => {
-    setError(false);
-    fadeAnim.setValue(0);
-  }, [venue.imageUrl, fadeAnim]);
+  // Advance the recovery chain: retry, then fall back, then stop. Returning the
+  // same object on the last step is load-bearing — it leaves state untouched, so
+  // the watchdog effect below does not re-arm and we stop burning requests on a
+  // venue that has nothing left to show.
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const failCurrentSource = useCallback(() => {
+    setSource((prev) => {
+      if (prev.attempt + 1 < ATTEMPTS_PER_SOURCE) {
+        return { ...prev, attempt: prev.attempt + 1 };
+      }
+      if (!prev.isFallback) {
+        return { raw: fallbackRaw, isFallback: true, attempt: 0 };
+      }
+      return prev;
+    });
+  }, [fallbackRaw]);
 
-  const handleLoad = () => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 180,
+  const handleError = useCallback(() => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    // A moment of air before retrying: an immediate re-request usually hits the
+    // same dropped connection.
+    retryTimer.current = setTimeout(failCurrentSource, RETRY_DELAY_MS);
+  }, [failCurrentSource]);
+
+  useEffect(() => () => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+  }, []);
+
+  // Watchdog for the silent case: an attempt that reports neither success nor
+  // failure inside the window is treated as failed.
+  useEffect(() => {
+    if (loaded) return;
+    const timer = setTimeout(failCurrentSource, LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [uri, source.attempt, loaded, failCurrentSource]);
+
+  // The placeholder layer fades out once the photo is up. `overlayHidden` is the
+  // committed state that actually removes it; the animation only makes that
+  // removal pretty. If the animation is dropped — a recycled native view, a
+  // backgrounded app — the timer still clears the overlay, so a photo can never
+  // end up hidden behind a placeholder that forgot to leave.
+  const overlayOpacity = useRef(new Animated.Value(1)).current;
+  const [overlayHidden, setOverlayHidden] = useState(false);
+
+  useEffect(() => {
+    if (!loaded) {
+      overlayOpacity.setValue(1);
+      setOverlayHidden(false);
+      return;
+    }
+    const safety = setTimeout(() => setOverlayHidden(true), OVERLAY_FADE_SAFETY_MS);
+    Animated.timing(overlayOpacity, {
+      toValue: 0,
+      duration: OVERLAY_FADE_MS,
       useNativeDriver: true,
-    }).start();
-  };
+    }).start(({ finished }) => {
+      if (finished) setOverlayHidden(true);
+    });
+    return () => clearTimeout(safety);
+  }, [loaded, overlayOpacity]);
 
   return (
     <View style={[styles.container, isThumbnail && styles.thumbnailContainer, style]}>
-      {/* Instant, local, always present. Everything composites on top of it. */}
+      {/* Instant, local, always present. Everything composites on top of it, and
+          it is what remains if every source in the chain fails. */}
       <View style={[StyleSheet.absoluteFillObject, { backgroundColor: placeholderColor }]} />
 
-      {/* ~1.3KB stand-in that arrives long before the full photo. Deliberately
-          not animated: it should appear the moment it lands, not ease in. */}
-      {usePreview && (
-        <Image
-          source={{ uri: previewUri }}
-          // Absolutely positioned: the full-size image below stays in normal
-          // flow and is what gives the container its height, so a second
-          // in-flow child would stack under it instead of behind it.
-          style={[StyleSheet.absoluteFillObject, imageStyle, { opacity: restingOpacity }]}
-          resizeMode="cover"
-          blurRadius={PREVIEW_BLUR}
-        />
-      )}
-
-      <Animated.Image
+      {/* The photo. Its opacity is a plain style value, never animated: the one
+          thing that must not depend on an animation running is whether the
+          picture is visible at all.
+          `key` forces a fresh native view per attempt, so a retry re-requests
+          instead of reusing the view that just failed. */}
+      <Image
+        key={`${uri}#${source.attempt}`}
         source={{ uri }}
         style={[
           styles.image,
           isThumbnail && styles.thumbnailImage,
           imageStyle,
-          // Must come last: this is the animated form of whatever opacity the
-          // variant or the caller asked for, and it has to win over the static
-          // value in imageStyle rather than be overwritten by it.
-          {
-            opacity: fadeAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0, restingOpacity],
-            }),
-          },
+          { opacity: restingOpacity },
         ]}
         resizeMode="cover"
-        onLoad={handleLoad}
-        onError={() => setError(true)}
+        onLoad={() => setLoadedUri(uri)}
+        onError={handleError}
       />
+
+      {!overlayHidden && (
+        <Animated.View
+          style={[StyleSheet.absoluteFillObject, { opacity: overlayOpacity }]}
+          pointerEvents="none"
+        >
+          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: placeholderColor }]} />
+          {/* ~1.3KB stand-in that arrives long before the full photo. Deliberately
+              not animated in: it should appear the moment it lands. */}
+          {usePreview && (
+            <Image
+              source={{ uri: previewUri }}
+              style={[StyleSheet.absoluteFillObject, imageStyle, { opacity: restingOpacity }]}
+              resizeMode="cover"
+              blurRadius={PREVIEW_BLUR}
+            />
+          )}
+        </Animated.View>
+      )}
 
       {/* Cyberpunk Theme Duo-tone Overlay Tint */}
       {!isHero && <View style={[styles.colorTint, isThumbnail && styles.thumbnailTint]} />}

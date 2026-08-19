@@ -233,6 +233,15 @@ export function resizeImageUrl(url: string, targetWidth: number): string {
       : `${url}${url.includes('?') ? '&' : '?'}w=${w}`;
   }
 
+  // Google's image CDN, which is where a Places photo URL redirects to. This is
+  // the form we prefer to load (see googlePhotoCdnUrl): it carries no API key
+  // and costs no Places request, so it is the only one that scales with users.
+  // Sizing goes in a suffix after the final '=' — verified against live place
+  // photos at 48/216/600/1200. Any suffix already present is replaced.
+  if (url.includes('lh3.googleusercontent.com')) {
+    return `${url.replace(/=[a-z0-9-]+$/, '')}=w${w}`;
+  }
+
   return url;
 }
 
@@ -539,9 +548,12 @@ export async function resolveVenueImages(venues: any[]): Promise<Record<string, 
       continue;
     }
 
-    // 3. Google Maps fetch (middle priority)
-    if (venue.googleImageUrl) {
-      result[venue.id] = venue.googleImageUrl;
+    // 3. Google photo. The CDN form first: same picture, no API key, and no
+    // billed Places request per render. refreshVenueImages derives it from the
+    // Places URL and keeps it fresh, so googleImageUrl is only reached when a
+    // venue has not been through a probe yet.
+    if (venue.googlePhotoCdnUrl || venue.googleImageUrl) {
+      result[venue.id] = venue.googlePhotoCdnUrl || venue.googleImageUrl;
       continue;
     }
 

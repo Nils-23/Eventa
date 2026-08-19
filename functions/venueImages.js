@@ -36,6 +36,37 @@ const VERIFY_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 // 100 venues), and it replaces probes that were being spent on the same URLs.
 const PHOTO_REFERENCE_MAX_AGE_MS = 21 * 24 * 60 * 60 * 1000;
 
+// ─── The CDN URL ─────────────────────────────────────────────────────────────
+// A `maps.googleapis.com/.../place/photo` request is a *billed Places request*,
+// and it is the client that was making it — once per image, per card, per user.
+// The endpoint does no work beyond answering 302 with a plain
+// `lh3.googleusercontent.com` URL, which carries no API key, is served from
+// Google's image CDN, and costs nothing to fetch. So the redirect is resolved
+// here, once per venue per interval, and the resolved URL is what the app loads:
+// Places usage stops scaling with traffic and becomes a flat ~20 requests a day
+// no matter how many people open the feed. The Maps key also stops leaving the
+// server, which the old scheme could not avoid — every device held a URL with
+// the key embedded in it.
+//
+// The resolved URL takes Google's standard size suffix (`=w600`), verified
+// against live photos at 48/216/600/1200, so the client still asks for the
+// pixels it draws.
+//
+// It is stored *alongside* googleImageUrl, never instead of it: the Places URL
+// remains the thing this module heals and probes, and the CDN URL is derived
+// from it. How long a resolved URL stays valid is not documented, so it is
+// re-derived on every probe (free — the probe already receives it in the
+// redirect it follows), keeping it at most VERIFY_INTERVAL_MS old.
+const CDN_URL_MAX_AGE_MS = VERIFY_INTERVAL_MS;
+
+// Google image URLs put display options after the final '=' (`=s1600-w600`).
+// We store the bare URL so the client can append its own width. The tail is only
+// treated as options when it looks like options — lowercase, digits, hyphens —
+// so a token that happens to end in '=' is left intact.
+function stripCdnSizeSuffix(url) {
+  return url.replace(/=[a-z0-9-]+$/, '');
+}
+
 // A photo probe is a billed Places request, so the first run after deploy (when
 // nothing carries a verification stamp) is spread over several runs instead of
 // probing the whole collection at once. At every-6-hours this drains a ~100
@@ -174,6 +205,12 @@ function needsVerify(venue, apiKey, now) {
   if (!googleUrl) return false;
   if (extractEmbeddedKey(googleUrl) !== apiKey) return false; // needsRefresh owns this
 
+  // A venue with no CDN URL yet (or one that has aged past its window) is due
+  // regardless of the liveness clock: the probe is what mints it, and until it
+  // runs the app is still paying a Places request for every render.
+  if (!venue.googlePhotoCdnUrl) return true;
+  if (now - toMillis(venue.googlePhotoCdnAt) >= CDN_URL_MAX_AGE_MS) return true;
+
   return now - toMillis(venue.googleImageVerifiedAt) >= VERIFY_INTERVAL_MS;
 }
 
@@ -189,12 +226,20 @@ async function verifyPhotoUrl(url) {
   try {
     res = await fetch(url, { method: 'GET', redirect: 'manual', timeout: 10000 });
   } catch (e) {
-    return 'unknown';
+    return { health: 'unknown', cdnUrl: null };
   }
-  // The photo endpoint answers with a redirect to the actual image bytes.
-  if (res.status >= 200 && res.status < 400) return 'alive';
-  if (res.status === 400 || res.status === 403 || res.status === 404) return 'dead';
-  return 'unknown';
+  // The photo endpoint answers with a redirect to the actual image bytes. That
+  // Location header is the keyless CDN URL the app will load, so a probe both
+  // proves the reference is alive and hands us a freshly minted CDN URL for the
+  // price of the one request we were already spending.
+  if (res.status >= 200 && res.status < 400) {
+    const location = res.headers.get('location');
+    return { health: 'alive', cdnUrl: location ? stripCdnSizeSuffix(location) : null };
+  }
+  if (res.status === 400 || res.status === 403 || res.status === 404) {
+    return { health: 'dead', cdnUrl: null };
+  }
+  return { health: 'unknown', cdnUrl: null };
 }
 
 /**
@@ -254,12 +299,18 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
           continue;
         }
         verifiedThisRun++;
-        const health = await verifyPhotoUrl(eventUrl);
+        const { health, cdnUrl } = await verifyPhotoUrl(eventUrl);
         await sleep(API_DELAY_MS);
 
         if (health === 'alive') {
           await doc.ref.update({
             googleImageVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+            ...(cdnUrl
+              ? {
+                  googlePhotoCdnUrl: cdnUrl,
+                  googlePhotoCdnAt: admin.firestore.FieldValue.serverTimestamp(),
+                }
+              : {}),
           });
           summary.verified++;
           summary.skipped++;
@@ -280,6 +331,11 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
         if (url && GOOGLE_PHOTO_URL_RE.test(url) && (deadByProbe || extractEmbeddedKey(url) !== apiKey)) {
           update[field] = admin.firestore.FieldValue.delete();
         }
+      }
+      // The CDN URL is derived from the Places URL, so it dies with it. Leaving
+      // it behind would keep the client rendering a photo we just declared dead.
+      if (Object.keys(update).length > 0 && venue.googlePhotoCdnUrl) {
+        update.googlePhotoCdnUrl = admin.firestore.FieldValue.delete();
       }
       if (Object.keys(update).length > 0) {
         await doc.ref.update(update);
@@ -309,12 +365,18 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
         continue;
       }
       verifiedThisRun++;
-      const health = await verifyPhotoUrl(storedGoogleUrl(venue));
+      const { health, cdnUrl } = await verifyPhotoUrl(storedGoogleUrl(venue));
       await sleep(API_DELAY_MS);
 
       if (health === 'alive') {
         await doc.ref.update({
           googleImageVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...(cdnUrl
+            ? {
+                googlePhotoCdnUrl: cdnUrl,
+                googlePhotoCdnAt: admin.firestore.FieldValue.serverTimestamp(),
+              }
+            : {}),
         });
         summary.verified++;
         summary.skipped++;
@@ -356,6 +418,21 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
         // Straight from the Places API, so it is verified by construction — no
         // need to spend a probe on it until the next interval comes round.
         update.googleImageVerifiedAt = admin.firestore.FieldValue.serverTimestamp();
+
+        // Resolve the redirect now so the app never has to. One extra Places
+        // request per refresh (a few a day across the whole collection) buys
+        // every render after it for free. If it fails we simply write no CDN
+        // URL: the client falls back to the Places URL exactly as before, and
+        // the next probe mints one.
+        const resolved = await verifyPhotoUrl(found.photoUrl);
+        await sleep(API_DELAY_MS);
+        if (resolved.cdnUrl) {
+          update.googlePhotoCdnUrl = resolved.cdnUrl;
+          update.googlePhotoCdnAt = admin.firestore.FieldValue.serverTimestamp();
+        } else if (venue.googlePhotoCdnUrl) {
+          // Stale: it points at the photo_reference we just replaced.
+          update.googlePhotoCdnUrl = admin.firestore.FieldValue.delete();
+        }
         // Legacy venues carry the Google URL in imageUrl; keep it in sync so no
         // dead key-rotated URL survives as a "fallback".
         if (venue.imageUrl && GOOGLE_PHOTO_URL_RE.test(venue.imageUrl)) {
@@ -372,6 +449,9 @@ async function refreshVenueImages(db, apiKey, log = console.log) {
         }
         if (venue.imageUrl && GOOGLE_PHOTO_URL_RE.test(venue.imageUrl)) {
           update.imageUrl = admin.firestore.FieldValue.delete();
+        }
+        if (venue.googlePhotoCdnUrl) {
+          update.googlePhotoCdnUrl = admin.firestore.FieldValue.delete();
         }
         summary.noPhotos++;
         log(`[VenueImages] ⚠️ ${found.status} for ${venue.id} (${venue.name}); re-check in 7 days`);
@@ -403,7 +483,9 @@ module.exports = {
   verifyPhotoUrl,
   storedGoogleUrl,
   GOOGLE_PHOTO_URL_RE,
+  stripCdnSizeSuffix,
   VERIFY_INTERVAL_MS,
+  CDN_URL_MAX_AGE_MS,
   MAX_VERIFY_PER_RUN,
   PHOTO_REFERENCE_MAX_AGE_MS,
   MAX_REFRESH_PER_RUN,
