@@ -85,10 +85,10 @@ export const ChatListScreen = () => {
         <MessageCircle color="#FF00CC" size={24} />
       </View>
       <View style={styles.chatInfo}>
-        <Text style={styles.venueName}>{item.venueName}</Text>
+        <Text style={styles.venueName} numberOfLines={1} ellipsizeMode="tail">{item.venueName}</Text>
         <Text style={styles.timeText}>Active {formatTimeAgo(item.lastInteractionTime)}</Text>
       </View>
-      <ChevronRight color="#444" size={20} />
+      <ChevronRight color="#444" size={20} style={styles.chevron} />
     </TouchableOpacity>
   );
 
@@ -196,6 +196,11 @@ const styles = StyleSheet.create({
   },
   chatInfo: {
     flex: 1,
+    minWidth: 0,
+    marginRight: 8,
+  },
+  chevron: {
+    flexShrink: 0,
   },
   venueName: {
     fontSize: 18,
