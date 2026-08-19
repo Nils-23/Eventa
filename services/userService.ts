@@ -1,5 +1,6 @@
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { firestore } from './firebase';
+import { getSimPersona } from './simPersonas';
 
 const usernameCache: Record<string, string> = {};
 
@@ -19,6 +20,14 @@ const NIGHTLIFE_NAMES = [
   'MidnightRider', 'NeonSoul', 'BassDrop', 'GrooveMaster', 'MoonlightViber',
   'StarGazer', 'RhythmJunkie', 'VibeChaser', 'BeatRider'
 ];
+
+  // Admin roster personas have fixed names: look them up before the generic
+  // sim_ fallback so a roster persona reads identically everywhere it surfaces.
+  const rosterPersona = getSimPersona(userId);
+  if (rosterPersona) {
+    usernameCache[userId] = rosterPersona.name;
+    return rosterPersona.name;
+  }
 
   if (userId.startsWith('sim_')) {
     const numStr = userId.split('_').pop() || '0';

@@ -15,7 +15,8 @@ import {
   Animated,
   TouchableWithoutFeedback,
   Alert,
-  Image
+  Image,
+  ScrollView
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -27,9 +28,10 @@ import { subscribeToRTDB } from '../utils/firebaseUtils';
 import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { realtimeDB, firestore, storage } from '../services/firebase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppStore } from '../hooks/useAppStore';
-import * as Crypto from 'expo-crypto';
 import { fetchUsername, hideUser } from '../services/userService';
+import { SIM_PERSONAS, DEFAULT_SIM_PERSONA, getSimPersona, SimPersona } from '../services/simPersonas';
 import { checkAndUnlockAchievements, ACHIEVEMENTS } from '../services/achievementService';
 import { createReport } from '../services/reportService';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,6 +41,9 @@ import { getFriendlyErrorMessage } from '../utils/errorUtils';
 import { getDistanceInMeters } from '../utils/locationUtils';
 import { useLiveVenues } from '../hooks/useLiveVenues';
 import { StoryViewer } from './StoryViewer';
+
+// Last persona the admin spoke as, so the choice survives closing the chat/app.
+const SIM_PERSONA_STORAGE_KEY = '@eventa/admin_sim_persona_id';
 
 interface Message {
   id: string;
@@ -239,26 +244,20 @@ export const VenueChat: React.FC<VenueChatProps> = ({
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
   const [sendAsSimulated, setSendAsSimulated] = useState(false);
-  // Admin "simulated user" identity is PINNED: every simulated message reuses this same
-  // id/name so the admin can hold a continuous conversation as one persona (previously a
-  // fresh random id was minted per message, so each message looked like a different user).
-  // Shuffle mints a new persona on demand. The ref mirrors state so the async send paths
-  // never read a stale value between a set and the next render.
-  const [simPersona, setSimPersona] = useState<{ id: string; name: string } | null>(null);
-  const simPersonaRef = useRef<{ id: string; name: string } | null>(null);
-  const setPersona = (p: { id: string; name: string } | null) => {
+  // Admin "simulated user" identity comes from a FIXED roster of ten personas
+  // (services/simPersonas.ts). Every simulated message sends as the currently
+  // selected one, so the admin holds a continuous conversation as a single
+  // person and can switch away and come back to it later — earlier this minted
+  // a fresh random persona on every shuffle, which made the old identity
+  // unrecoverable. The ref mirrors state so the async send paths never read a
+  // stale value between a set and the next render.
+  const [simPersona, setSimPersona] = useState<SimPersona>(DEFAULT_SIM_PERSONA);
+  const simPersonaRef = useRef<SimPersona>(DEFAULT_SIM_PERSONA);
+  const setPersona = (p: SimPersona) => {
     simPersonaRef.current = p;
     setSimPersona(p);
-  };
-  const makeSimPersona = async () => {
-    // Globally-unique id via a v4 UUID (no collisions across messages, devices, or sessions),
-    // kept distinct from seeded personas (persona_*) and real Firebase UIDs by the sim_admin_
-    // prefix. The trailing numeric segment stays so fetchUsername derives a stable name — the
-    // UUID has no underscores, so split('_').pop() still lands on that number.
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    const id = `sim_admin_${Crypto.randomUUID()}_${randomNum}`;
-    const name = await fetchUsername(id);
-    return { id, name };
+    AsyncStorage.setItem(SIM_PERSONA_STORAGE_KEY, p.id)
+      .catch((err) => console.warn('[VenueChat] Failed to persist sim persona:', err));
   };
   // Admin personas are human-controlled, so they count as real presence for
   // the hot-venue notification triggers (join spike / user count). Every send
@@ -271,16 +270,11 @@ export const VenueChat: React.FC<VenueChatProps> = ({
       timestamp: Date.now(),
     }).catch((err) => console.warn('[VenueChat] Failed to record persona presence:', err));
   };
-  // Returns the pinned persona, creating one on first use.
-  const ensureSimPersona = async () => {
-    if (simPersonaRef.current) {
-      recordSimPersonaPresence(simPersonaRef.current.id);
-      return simPersonaRef.current;
-    }
-    const p = await makeSimPersona();
-    setPersona(p);
-    recordSimPersonaPresence(p.id);
-    return p;
+  // Returns the selected roster persona and refreshes its presence entry.
+  const ensureSimPersona = () => {
+    const persona = simPersonaRef.current;
+    recordSimPersonaPresence(persona.id);
+    return persona;
   };
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [isCheckingLocation, setIsCheckingLocation] = useState(false);
@@ -292,6 +286,20 @@ export const VenueChat: React.FC<VenueChatProps> = ({
   const hiddenUsers = useAppStore((s) => s.hiddenUsers);
   const setHiddenUsers = useAppStore((s) => s.setHiddenUsers);
   const isAdmin = useAppStore((s) => s.isAdmin);
+  // Restore the last persona the admin spoke as, so re-opening a chat (or the
+  // app) resumes the same identity instead of silently reverting to slot 1.
+  useEffect(() => {
+    if (!isAdmin) return;
+    AsyncStorage.getItem(SIM_PERSONA_STORAGE_KEY)
+      .then((storedId) => {
+        const stored = storedId ? getSimPersona(storedId) : undefined;
+        if (stored) {
+          simPersonaRef.current = stored;
+          setSimPersona(stored);
+        }
+      })
+      .catch((err) => console.warn('[VenueChat] Failed to restore sim persona:', err));
+  }, [isAdmin]);
   const updateLastViewedChat = useAppStore((s) => s.updateLastViewedChat);
   const userLocation = useAppStore((s) => s.userLocation);
   const { venues, ensureLocationWatch } = useLiveVenues();
@@ -453,7 +461,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({
     let senderBadge: string | null = activeBadge;
 
     if (isAdmin && sendAsSimulated) {
-      const persona = await ensureSimPersona();
+      const persona = ensureSimPersona();
       senderId = persona.id;
       senderName = persona.name;
       senderBadge = null; // Simulated users don't get the admin's active badge
@@ -1013,7 +1021,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({
         <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
           <View style={[styles.usernameContainer, isMe ? { alignSelf: 'flex-end', marginRight: 4 } : { marginLeft: 4 }]}>
             {BadgeIcon ? <BadgeIcon color={badgeObj!.glowColor} size={12} style={{ marginRight: 4 }} /> : null}
-            <Text style={styles.username}>{isMe ? 'You' : item.username}</Text>
+            <Text style={styles.username} numberOfLines={1} ellipsizeMode="tail">{isMe ? 'You' : item.username}</Text>
           </View>
           
           <TouchableOpacity
@@ -1161,8 +1169,10 @@ export const VenueChat: React.FC<VenueChatProps> = ({
         >
           <View style={[styles.chatContainer, { paddingTop: insets.top }]}>
           <View style={styles.header}>
-            <View>
-              <Text style={styles.venueName}>{venueName}</Text>
+            {/* flex:1 + minWidth:0 so a long venue name truncates instead of
+                growing the row and shoving the close button off-screen. */}
+            <View style={styles.headerTitleGroup}>
+              <Text style={styles.venueName} numberOfLines={1} ellipsizeMode="tail">{venueName}</Text>
               <Text style={styles.subtitle}>Live Chat (24h)</Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -1270,19 +1280,36 @@ export const VenueChat: React.FC<VenueChatProps> = ({
             </View>
           )}
 
-          {/* Pinned simulated persona: all simulated messages send as this identity so a
-              conversation stays consistent; ↻ mints a new persona. */}
+          {/* Fixed roster of simulated personas. All simulated messages send as the
+              selected one, and any persona can be re-selected later to pick a
+              conversation back up. */}
           {isAdmin && sendAsSimulated && (
             <View style={styles.simPersonaBar}>
-              <Text style={styles.simPersonaLabel}>Speaking as </Text>
-              <Text style={styles.simPersonaName}>{simPersona?.name ?? '…'}</Text>
-              <TouchableOpacity
-                style={styles.simShuffleBtn}
-                onPress={async () => setPersona(await makeSimPersona())}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              <Text style={styles.simPersonaLabel}>
+                Speaking as <Text style={styles.simPersonaName}>{simPersona.name}</Text>
+              </Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.simPersonaChips}
               >
-                <Text style={styles.simShuffleText}>↻ New persona</Text>
-              </TouchableOpacity>
+                {SIM_PERSONAS.map((persona) => {
+                  const isSelected = persona.id === simPersona.id;
+                  return (
+                    <TouchableOpacity
+                      key={persona.id}
+                      style={[styles.simPersonaChip, isSelected && styles.simPersonaChipActive]}
+                      onPress={() => setPersona(persona)}
+                      hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                    >
+                      <Text style={[styles.simPersonaChipText, isSelected && styles.simPersonaChipTextActive]}>
+                        {persona.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
           )}
 
@@ -1521,6 +1548,11 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#333',
+    gap: 12,
+  },
+  headerTitleGroup: {
+    flex: 1,
+    minWidth: 0,
   },
   venueName: {
     color: '#00FFCC',
@@ -1536,6 +1568,7 @@ const styles = StyleSheet.create({
     padding: 8,
     backgroundColor: '#333',
     borderRadius: 20,
+    flexShrink: 0,
   },
   centerContainer: {
     flex: 1,
@@ -1592,6 +1625,7 @@ const styles = StyleSheet.create({
   username: {
     color: '#AAA',
     fontSize: 12,
+    flexShrink: 1,
   },
   messageBubble: {
     padding: 12,
@@ -1815,6 +1849,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: 'bold',
     marginRight: 6,
+    // Cap the name so it can't squeeze the quoted text down to nothing.
+    flexShrink: 1,
+    maxWidth: '50%',
   },
   replyHeaderText: {
     color: '#AAA',
@@ -1835,10 +1872,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   
-  // Pinned simulated-persona bar
+  // Simulated-persona roster bar
   simPersonaBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: '#1A1626',
@@ -1848,25 +1883,39 @@ const styles = StyleSheet.create({
   simPersonaLabel: {
     color: '#9A8FB0',
     fontSize: 12,
+    marginBottom: 6,
   },
   simPersonaName: {
     color: '#00FFCC',
     fontSize: 13,
     fontWeight: '700',
   },
-  simShuffleBtn: {
-    marginLeft: 'auto',
+  simPersonaChips: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingRight: 8,
+  },
+  simPersonaChip: {
     backgroundColor: '#241B36',
     borderRadius: 12,
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderWidth: 1,
     borderColor: '#3A2A55',
   },
-  simShuffleText: {
-    color: '#00FFCC',
+  simPersonaChipActive: {
+    backgroundColor: '#00FFCC',
+    borderColor: '#00FFCC',
+  },
+  simPersonaChipText: {
+    color: '#9A8FB0',
     fontSize: 12,
     fontWeight: '600',
+  },
+  simPersonaChipTextActive: {
+    color: '#120D1A',
+    fontWeight: '700',
   },
   // Admin posting toggle styles
   adminToggleContainer: {
