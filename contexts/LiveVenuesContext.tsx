@@ -12,6 +12,7 @@ import {
   FallbackSubject,
 } from '../utils/venueImageUtils';
 import { findHostVenue } from '../utils/venueMatching';
+import { ReviewStats } from '../services/reviewService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppStore } from '../hooks/useAppStore';
 
@@ -29,6 +30,8 @@ export interface LiveVenue {
   imageUrl?: string;
   googleImageUrl?: string;
   googlePhotoCdnUrl?: string;
+  /** Aggregate written by functions/reviews.js; see services/reviewService.ts. */
+  reviewStats?: ReviewStats;
   customImageUrl?: string;
   img?: string;
   address?: string;
@@ -79,6 +82,8 @@ interface RawVenue {
   imageUrl?: string;
   googleImageUrl?: string;
   googlePhotoCdnUrl?: string;
+  /** Aggregate written by functions/reviews.js; see services/reviewService.ts. */
+  reviewStats?: ReviewStats;
   customImageUrl?: string;
   img?: string;
   address?: string;
@@ -807,6 +812,8 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const userPosRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const locationSubRef = useRef<Location.LocationSubscription | null>(null);
   const locationWatchPendingRef = useRef(false);
+  // Bumped every time a signed-in session is torn down; see ensureLocationWatch.
+  const locationWatchGenRef = useRef(0);
   // Rolling per-venue count samples used to derive the rising/falling trend
   const countHistoryRef = useRef<Record<string, { t: number; count: number }[]>>({});
   const simConfigRef = useRef({ enabled: true, threshold: 100 });
@@ -965,6 +972,10 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const ensureLocationWatch = useCallback(() => {
     if (locationSubRef.current || locationWatchPendingRef.current) return;
     locationWatchPendingRef.current = true;
+    // Which session this watch belongs to. watchPositionAsync can still be in
+    // flight when the session it was started for ends; without this the late
+    // subscription installs itself into the next one and never gets removed.
+    const gen = locationWatchGenRef.current;
     (async () => {
       try {
         const { status } = await Location.getForegroundPermissionsAsync();
@@ -980,8 +991,9 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             requestRecalculate();
           }
         );
-        if (locationSubRef.current) {
-          // Another caller won the race while we awaited — keep theirs
+        if (locationSubRef.current || gen !== locationWatchGenRef.current) {
+          // Another caller won the race while we awaited, or the session this
+          // watch was started for has since ended — either way, drop ours.
           sub.remove();
         } else {
           locationSubRef.current = sub;
@@ -996,8 +1008,29 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, []);
 
   useEffect(() => {
+    // Everything attached on behalf of the signed-in user, held here rather
+    // than returned from the auth callback below.
+    //
+    // onAuthStateChanged is an observer, not an effect: Firebase DISCARDS
+    // whatever its callback returns. The teardown used to be returned from
+    // there and so never ran once — signing out left the venues snapshot and
+    // both RTDB listeners attached, and signing back in stacked three more on
+    // top, each one calling requestRecalculate() on every location update. The
+    // work per update multiplied with each auth cycle in a session, and the 4s
+    // fallback timer was never cleared either.
+    let teardownSession: (() => void) | null = null;
+    const endSession = () => {
+      if (!teardownSession) return;
+      const fn = teardownSession;
+      teardownSession = null;
+      fn();
+    };
+
     // Wait for Firebase Auth to resolve before attaching any listeners
     const unsubAuth = onAuthStateChanged(auth, (user) => {
+      // Whoever was signed in before (if anyone) is done with these.
+      endSession();
+
       if (!user) {
         // Not authenticated — clear data and wait
         venuesRef.current = [];
@@ -1081,8 +1114,10 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         (e) => console.warn('[LiveVenuesContext] SimLocations listener error:', e)
       );
 
-      // Store cleanup functions to be called when auth changes or component unmounts
-      return () => {
+      // Torn down on the next auth change or on unmount — see endSession.
+      teardownSession = () => {
+        locationWatchGenRef.current += 1;
+        locationWatchPendingRef.current = false;
         if (locationSubRef.current) {
           locationSubRef.current.remove();
           locationSubRef.current = null;
@@ -1097,6 +1132,7 @@ export const LiveVenuesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
 
     return () => {
+      endSession();
       unsubAuth();
     };
   }, []);
