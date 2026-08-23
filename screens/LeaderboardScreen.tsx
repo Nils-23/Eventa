@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Trophy, Award, CircleUserRound, Wine, Info, X, MapPin, Share2 } from 'lucide-react-native';
 import { collection, query, orderBy, limit, getDocs, doc, getDoc, startAfter, where, getCountFromServer } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, firestore } from '../services/firebase';
 import { getMonthlyPointsKey } from '../services/userService';
 import { ACHIEVEMENTS } from '../services/achievementService';
@@ -50,6 +51,15 @@ export const LeaderboardScreen = () => {
 
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
   const monthlyKey = getMonthlyPointsKey();
+  // Cached copy of the last board this device saw, so opening the tab paints
+  // instantly instead of showing a spinner while the network answers. Keyed by
+  // month, so a new month can never render last month's standings.
+  const cacheKey = `leaderboard_cache_${monthlyKey}`;
+
+  // Same query as before, extracted so it can be handed to Promise.all rather
+  // than awaited on its own line.
+  const rankQuery0 = (key: string, points: number) =>
+    query(collection(firestore, 'users'), where(key, '>', points));
 
   const fetchLeaders = async () => {
     try {
@@ -59,8 +69,16 @@ export const LeaderboardScreen = () => {
         orderBy(monthlyKey, 'desc'),
         limit(10)
       );
-      
-      const snap = await getDocs(q);
+
+      // The board and the viewer's own document do not depend on each other, so
+      // they go out together. This screen used to await five round trips in a
+      // row before drawing a single row — on a mobile connection that is most of
+      // a second spent waiting on latency, not data.
+      const currentUser = auth.currentUser;
+      const [snap, userDocSnap] = await Promise.all([
+        getDocs(q),
+        currentUser ? getDoc(doc(firestore, 'users', currentUser.uid)) : Promise.resolve(null),
+      ]);
       const fetched: LeaderboardUser[] = [];
       snap.forEach((docSnap) => {
         const data = docSnap.data();
@@ -75,26 +93,42 @@ export const LeaderboardScreen = () => {
       });
       
       // Filter out users who have 0 points to keep leaderboard active
-      setLeaders(fetched.filter(u => u.monthlyPoints > 0));
+      const ranked = fetched.filter(u => u.monthlyPoints > 0);
+      setLeaders(ranked);
+      // Draw now. The standings card below resolves on its own and slots in when
+      // it is ready — holding the whole screen back for it is what made the
+      // board feel slow, since the list is what people came to look at.
+      setLoading(false);
+      AsyncStorage.setItem(cacheKey, JSON.stringify(ranked)).catch(() => {});
 
       // Fetch active user standing
-      const currentUser = auth.currentUser;
       if (currentUser) {
-        const userDocRef = doc(firestore, 'users', currentUser.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        
-        if (userDocSnap.exists()) {
+        if (userDocSnap && userDocSnap.exists()) {
           const userData = userDocSnap.data();
           const userMonthlyPoints = userData[monthlyKey] || 0;
           
           if (userMonthlyPoints > 0) {
             // Count users with more monthly points to calculate current rank
-            const rankQuery = query(
+            // If the viewer is already on the board we know their rank by
+            // position, and the count query is a round trip for an answer we are
+            // holding. Otherwise ask the server, alongside — not before — the
+            // lookup of the competitor above them.
+            const indexOnBoard = ranked.findIndex((u) => u.id === currentUser.uid);
+            const aboveQueryEarly = query(
               collection(firestore, 'users'),
-              where(monthlyKey, '>', userMonthlyPoints)
+              orderBy(monthlyKey, 'asc'),
+              startAfter(userDocSnap),
+              limit(1)
             );
-            const rankSnap = await getCountFromServer(rankQuery);
-            const userRank = rankSnap.data().count + 1;
+            const [rankCount, aboveSnapEarly] = await Promise.all([
+              indexOnBoard >= 0
+                ? Promise.resolve(indexOnBoard)
+                : getCountFromServer(rankQuery0(monthlyKey, userMonthlyPoints)).then(
+                    (r) => r.data().count
+                  ),
+              getDocs(aboveQueryEarly),
+            ]);
+            const userRank = rankCount + 1;
             
             const userRankedInfo: RankedUserInfo = {
               id: currentUser.uid,
@@ -107,15 +141,9 @@ export const LeaderboardScreen = () => {
             };
             setCurrentUserRanked(userRankedInfo);
 
-            // Fetch the competitor immediately above current user
-            const aboveQuery = query(
-              collection(firestore, 'users'),
-              orderBy(monthlyKey, 'asc'),
-              startAfter(userDocSnap),
-              limit(1)
-            );
-            const aboveSnap = await getDocs(aboveQuery);
-            
+            // Already fetched above, in parallel with the rank.
+            const aboveSnap = aboveSnapEarly;
+
             if (!aboveSnap.empty) {
               const aboveDoc = aboveSnap.docs[0];
               const aboveData = aboveDoc.data();
@@ -197,6 +225,18 @@ export const LeaderboardScreen = () => {
   };
 
   useEffect(() => {
+    // Cache first, network second. The fetch below always runs and overwrites —
+    // this only removes the blank-spinner phase for anyone who has opened the
+    // board before.
+    AsyncStorage.getItem(cacheKey)
+      .then((raw) => {
+        if (!raw) return;
+        const cached: LeaderboardUser[] = JSON.parse(raw);
+        setLeaders((prev) => (prev.length ? prev : cached));
+        setLoading(false);
+      })
+      .catch(() => {});
+
     fetchLeaders();
   }, []);
 
