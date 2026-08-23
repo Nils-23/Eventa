@@ -28,7 +28,7 @@ import { createReport } from '../services/reportService';
 import Toast from 'react-native-toast-message';
 import * as Icons from 'lucide-react-native';
 import { useCachedMedia } from '../hooks/useCachedMedia';
-import { prefetchStoriesMedia } from '../utils/mediaCache';
+import { prefetchStoriesMedia, getCachedMediaUriSync } from '../utils/mediaCache';
 import { ref, push, set } from 'firebase/database';
 import { realtimeDB } from '../services/firebase';
 
@@ -67,21 +67,38 @@ const StoryMediaItem: React.FC<StoryMediaItemProps> = ({
   onVideoUpdate,
   onVideoError,
 }) => {
-  const { cachedUri } = useCachedMedia(story.media_url);
+  const isVideo = story.media_type === 'video';
 
-  if (!cachedUri) {
-    return (
-      <View style={styles.loadingOverlay}>
-        <ActivityIndicator color="#FFFFFF" size="large" />
-      </View>
-    );
-  }
+  // An image is small enough to be worth having on disk before it is shown. A
+  // video is not: useCachedMedia goes through FileSystem.downloadAsync, which
+  // only resolves once the ENTIRE file has landed, so the player could not draw
+  // a single frame until the whole mp4 was down. That is the minutes-long
+  // spinner on story videos — the player streams progressively, so give it the
+  // remote URL straight away and let the background prefetch fill the disk
+  // cache for the next viewing.
+  const { cachedUri } = useCachedMedia(isVideo ? undefined : story.media_url);
 
-  if (story.media_type === 'video') {
+  // Resolved once per story on purpose. Swapping a Video's source mid-playback
+  // restarts it from zero, so a cache entry that lands after the player is up
+  // must not be picked up here.
+  const videoUri = useMemo(
+    () => (isVideo ? getCachedMediaUriSync(story.media_url) || story.media_url : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isVideo, story.id]
+  );
+
+  if (isVideo) {
+    if (!videoUri) {
+      return (
+        <View style={styles.loadingOverlay} pointerEvents="none">
+          <ActivityIndicator color="#FFFFFF" size="large" />
+        </View>
+      );
+    }
     return (
       <Video
         key={`video_${story.id}`}
-        source={{ uri: cachedUri }}
+        source={{ uri: videoUri }}
         style={StyleSheet.absoluteFillObject}
         resizeMode={ResizeMode.CONTAIN}
         shouldPlay={isActive && !isPaused && isVisible}
@@ -89,6 +106,15 @@ const StoryMediaItem: React.FC<StoryMediaItemProps> = ({
         volume={1.0}
         isMuted={false}
         progressUpdateIntervalMillis={250}
+        // onLoad is the earliest "there is something to show" signal. Relying
+        // only on status updates left the spinner up over a perfectly loaded
+        // video whenever it arrived paused (a press-and-hold across the
+        // transition), because a paused video never reports isPlaying.
+        onLoad={(status) => {
+          if (isActive) {
+            onVideoUpdate(status);
+          }
+        }}
         onPlaybackStatusUpdate={(status) => {
           if (isActive) {
             onVideoUpdate(status);
@@ -97,18 +123,26 @@ const StoryMediaItem: React.FC<StoryMediaItemProps> = ({
         onError={onVideoError}
       />
     );
-  } else {
+  }
+
+  if (!cachedUri) {
     return (
-      <Image
-        key={`img_${story.id}`}
-        source={{ uri: cachedUri }}
-        style={StyleSheet.absoluteFillObject}
-        resizeMode="contain"
-        onLoad={onImageLoad}
-        onError={onVideoError}
-      />
+      <View style={styles.loadingOverlay} pointerEvents="none">
+        <ActivityIndicator color="#FFFFFF" size="large" />
+      </View>
     );
   }
+
+  return (
+    <Image
+      key={`img_${story.id}`}
+      source={{ uri: cachedUri }}
+      style={StyleSheet.absoluteFillObject}
+      resizeMode="contain"
+      onLoad={onImageLoad}
+      onError={onVideoError}
+    />
+  );
 };
 
 interface FloatingReaction {
@@ -187,6 +221,9 @@ const MIN_RESUME_MS = 250;
 // the story is treated as unplayable and skipped, the same as an onError.
 const VIDEO_STALL_TIMEOUT_MS = 15000;
 
+// How many stories ahead of the one on screen to warm the cache for.
+const PREFETCH_AHEAD = 2;
+
 export const StoryViewer: React.FC<StoryViewerProps> = ({
   isVisible,
   onClose,
@@ -231,6 +268,12 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const imageTimerRef = useRef<ReturnType<typeof Animated.timing> | null>(null);
   const videoTimerRef = useRef<ReturnType<typeof Animated.timing> | null>(null);
   const videoRef = useRef<Video>(null);
+  // Wall-clock deadline for the stall watchdog below; set once per stall, never
+  // per status tick. Paired with a mirror of isMediaLoading, because the video
+  // status callback fires every 250ms and must be able to tell a new stall from
+  // one it has already reported without waiting for a re-render.
+  const stallDeadlineRef = useRef(0);
+  const isMediaLoadingRef = useRef(true);
 
   // `stories` is live: a story can expire on its 24h TTL, be deleted by its
   // author, or drop out of the hiddenUsers filter while it is on screen. When
@@ -247,7 +290,12 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const viewedStoryIdRef = useRef<string | undefined>(undefined);
   // Latched "entered this venue backwards" instruction; see where it is consumed.
   const startAtEndPending = useRef(false);
-  const { cachedUri: currentStoryUri } = useCachedMedia(currentStory?.media_url);
+  // Videos are streamed by StoryMediaItem, so only images are resolved through
+  // the cache here — asking for a video would start a second full download of a
+  // file the player is already pulling.
+  const { cachedUri: currentStoryUri } = useCachedMedia(
+    currentStory?.media_type === 'video' ? undefined : currentStory?.media_url
+  );
 
   // Gesture animation (swipe-down to dismiss)
   const translateY = useRef(new Animated.Value(0)).current;
@@ -321,13 +369,20 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     })
   ).current;
 
-  // Prefetch stories media when viewer opens
+  // Prefetch a short window of upcoming stories. Queueing every story in the
+  // venue the moment the viewer opened put up to three background downloads —
+  // other people's videos included — in a bandwidth fight with the story
+  // actually on screen, which is a large part of why videos took so long to
+  // start. The current story is deliberately left out: an image is fetched by
+  // its own useCachedMedia and a video is streamed by the player.
   useEffect(() => {
-    if (isVisible && stories.length > 0) {
-      const mediaUrls = stories.map(s => s.media_url).filter(Boolean);
-      prefetchStoriesMedia(mediaUrls);
-    }
-  }, [isVisible, stories]);
+    if (!isVisible || stories.length === 0) return;
+    const upcoming = stories
+      .slice(safeIndex + 1, safeIndex + 1 + PREFETCH_AHEAD)
+      .map(s => s.media_url)
+      .filter(Boolean);
+    if (upcoming.length > 0) prefetchStoriesMedia(upcoming);
+  }, [isVisible, storiesSerialized, safeIndex]);
 
   // ─── Prefetch usernames for all stories at once ──────────────────────────
   useEffect(() => {
@@ -476,7 +531,9 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     progressAnim.setValue(0);
     progressValue.current = 0;
     setIsPaused(false);
+    isMediaLoadingRef.current = true;
     setIsMediaLoading(true);
+    stallDeadlineRef.current = Date.now() + VIDEO_STALL_TIMEOUT_MS;
   }, [currentIndex, storiesSerialized]);
 
   // ─── Stall watchdog ──────────────────────────────────────────────────────
@@ -488,8 +545,15 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   // That dead state, not a crash, is what users report as the app freezing.
   //
   // Only armed while genuinely waiting: it is torn down the moment the media
-  // reports ready, and it never runs against a paused story (a deliberate
+  // reports ready, and it never fires against a paused story (a deliberate
   // press-and-hold must be able to last as long as the user wants).
+  //
+  // It counts down to a deadline fixed when the story opened, NOT to a fresh
+  // timeout per run. This effect re-runs on every isMediaLoading/isPaused
+  // change, and it used to restart the full 15s each time — so a video flapping
+  // in and out of `isBuffering` at the 250ms status interval, or a user tapping
+  // around trying to escape, pushed the deadline forward forever and the one
+  // thing meant to rescue them never fired.
   useEffect(() => {
     if (!isVisible || !currentStory || !isMediaLoading || isPaused) return;
 
@@ -498,9 +562,10 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
       console.warn(
         `[StoryViewer] Story ${currentStory.id} stalled for ${VIDEO_STALL_TIMEOUT_MS}ms; skipping`
       );
+      isMediaLoadingRef.current = false;
       setIsMediaLoading(false);
       handleNextRef.current();
-    }, VIDEO_STALL_TIMEOUT_MS);
+    }, Math.max(stallDeadlineRef.current - Date.now(), 0));
 
     return () => clearTimeout(timer);
   }, [isVisible, currentStory?.id, isMediaLoading, isPaused]);
@@ -595,6 +660,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const handleImageLoad = useCallback(() => {
     progressAnim.setValue(0);
     progressValue.current = 0;
+    isMediaLoadingRef.current = false;
     setIsMediaLoading(false);
   }, [progressAnim]);
 
@@ -602,15 +668,33 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   const handleVideoUpdate = useCallback((status: any) => {
     if (!status.isLoaded) return;
 
-    // Handle buffering state
-    if (status.isBuffering) {
-      setIsMediaLoading(true);
+    // A buffering stall. Not every isBuffering report is one: expo-av keeps
+    // flagging it during healthy playback on Android while it tops the buffer
+    // up, and treating that as loading re-raised the spinner over a video the
+    // user was happily watching.
+    if (status.isBuffering && !status.isPlaying) {
+      if (!isMediaLoadingRef.current) {
+        // Entering a stall from playback. Give the watchdog a deadline measured
+        // from this stall rather than from when the story opened, so a video
+        // that dies halfway through is still rescued. Guarded on the ref, not
+        // the state, so the 250ms status ticks that arrive before the re-render
+        // cannot keep pushing the deadline out — the bug this whole watchdog
+        // rewrite is about.
+        stallDeadlineRef.current = Date.now() + VIDEO_STALL_TIMEOUT_MS;
+        isMediaLoadingRef.current = true;
+        setIsMediaLoading(true);
+      }
       if (videoTimerRef.current) {
         videoTimerRef.current.stop();
         videoTimerRef.current = null;
       }
       return;
-    } else if (status.isPlaying && isMediaLoading) {
+    }
+    // Ready is "loaded and not buffering", not "playing" — a video that arrives
+    // while the user is holding never plays, so keying off isPlaying left the
+    // spinner over a fully loaded frame with the watchdog disabled by the pause.
+    if (isMediaLoadingRef.current) {
+      isMediaLoadingRef.current = false;
       setIsMediaLoading(false);
     }
 
@@ -642,7 +726,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         videoTimerRef.current = null;
       }
     }
-  }, [isPaused, handleNext, isMediaLoading]);
+  }, [isPaused, handleNext]);
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
   const calculateHoursAgo = (timestamp: any) => {
@@ -983,6 +1067,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                   onImageLoad={handleImageLoad}
                   onVideoUpdate={handleVideoUpdate}
                   onVideoError={() => {
+                    isMediaLoadingRef.current = false;
                     setIsMediaLoading(false);
                     handleNext();
                   }}
@@ -1002,8 +1087,8 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
               ))}
 
               {/* ── Loading spinner (shown while media buffers or cache resolves) ── */}
-              {(isMediaLoading || !currentStoryUri) && (
-                <View style={styles.loadingOverlay}>
+              {(isMediaLoading || (currentStory.media_type !== 'video' && !currentStoryUri)) && (
+                <View style={styles.loadingOverlay} pointerEvents="none">
                   <ActivityIndicator color="#FFFFFF" size="large" />
                 </View>
               )}
@@ -1092,6 +1177,18 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
                         </Pressable>
                       </View>
                     )}
+                    {/* The only exit from a playing story used to be the
+                        swipe-down gesture (plus the Android back button), so
+                        anything that made the story feel unresponsive left iOS
+                        users with no visible way out at all. An always-present
+                        close button means a stalled story is never a trap. */}
+                    <Pressable
+                      style={styles.closeButton}
+                      onPress={onClose}
+                      hitSlop={12}
+                    >
+                      <X color="#FFF" size={18} />
+                    </Pressable>
                   </View>
                 </View>
               </View>
@@ -1232,12 +1329,18 @@ const styles = StyleSheet.create({
   },
 
   // ── Media loading spinner ─────────────────────────────────────────────────
+  // zIndex 10 put this full-screen view above every control in the viewer: the
+  // prev/next tap zones (1), the header (3) and the bottom bar (5). While it was
+  // up it swallowed the taps meant to skip the story and dimmed the chrome, and
+  // since the playing state has no close button, the swipe-down gesture was the
+  // only exit left — that is the "stuck on a loading video, had to kill the app"
+  // report. It sits just above the media now, and never takes a touch.
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',
-    zIndex: 10,
+    zIndex: 1,
   },
 
   // ── Touch zones ───────────────────────────────────────────────────────────
@@ -1341,6 +1444,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     opacity: 0.9,
+  },
+  closeButton: {
+    padding: 6,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 16,
   },
   timeBlock: { opacity: 0.8 },
   timeText: {
