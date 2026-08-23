@@ -65,6 +65,28 @@ interface VenueImageProps {
   isHero?: boolean;
 }
 
+// Every image uri that has successfully painted in this app session.
+//
+// FlatList windowing (Explore runs windowSize={5}) unmounts cards a couple of
+// screens away and remounts them on the way back, which resets this component's
+// "has it loaded" state — so a photo the user saw thirty seconds ago showed its
+// placeholder again while the decoder caught up. It read as a reload even
+// though the bytes were already in the platform's HTTP cache.
+//
+// Remembering the uri is enough to skip straight to the photo on remount. It
+// costs a string per image (a few KB for a whole session) and no network,
+// storage, or API calls of any kind — the platform image loader still owns the
+// actual bytes and its own eviction.
+const loadedOnce = new Set<string>();
+// Only a guard against a pathological session; venue photo urls number in the
+// low hundreds.
+const LOADED_MEMORY_LIMIT = 1000;
+
+const rememberLoaded = (uri: string) => {
+  if (loadedOnce.size >= LOADED_MEMORY_LIMIT) loadedOnce.clear();
+  loadedOnce.add(uri);
+};
+
 type Source = {
   raw: string;
   // True once we have fallen through to the pooled stand-in, so a second failure
@@ -94,6 +116,11 @@ export const VenueImage: React.FC<VenueImageProps> = ({
 
   const primaryRaw = venue.imageUrl || null;
 
+  // What this component will ask for on its very first frame. Computed up here
+  // so the state initialisers below can ask whether it has already been seen.
+  const initialUri = resizeImageUrl(primaryRaw ?? fallbackRaw, TARGET_WIDTHS[variant]);
+  const seenBefore = loadedOnce.has(initialUri);
+
   const [source, setSource] = useState<Source>({
     raw: primaryRaw ?? fallbackRaw,
     isFallback: !primaryRaw,
@@ -109,7 +136,7 @@ export const VenueImage: React.FC<VenueImageProps> = ({
   // The exact uri that has actually painted. Plain committed state, never an
   // animated value: what the user sees must survive a native view being recycled
   // or an animation being dropped.
-  const [loadedUri, setLoadedUri] = useState<string | null>(null);
+  const [loadedUri, setLoadedUri] = useState<string | null>(seenBefore ? initialUri : null);
 
   if (propUri !== primaryRaw) {
     setPropUri(primaryRaw);
@@ -126,7 +153,9 @@ export const VenueImage: React.FC<VenueImageProps> = ({
   const previewUri = resizeImageUrl(source.raw, PREVIEW_WIDTH);
   const usePreview = variant !== 'thumbnail' && previewUri !== source.raw;
 
-  const loaded = loadedUri === uri;
+  // The session registry counts as loaded: a remounted card should draw its
+  // photo, not rewind to the placeholder it already came out of.
+  const loaded = loadedUri === uri || loadedOnce.has(uri);
 
   // Painted on the first frame, before a single byte is fetched, and left in
   // place underneath the photo. This is what makes a card never blank: the
@@ -187,7 +216,7 @@ export const VenueImage: React.FC<VenueImageProps> = ({
   // backgrounded app — the timer still clears the overlay, so a photo can never
   // end up hidden behind a placeholder that forgot to leave.
   const overlayOpacity = useRef(new Animated.Value(1)).current;
-  const [overlayHidden, setOverlayHidden] = useState(false);
+  const [overlayHidden, setOverlayHidden] = useState(seenBefore);
 
   useEffect(() => {
     if (!loaded) {
@@ -227,7 +256,10 @@ export const VenueImage: React.FC<VenueImageProps> = ({
           { opacity: restingOpacity },
         ]}
         resizeMode="cover"
-        onLoad={() => setLoadedUri(uri)}
+        onLoad={() => {
+          rememberLoaded(uri);
+          setLoadedUri(uri);
+        }}
         onError={handleError}
       />
 
