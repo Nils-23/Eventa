@@ -2,7 +2,7 @@
   "expo": {
     "name": "Eventas",
     "slug": "Eventa",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "scheme": "eventas",
     "orientation": "portrait",
     "icon": "./assets/App_icon.png",
@@ -14,7 +14,7 @@
       "backgroundColor": "#121212"
     },
     "ios": {
-      "buildNumber": "31",
+      "buildNumber": "32",
       "supportsTablet": true,
       "bundleIdentifier": "com.nils23.Eventa",
       "googleServicesFile": "./GoogleService-Info.plist",
@@ -67,8 +67,8 @@
       "usesAppleSignIn": true
     },
     "android": {
-      "versionCode": 35,
-      "runtimeVersion": "1.0.7",
+      "versionCode": 36,
+      "runtimeVersion": "1.0.8",
       "adaptiveIcon": {
         "foregroundImage": "./assets/App_icon.png",
         "backgroundColor": "#ffffff"
