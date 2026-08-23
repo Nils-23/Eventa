@@ -46,16 +46,28 @@ export function usePushNotifications() {
     }
   }, [venues, scheduledVenues, isLoading, pendingVenueId, setSelectedMapVenue, setPendingVenueId]);
 
+  // Token registration, split out of the effect below and gated on the uid.
+  // Sharing an effect with the notification listener meant it ran twice per
+  // launch — once before auth resolved and again after — so every cold start
+  // made two getExpoPushTokenAsync round-trips, and the first had no uid to
+  // save the token against.
   useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) return;
+
+    let cancelled = false;
     registerForPushNotificationsAsync().then(token => {
-      if (token) {
-        setExpoPushToken(token);
-        if (user?.uid) {
-          saveTokenToFirestore(user.uid, token);
-        }
-      }
+      if (cancelled || !token) return;
+      setExpoPushToken(token);
+      saveTokenToFirestore(uid, token);
     });
 
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid]);
+
+  useEffect(() => {
     // Handle notification response if app was cold-started from one
     Notifications.getLastNotificationResponseAsync().then(response => {
       if (response) {
@@ -83,7 +95,7 @@ export function usePushNotifications() {
     return () => {
       subscription.remove();
     };
-  }, [user?.uid, navigation, setPendingVenueId, setPendingVenueAction]);
+  }, [navigation, setPendingVenueId, setPendingVenueAction]);
 
   const saveTokenToFirestore = async (userId: string, token: string) => {
     try {
