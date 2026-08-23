@@ -17,6 +17,8 @@ import Toast from 'react-native-toast-message';
 import { LiveVenue, useLiveVenues } from '../hooks/useLiveVenues';
 import { VenueImage } from '../components/VenueImage';
 import { VenueChat } from '../components/VenueChat';
+import { ReviewSheet } from '../components/ReviewSheet';
+import { VenueRatingRow } from '../components/VenueRatingRow';
 import { useAppStore } from '../hooks/useAppStore';
 import { useCreatorStatus } from '../hooks/useCreatorStatus';
 import {
@@ -34,6 +36,7 @@ export const EventDetailScreen = () => {
   const setSelectedMapVenue = useAppStore((s) => s.setSelectedMapVenue);
   const user = useAppStore((s) => s.user);
   const [isChatVisible, setIsChatVisible] = useState(false);
+  const [isReviewVisible, setIsReviewVisible] = useState(false);
 
   // The route param is a snapshot from navigation time; re-resolve against the
   // live venues list so attendance stays current while this screen is open.
@@ -377,8 +380,26 @@ export const EventDetailScreen = () => {
             </View>
           ) : null}
 
+          {/* Ratings from people the app saw arrive. For an event this reads as
+              "what was it actually like", which is the thing a poster cannot
+              tell you. */}
+          <View style={styles.descriptionContainer}>
+            <Text style={styles.sectionTitle}>Ratings</Text>
+            <VenueRatingRow
+              stats={(event as any).reviewStats}
+              onPress={() => setIsReviewVisible(true)}
+            />
+          </View>
+
         </View>
       </ScrollView>
+
+      <ReviewSheet
+        isVisible={isReviewVisible}
+        onClose={() => setIsReviewVisible(false)}
+        venueId={event.id}
+        venueName={event.name}
+      />
 
       {/* Live Venue Chat Modal */}
       <VenueChat

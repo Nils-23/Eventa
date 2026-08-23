@@ -138,5 +138,54 @@ service cloud.firestore {
       );
       allow update: if isAdmin();
     }
+
+    // Visits — the GPS-verified ledger that gates reviews.
+    // Written by the client when the user is inside the venue radius, so the id
+    // is derived (uid_day_venue) and the rule pins the owner: a user can only
+    // ever write their own visit, and only under their own id.
+    match /visits/{visitId} {
+      allow read: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
+      allow create, update: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && visitId == request.auth.uid + '_' + request.resource.data.dayKey + '_' + request.resource.data.venueId;
+      allow delete: if isAdmin();
+    }
+
+    // Reviews.
+    //
+    // Readable by everyone — they are the point. Writes are pinned three ways:
+    //   1. The doc id must be uid_venueId, so one person holds exactly one
+    //      review per venue and editing replaces rather than stacks.
+    //   2. A matching `visits` row must exist. The gate itself is enforced
+    //      here rather than in the client, so the app cannot be patched to skip
+    //      it. Note what this does and does not buy: the row is written by the
+    //      client from GPS and nothing server-side re-checks the coordinates, so
+    //      a determined user talking to Firestore directly can still forge the
+    //      visit and then the review. It stops casual and drive-by review
+    //      bombing, not a motivated attacker. Verifying location server-side is
+    //      the fix if that ever becomes worth doing.
+    //   3. The reviewer must be the signed-in user. Simulated personas
+    //      (sim_*/persona_*) are never signed-in accounts, so the admin's
+    //      "post as simulated user" path cannot reach this collection: crowd
+    //      counts and chat are ambient and expire, a review is a durable claim
+    //      about a real business and must come from a real person.
+    // status is server-owned: a client may only ever write 'visible', so
+    // nobody can un-hide a review an admin took down.
+    match /reviews/{reviewId} {
+      function ownsVisit() {
+        return exists(/databases/$(database)/documents/visits/$(request.auth.uid + '_' + request.resource.data.visitDayKey + '_' + request.resource.data.venueId));
+      }
+      allow read: if true;
+      allow create, update: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && reviewId == request.auth.uid + '_' + request.resource.data.venueId
+        && request.resource.data.status == 'visible'
+        && ownsVisit();
+      allow delete: if isAdmin() || (
+        isAuthenticated() && resource.data.userId == request.auth.uid
+      );
+    }
   }
 }

@@ -6,6 +6,7 @@ const { generateMessage } = require("./generator");
 const { SCENARIOS, getCoreStanceForScenario, getSecondaryStanceForScenario, STRANGER_OK_SCENARIOS } = require("./scenarios");
 const { runCrowdSimulationCycle, getProfile, getAttendanceShape, inferProfileKey } = require("./crowdSimulation");
 const { refreshVenueImages } = require("./venueImages");
+const { handleReviewWritten, runReviewPrompts } = require("./reviews");
 
 // A venue is "alive" for persona chat only when its attendance curve says
 // people are actually there at this hour (bar at 2pm ≈ 0, park at 2pm ≈ 1).
@@ -2141,6 +2142,20 @@ exports.checkRecurringStories = functions.pubsub.schedule("every 5 minutes").onR
 // to a stale key. Steady state makes zero Places API calls, and API failures
 // write nothing so the next run retries — recovery is automatic once an
 // outage ends. Key lives in settings/simulation.googleMapsApiKey.
+// ─── Venue reviews ───────────────────────────────────────────────────────────
+// Clients write reviews (firestore.rules enforce the verified-visit gate);
+// everything derived from them is server-owned, because venue docs are
+// admin-write-only and an average a client computes is one a client can forge.
+exports.onReviewWritten = functions.firestore
+  .document('reviews/{reviewId}')
+  .onWrite((change) => handleReviewWritten(db, change));
+
+// One "how was it?" per visit, the morning after, at a civilised local hour.
+exports.sendReviewPrompts = functions
+  .runWith({ timeoutSeconds: 300, memory: '256MB' })
+  .pubsub.schedule('every 60 minutes')
+  .onRun(() => runReviewPrompts(db, sendRateLimitedPushNotification));
+
 exports.refreshVenueImages = functions.runWith({ timeoutSeconds: 540, memory: '512MB' })
   .pubsub.schedule('every 6 hours').onRun(async (context) => {
     let apiKey = process.env.GOOGLE_MAPS_API_KEY || null;

@@ -19,6 +19,8 @@ import { useAppStore } from '../hooks/useAppStore';
 import { VenueChat } from '../components/VenueChat';
 import { VenueImage } from '../components/VenueImage';
 import { LiveFeedModal } from '../components/LiveFeedModal';
+import { ReviewSheet } from '../components/ReviewSheet';
+import { VenueRatingRow } from '../components/VenueRatingRow';
 import { CityPulseModal } from '../components/CityPulseModal';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
 
@@ -329,6 +331,7 @@ export const MapScreen = () => {
   const mapRef = useRef<MapView>(null);
   const insets = useSafeAreaInsets();
   const { venues, scheduledVenues, heatPoints, ensureLocationWatch } = useLiveVenues();
+  const [reviewVenue, setReviewVenue] = useState<{ id: string; name: string } | null>(null);
   // The live feed lists venues that have chat activity, and a chat opens the
   // moment an event is published — hours before it starts. Scheduled events are
   // therefore included here even though they are not live yet, or a chat people
@@ -1224,6 +1227,14 @@ export const MapScreen = () => {
 
             <Text style={styles.venueCardDescription} numberOfLines={2}>{cardVenue.description}</Text>
 
+            {/* Ratings sit under the live signal, not above it: what the room is
+                like right now is why people opened the map, and what visitors
+                thought of it is the second question. */}
+            <VenueRatingRow
+              stats={cardVenue.reviewStats}
+              onPress={() => setReviewVenue({ id: cardVenue.id, name: cardVenue.name })}
+            />
+
             <View style={styles.cardActionRow}>
               <TouchableOpacity
                 style={styles.viewStoriesBtn}
@@ -1316,6 +1327,13 @@ export const MapScreen = () => {
             pitch: 0, // keep flat — tilt breaks heatmap blob sizing (see INITIAL_CAMERA)
           }, { duration: 1000 });
         }}
+      />
+
+      <ReviewSheet
+        isVisible={!!reviewVenue}
+        onClose={() => setReviewVenue(null)}
+        venueId={reviewVenue?.id || ''}
+        venueName={reviewVenue?.name || ''}
       />
 
       {/* Live Feed Modal */}

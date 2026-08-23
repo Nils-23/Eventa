@@ -7,12 +7,40 @@ import { checkAndUnlockAchievements } from '../services/achievementService';
 import { getMonthlyPointsKey } from '../services/userService';
 import { verifyAttendanceAtVenues } from '../services/creatorService';
 
+/**
+ * A queryable record of one user being at one venue on one Nairobi day.
+ *
+ * Deliberately fire-and-forget: the visit's points and achievements are already
+ * being written by the caller, and a failed ledger row should never cost the
+ * user those. It reconciles on the next visit.
+ */
+function writeVisitRecord(userId: string, venueId: string, venueName: string, dayKey: string) {
+  const visitId = `${userId}_${dayKey}_${venueId}`;
+  setDoc(
+    doc(firestore, 'visits', visitId),
+    {
+      userId,
+      venueId,
+      venueName: venueName || '',
+      // The key already encodes the Nairobi day; visitedAt keeps the ordering
+      // exact so "most recent visit" needs no string parsing.
+      dayKey,
+      visitedAt: Date.now(),
+      reviewPrompted: false,
+    },
+    { merge: true }
+  ).catch((err) => console.warn('[useVisitTracker] Failed to write visit record:', err));
+}
+
 export const useVisitTracker = () => {
   const user = useAppStore((s) => s.user);
   const { venues } = useLiveVenues();
   
   // We use refs to avoid triggering unnecessary effect runs and spamming Firestore
   const trackedDailyVenuesRef = useRef<Set<string>>(new Set());
+  // Ledger rows already written this session, so a venue the user is sitting in
+  // is not re-written on every location tick.
+  const visitRecordsWrittenRef = useRef<Set<string>>(new Set());
   const isCheckingRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -24,11 +52,22 @@ export const useVisitTracker = () => {
       
       if (nearbyVenues.length === 0) return;
 
-      const todayStr = new Date().toISOString().split('T')[0]; // e.g. "2026-04-30"
+      // Nairobi day, not UTC: a visit at 01:00 local is still "last night" to the
+      // user, and a UTC key files it under the previous date. Same 'en-CA' /
+      // Africa/Nairobi formatting the rest of the app uses for day keys.
+      const todayStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Nairobi',
+      }).format(new Date()); // e.g. "2026-04-30"
 
-      // Check if we already have daily visit records for ALL nearby venues in this session
-      const allAlreadyTracked = nearbyVenues.every(v => 
-        trackedDailyVenuesRef.current.has(`${todayStr}_${v.id}`)
+      // Nothing left to award AND every nearby venue already has its ledger row.
+      // The ledger has to be part of this test: points are once-per-day, but a
+      // user whose points were already banked (earlier today, or by a build that
+      // predates the ledger) still needs the visit row or they cannot rate the
+      // room they are standing in.
+      const allAlreadyTracked = nearbyVenues.every(
+        (v) =>
+          trackedDailyVenuesRef.current.has(`${todayStr}_${v.id}`) &&
+          visitRecordsWrittenRef.current.has(`${todayStr}_${v.id}`)
       );
       if (allAlreadyTracked) return;
 
@@ -61,6 +100,21 @@ export const useVisitTracker = () => {
         
         for (const venue of nearbyVenues) {
           const dailyKey = `${todayStr}_${venue.id}`;
+
+          // Ledger row, written for every nearby venue rather than only when
+          // points are owed. The array above cannot answer "was this user here
+          // in the last 14 days" without loading every user document, and that
+          // question is the review gate: someone standing in a venue can rate it
+          // from that moment, so the row has to exist as soon as they arrive —
+          // including on a second walk-in the same day, when the points for it
+          // were banked hours ago. The doc id is derived, so this is idempotent;
+          // the session ref just keeps it to one write per venue per session
+          // instead of one per location tick.
+          if (!visitRecordsWrittenRef.current.has(dailyKey)) {
+            visitRecordsWrittenRef.current.add(dailyKey);
+            writeVisitRecord(user.uid, venue.id, venue.name, todayStr);
+          }
+
           if (!trackedDailyVenuesRef.current.has(dailyKey)) {
             updates.dailyVenueVisits = updates.dailyVenueVisits || arrayUnion();
             // Just tracking locally, will use arrayUnion later
