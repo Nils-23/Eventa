@@ -1,13 +1,68 @@
 [
   {
-    "name": "ZZ TEST — Eventas pipeline check (safe to reject)",
-    "venue": "Test Venue (automated pipeline check)",
-    "date": "31/08/2026",
-    "time": "8:00 PM",
+    "name": "Fally Ipupa LIVE in Nairobi • Tokooos Tour",
+    "venue": "Uhuru Gardens, Nairobi",
+    "date": "05/09/2026",
+    "time": "3:00 PM",
     "category": "Event",
-    "description": "Automated end-to-end test of the GitHub Actions curator write. Please reject this entry in the Admin Curations tab — it is not a real event.",
+    "description": "Congolese superstar Fally Ipupa touches down in Nairobi with Kamo Mphela, Tango Supreme and DJ Maphorisa in tow for a night of pure Tokooos energy. Grab your dancing shoes, this one's running from afternoon sunshine straight into the early morning hours.",
+    "ticketLink": "https://www.ticketsasa.com/events/fally-ipupa-live-in-nairobi",
+    "sourceLink": "https://nairobieventsguide.com/event/fally-ipupa-live/",
+    "img": "https://nairobieventsguide.com/wp-content/uploads/Fally-Ipupa-LIVE-in-Nairobi-1.jpg"
+  },
+  {
+    "name": "Blankets & Wine 2026 • September Edition",
+    "venue": "Laureate Gardens, Moi International Sports Centre, Nairobi",
+    "date": "06/09/2026",
+    "time": "All Day",
+    "category": "Event",
+    "description": "Nairobi's favourite picnic-turned-festival is back with music, fashion, food and that unmistakable Blankets & Wine glow. Pack a blanket, bring your crew, and let your taste live loud all day long.",
     "ticketLink": null,
-    "sourceLink": "https://github.com/Nils-23/Eventa/actions",
-    "img": null
+    "sourceLink": "https://nairobieventsguide.com/event/blankets-wine-2026-september-edition/",
+    "img": "https://nairobieventsguide.com/wp-content/uploads/Blankets-Wine-2026-Edition.jpg"
+  },
+  {
+    "name": "Tall Tales & Toasts (2nd Edition)",
+    "venue": "Suave Kitchen & Social Club, Westlands, Nairobi",
+    "date": "04/09/2026",
+    "time": "6:00 PM",
+    "category": "Bar",
+    "description": "A stylish mixer built just for the tall community, where women 5'8\"+ and men 6'0\"+ come through to toast, mingle and swap stories over great food and drinks. It's a curated night for a crowd that's used to standing out.",
+    "ticketLink": "https://standupcollective.co.ke/buytickets?event=WESTLANDS%3a%20Tall%20Tales%20%26Toasts",
+    "sourceLink": "https://standupcollective.co.ke/shows",
+    "img": "https://standupcollective.co.ke/media/TALL%20TALES%20%26%20TOASTS.png"
+  },
+  {
+    "name": "Between The Lines Unfiltered",
+    "venue": "Suave Kitchen & Social Club, Westlands, Nairobi",
+    "date": "06/09/2026",
+    "time": "7:30 PM",
+    "category": "Bar",
+    "description": "An intimate storytelling night built around the things we think but rarely say out loud, moving through breaking the ice, truth, unfiltered moments and hope. No masks, no filters, just real Nairobi stories with good company.",
+    "ticketLink": "https://standupcollective.co.ke/buytickets?event=WESTLANDS%3a%20Between%20The%20Lines%20Unfiltered%206th%20Sep",
+    "sourceLink": "https://standupcollective.co.ke/shows",
+    "img": "https://standupcollective.co.ke/media/WhatsApp%20Image%202026-08-11%20at%2010.42.03%20AM.jpeg"
+  },
+  {
+    "name": "Knanfe Pop-Up Nairobi",
+    "venue": "DUSIT Princess Hotel Residences Nairobi, Westlands",
+    "date": "04/09/2026",
+    "time": "11:00 AM",
+    "category": "Event",
+    "description": "The African pop-up tour rolls into Nairobi with a shop-in-person edit of Knanfe's favourite pieces, plus tasty extras on the side. Three days of retail therapy in Westlands, come through and treat yourself.",
+    "ticketLink": "https://luma.com/ul9dhuyi",
+    "sourceLink": "https://nairobieventsguide.com/event/knanfe-pop-up-nairobi/",
+    "img": "https://nairobieventsguide.com/wp-content/uploads/Knanfe-Pop-Up-Nairobi.jpg"
+  },
+  {
+    "name": "Karibu Nairobi Embe Pop-Up",
+    "venue": "Embe Creatives, Maji Mazuri Rd, Lavington, Nairobi",
+    "date": "05/09/2026",
+    "time": "10:00 AM",
+    "category": "Event",
+    "description": "The Karibu Nairobi family throws another free-entry pop-up full of shopping, music, good company and good vibes. A laid-back Saturday plan for anyone who loves supporting local makers.",
+    "ticketLink": "https://karibunairobi.co.ke/event/embe-pop-up/",
+    "sourceLink": "https://nairobieventsguide.com/event/karibu-nairobi-embe-pop-up/",
+    "img": "https://nairobieventsguide.com/wp-content/uploads/Karibu-Nairobi-Embe-Pop-Up.jpeg"
   }
 ]
