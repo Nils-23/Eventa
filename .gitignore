@@ -47,3 +47,10 @@ scripts/serviceAccountKey.json
 # generated native folders
 /ios
 /android
+
+# firebase emulator debug output (regenerated on every emulator run)
+firestore-debug.log
+firebase-debug.log
+database-debug.log
+ui-debug.log
+pubsub-debug.log
