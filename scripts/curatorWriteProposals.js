@@ -58,7 +58,7 @@ function isPastEvent(dateStr) {
   const t = eventDateStartMs(dateStr);
   return isNaN(t) ? true : t < nairobiTodayStartMs();
 }
-function isWithinWindow(dateStr, minDays = 7, maxDays = 14) {
+function isWithinWindow(dateStr, minDays = 0, maxDays = 14) {
   const t = eventDateStartMs(dateStr);
   if (isNaN(t)) return false;
   const diff = Math.round((t - nairobiTodayStartMs()) / (24 * 60 * 60 * 1000));
