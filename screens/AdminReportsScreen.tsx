@@ -7,8 +7,11 @@ import {
   FlatList,
   ActivityIndicator,
   Alert,
+  Modal,
+  Image as RNImage,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Video, ResizeMode } from 'expo-av';
 import {
   ArrowLeft,
   Trash2,
@@ -19,6 +22,7 @@ import {
   Image,
   MapPin,
   Clock,
+  X,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, query, orderBy, onSnapshot, getDocs } from 'firebase/firestore';
@@ -32,9 +36,12 @@ import {
   resolveReportWithUserRemoval,
   ReportData,
 } from '../services/reportService';
+import { ReportedContentPreview, MediaKind } from '../components/ReportedContentPreview';
 
 export const AdminReportsScreen = () => {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const [mediaViewer, setMediaViewer] = useState<{ url: string; kind: MediaKind } | null>(null);
   const [reports, setReports] = useState<ReportData[]>([]);
   const [loading, setLoading] = useState(true);
   const [userMap, setUserMap] = useState<Record<string, string>>({});
@@ -335,12 +342,11 @@ export const AdminReportsScreen = () => {
 
         <Text style={styles.reasonText}>Reason: {item.reason}</Text>
 
-        <View style={styles.snippetBox}>
-          <Text style={styles.snippetTitle}>REPORTED CONTENT:</Text>
-          <Text style={styles.snippetContent} numberOfLines={4}>
-            {item.contentSnippet || '(No content text available)'}
-          </Text>
-        </View>
+        <ReportedContentPreview
+          report={item}
+          userMap={userMap}
+          onOpenMedia={(url, kind) => setMediaViewer({ url, kind })}
+        />
 
         <View style={styles.metaRow}>
           <Text style={styles.metaLabel}>
@@ -450,6 +456,40 @@ export const AdminReportsScreen = () => {
           }
         />
       )}
+
+      {/* Full-screen viewer so an admin can actually inspect reported media */}
+      <Modal
+        visible={!!mediaViewer}
+        transparent={false}
+        animationType="fade"
+        onRequestClose={() => setMediaViewer(null)}
+        statusBarTranslucent={true}
+      >
+        <View style={styles.mediaViewerContainer}>
+          {mediaViewer?.kind === 'video' ? (
+            <Video
+              source={{ uri: mediaViewer.url }}
+              style={styles.mediaViewerContent}
+              resizeMode={ResizeMode.CONTAIN}
+              shouldPlay
+              isLooping
+              useNativeControls
+            />
+          ) : mediaViewer ? (
+            <RNImage
+              source={{ uri: mediaViewer.url }}
+              style={styles.mediaViewerContent}
+              resizeMode="contain"
+            />
+          ) : null}
+          <TouchableOpacity
+            style={[styles.mediaViewerClose, { top: insets.top + 12 }]}
+            onPress={() => setMediaViewer(null)}
+          >
+            <X color="#FFF" size={24} />
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -531,25 +571,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 12,
   },
-  snippetBox: {
-    backgroundColor: '#121212',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#222',
+  mediaViewerContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  snippetTitle: {
-    color: '#FF00CC',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 6,
+  mediaViewerContent: {
+    width: '100%',
+    height: '100%',
   },
-  snippetContent: {
-    color: '#CCC',
-    fontSize: 13,
-    lineHeight: 18,
+  mediaViewerClose: {
+    position: 'absolute',
+    right: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 20,
+    padding: 8,
   },
   metaRow: {
     marginBottom: 16,

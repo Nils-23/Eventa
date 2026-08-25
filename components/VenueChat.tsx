@@ -864,14 +864,18 @@ export const VenueChat: React.FC<VenueChatProps> = ({
     if (!user) return;
     setSelectedMessageForReaction(null);
     try {
+      const isMedia = msg.type === 'media';
       await createReport(
         user.uid,
         msg.user_id,
         'chat',
         msg.id,
-        msg.message,
+        isMedia ? (msg.mediaType === 'video' ? 'Video message' : 'Photo message') : msg.message,
         venueId,
-        reason
+        reason,
+        isMedia && msg.message
+          ? { url: msg.message, type: msg.mediaType === 'video' ? 'video' : 'image' }
+          : undefined
       );
       Toast.show({
         type: 'success',
@@ -924,9 +928,12 @@ export const VenueChat: React.FC<VenueChatProps> = ({
         msg.storyData.user_id,
         'post',
         msg.storyData.id,
-        msg.storyData.media_url,
+        msg.storyData.media_type === 'video' ? 'Video story' : 'Photo story',
         venueId,
-        reason
+        reason,
+        msg.storyData.media_url
+          ? { url: msg.storyData.media_url, type: msg.storyData.media_type === 'video' ? 'video' : 'image' }
+          : undefined
       );
       Toast.show({
         type: 'success',

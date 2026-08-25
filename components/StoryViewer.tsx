@@ -977,9 +977,12 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
         currentStory.user_id,
         'post',
         currentStory.id,
-        currentStory.media_url,
+        currentStory.media_type === 'video' ? 'Video story' : 'Photo story',
         currentStory.venue_id || undefined,
-        reason
+        reason,
+        currentStory.media_url
+          ? { url: currentStory.media_url, type: currentStory.media_type === 'video' ? 'video' : 'image' }
+          : undefined
       );
       Toast.show({
         type: 'success',

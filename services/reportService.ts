@@ -9,7 +9,14 @@ export interface ReportData {
   reportedUserId: string | null;
   contentType: 'chat' | 'post' | 'venue' | 'user_hidden';
   contentId: string;
+  /** Human-readable text of the reported content, or a label when it is media. */
   contentSnippet: string;
+  /**
+   * Media captured at report time. Kept so the moderation queue can still show
+   * something after the original story/message is deleted or expires.
+   */
+  contentMediaUrl?: string | null;
+  contentMediaType?: 'image' | 'video' | null;
   venueId?: string;
   reason: string;
   timestamp: any;
@@ -26,7 +33,8 @@ export const createReport = async (
   contentId: string,
   contentSnippet: string,
   venueId?: string,
-  reason: string = 'Inappropriate content'
+  reason: string = 'Inappropriate content',
+  media?: { url: string; type: 'image' | 'video' }
 ): Promise<string> => {
   try {
     const docRef = await addDoc(collection(firestore, 'reports'), {
@@ -35,6 +43,8 @@ export const createReport = async (
       contentType,
       contentId,
       contentSnippet,
+      contentMediaUrl: media?.url || null,
+      contentMediaType: media?.type || null,
       venueId: venueId || null,
       reason,
       timestamp: serverTimestamp(),
