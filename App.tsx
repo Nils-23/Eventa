@@ -34,6 +34,8 @@ import { LiveVenuesProvider } from './contexts/LiveVenuesContext';
 import { useVersionCheck } from './hooks/useVersionCheck';
 import { UpdatePromptModal } from './components/UpdatePromptModal';
 import { navigationRef, navigate } from './navigation/navigationRef';
+import { VenueDeepLinkHandler } from './components/VenueDeepLinkHandler';
+import { setPendingVenueId } from './services/pendingDeepLink';
 import { theme } from './config/theme';
 
 
@@ -56,6 +58,7 @@ export default function App() {
   // Check for app updates
   const versionInfo = useVersionCheck();
   const [hasDismissedFlexibleUpdate, setHasDismissedFlexibleUpdate] = React.useState(false);
+  const [isNavReady, setIsNavReady] = React.useState(false);
 
   // First Launch Onboarding State
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = React.useState<boolean | null>(null);
@@ -71,6 +74,13 @@ export default function App() {
 
     const handleUrl = async (url: string | null) => {
       if (!url) return;
+      const venueMatch = url.match(/\/venue\/([a-zA-Z0-9_-]+)/);
+      if (venueMatch && venueMatch[1]) {
+        // Parked, not navigated: nav/auth/venues may all still be pending on a
+        // cold start. VenueDeepLinkHandler routes it once they are ready.
+        setPendingVenueId(venueMatch[1]);
+      }
+
       const inviteMatch = url.match(/\/invite\/([a-zA-Z0-9_-]+)/);
       if (inviteMatch && inviteMatch[1]) {
         const code = inviteMatch[1];
@@ -139,7 +149,15 @@ export default function App() {
   return (
     <ErrorBoundary>
       <LiveVenuesProvider>
-        <NavigationContainer theme={DarkTheme} ref={navigationRef}>
+        <VenueDeepLinkHandler
+          navReady={isNavReady}
+          canRoute={!!user && hasAgreedToTerms && !!hasCompletedOnboarding}
+        />
+        <NavigationContainer
+          theme={DarkTheme}
+          ref={navigationRef}
+          onReady={() => setIsNavReady(true)}
+        >
           <Stack.Navigator
             // Android has no native-stack back gesture, so every screen is wrapped
             // in the edge-swipe handler. It no-ops on iOS, and no-ops at the root

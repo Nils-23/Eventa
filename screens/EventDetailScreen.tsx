@@ -132,7 +132,7 @@ export const EventDetailScreen = () => {
   const handleShare = async () => {
     try {
       await Share.share({
-        message: `Check out ${event.name} on Eventas!\n\nhttps://eventas.live/venue/${event.id}`,
+        message: `Check out ${event.name} on Eventas!\n\nhttps://www.eventas.live/venue/${event.id}`,
       });
     } catch (error) {
       console.error(error);

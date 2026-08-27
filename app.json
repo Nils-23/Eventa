@@ -96,7 +96,9 @@
           "autoVerify": true,
           "data": [
             { "scheme": "https", "host": "eventas.live", "pathPrefix": "/invite" },
-            { "scheme": "https", "host": "www.eventas.live", "pathPrefix": "/invite" }
+            { "scheme": "https", "host": "www.eventas.live", "pathPrefix": "/invite" },
+            { "scheme": "https", "host": "eventas.live", "pathPrefix": "/venue" },
+            { "scheme": "https", "host": "www.eventas.live", "pathPrefix": "/venue" }
           ],
           "category": ["BROWSABLE", "DEFAULT"]
         }
