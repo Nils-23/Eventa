@@ -18,13 +18,21 @@ import { useLiveVenues } from '../hooks/useLiveVenues';
 import { navigate } from '../navigation/navigationRef';
 import {
   getPendingVenueId,
+  getPendingVenueSetAt,
   setPendingVenueId,
   subscribePendingVenueId,
 } from '../services/pendingDeepLink';
 
-// A link to a venue that no longer exists would otherwise sit pending forever
-// and fire on some unrelated later render. Give it a bounded window instead.
+// Once we are actually able to route, a venue that never turns up in the live
+// list is a dead link — stop waiting rather than firing on some unrelated later
+// render. This clock deliberately does NOT run while the user is signed out:
+// there we are waiting on a person, not on data, and sign-up can take minutes.
 const RESOLVE_TIMEOUT_MS = 20000;
+
+// Backstop for the signed-out wait. A link tapped and then abandoned should not
+// still be sitting there ready to yank the user somewhere much later in the
+// session. Generous enough to cover sign-up, e-mail verification and terms.
+const MAX_PENDING_AGE_MS = 30 * 60 * 1000;
 
 export const VenueDeepLinkHandler: React.FC<{
   navReady: boolean;
@@ -38,14 +46,21 @@ export const VenueDeepLinkHandler: React.FC<{
     [],
   );
 
+  // Only bound the wait once routing is actually possible. While the user is
+  // signing in, the link waits indefinitely (up to MAX_PENDING_AGE_MS) so that
+  // arriving from a share link and creating an account still lands on the event.
   React.useEffect(() => {
-    if (!pendingId) return;
+    if (!pendingId || !navReady || !canRoute) return;
     const timer = setTimeout(() => setPendingVenueId(null), RESOLVE_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [pendingId]);
+  }, [pendingId, navReady, canRoute]);
 
   React.useEffect(() => {
     if (!pendingId || !navReady || !canRoute) return;
+    if (Date.now() - getPendingVenueSetAt() > MAX_PENDING_AGE_MS) {
+      setPendingVenueId(null);
+      return;
+    }
     const venue = venues.find((v) => v.id === pendingId);
     // Not an error — the list is still streaming in. This effect re-runs on the
     // next venues update.

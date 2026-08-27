@@ -10,15 +10,22 @@
  * (or remounts) between the URL arriving and the handler being ready.
  */
 let pendingVenueId: string | null = null;
+let pendingVenueSetAt = 0;
 const listeners = new Set<() => void>();
 
 export function setPendingVenueId(id: string | null) {
   pendingVenueId = id;
+  pendingVenueSetAt = id ? Date.now() : 0;
   listeners.forEach((l) => l());
 }
 
 export function getPendingVenueId() {
   return pendingVenueId;
+}
+
+/** When the current pending link arrived, for staleness checks. */
+export function getPendingVenueSetAt() {
+  return pendingVenueSetAt;
 }
 
 export function subscribePendingVenueId(listener: () => void) {
