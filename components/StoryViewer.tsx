@@ -21,11 +21,13 @@ import { Video, ResizeMode, Audio } from 'expo-av';
 import { X, Plus, ArrowLeft, User as UserIcon, Trash2, Flag, UserX, Send } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StoryData } from '../services/storyService';
-import { fetchUsername, hideUser } from '../services/userService';
+import { requireUsername, hideUser } from '../services/userService';
+import { useUsernames } from '../hooks/useUsernames';
 import { ACHIEVEMENTS } from '../services/achievementService';
 import { useAppStore } from '../hooks/useAppStore';
 import { createReport } from '../services/reportService';
 import Toast from 'react-native-toast-message';
+import { getFriendlyErrorMessage } from '../utils/errorUtils';
 import * as Icons from 'lucide-react-native';
 import { useCachedMedia } from '../hooks/useCachedMedia';
 import { prefetchStoriesMedia, getCachedMediaUriSync } from '../utils/mediaCache';
@@ -254,8 +256,9 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   // reply input is focused (the focus itself signals intent to react).
   const [isInputFocused, setIsInputFocused] = useState(false);
 
-  // Username cache per-session (avoids re-fetching same uid)
-  const [usernameMap, setUsernameMap] = useState<Record<string, string>>({});
+  // Live author names, one shared listener per author. A one-shot fetch here
+  // meant a story kept showing whatever its author was called the first time
+  // this session resolved them, even after they renamed.
 
   const progressAnim = useRef(new Animated.Value(0)).current;
   const progressValue = useRef(0);
@@ -384,18 +387,9 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     if (upcoming.length > 0) prefetchStoriesMedia(upcoming);
   }, [isVisible, storiesSerialized, safeIndex]);
 
-  // ─── Prefetch usernames for all stories at once ──────────────────────────
-  useEffect(() => {
-    if (!isVisible || stories.length === 0) return;
-    const uniqueIds = [...new Set(stories.map(s => s.user_id))];
-    uniqueIds.forEach(uid => {
-      if (!usernameMap[uid]) {
-        fetchUsername(uid).then(name => {
-          setUsernameMap(prev => ({ ...prev, [uid]: name }));
-        });
-      }
-    });
-  }, [isVisible, stories]);
+  // ─── Live usernames for every story author on screen ─────────────────────
+  const storyAuthorIds = useMemo(() => stories.map((s) => s.user_id), [storiesSerialized]);
+  const usernameMap = useUsernames(storyAuthorIds);
 
   // ─── Keyboard tracking: lift the reply bar above the keyboard ────────────
   useEffect(() => {
@@ -782,7 +776,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
   ) => {
     if (!user || !currentStory?.venue_id) return;
 
-    const senderName = await fetchUsername(user.uid);
+    const senderName = await requireUsername(user.uid);
     const chatRef = ref(realtimeDB, `venue_chats/${currentStory.venue_id}`);
     const newMessageRef = push(chatRef);
 
@@ -839,7 +833,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
     setIsPaused(true);
 
     try {
-      const senderName = await fetchUsername(user.uid);
+      const senderName = await requireUsername(user.uid);
       await sendStoryChatMessage(
         `Reacted ${emoji} to ${currentUsername || 'someone'}'s story`,
         { [emoji]: { [user.uid]: senderName } }
@@ -864,7 +858,7 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
       Toast.show({
         type: 'error',
         text1: 'Reaction Failed',
-        text2: 'Could not deliver reaction to chat.',
+        text2: getFriendlyErrorMessage(err),
       });
       setIsPaused(false);
     }
@@ -891,7 +885,9 @@ export const StoryViewer: React.FC<StoryViewerProps> = ({
       Toast.show({
         type: 'error',
         text1: 'Reply Failed',
-        text2: 'Could not deliver reply to chat.',
+        // The specific reason, not a generic one: a reply blocked because the
+        // sender's name could not be resolved is a fixable, explainable state.
+        text2: getFriendlyErrorMessage(err),
       });
     } finally {
       setIsSendingReply(false);

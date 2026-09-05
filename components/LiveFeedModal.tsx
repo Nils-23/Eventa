@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Modal,
   View,
@@ -17,6 +17,7 @@ import { LiveVenue } from '../contexts/LiveVenuesContext';
 import { StoryData } from '../services/storyService';
 import { MessageSquare, X, ChevronRight, Map } from 'lucide-react-native';
 import { useAppStore } from '../hooks/useAppStore';
+import { useUsernames } from '../hooks/useUsernames';
 
 interface LiveFeedModalProps {
   isVisible: boolean;
@@ -52,6 +53,14 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
   const hiddenUsers = useAppStore((s) => s.hiddenUsers);
   const lastViewedChats = useAppStore((s) => s.lastViewedChats);
   const user = useAppStore((s) => s.user);
+
+  // The name stored on a chat message is frozen at send time; resolve the
+  // sender's current name from their uid so the preview matches the room.
+  const previewAuthorIds = useMemo(
+    () => Object.values(latestMessages).map((m) => m.userId),
+    [latestMessages]
+  );
+  const liveNames = useUsernames(previewAuthorIds);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -175,7 +184,7 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
           venueId: venueId,
           venueName: venue.name,
           latestMessage: msg.message,
-          latestUsername: msg.username,
+          latestUsername: (msg.userId ? liveNames[msg.userId] : null) ?? msg.username,
           timestamp: msg.timestamp,
           venueObj: venue,
           latestUserId: msg.userId,
@@ -185,7 +194,7 @@ export const LiveFeedModal: React.FC<LiveFeedModalProps> = ({
 
     // Sort: newest messages first
     return items.sort((a, b) => b.timestamp - a.timestamp);
-  }, [latestMessages, venues]);
+  }, [latestMessages, venues, liveNames]);
 
   const formatTimeAgo = (timestamp: number) => {
     const diffMs = Date.now() - timestamp;

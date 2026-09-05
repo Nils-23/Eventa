@@ -3,6 +3,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, firestore } from '../services/firebase';
+import { clearUsernameCache, subscribeUsername } from '../services/userService';
 import { useAppStore } from './useAppStore';
 
 /**
@@ -36,8 +37,13 @@ export const useAuth = () => {
     let cancelled = false;
     let unsubProfile: (() => void) | null = null;
     let lastUid: string | null = null;
+    let unsubOwnName: (() => void) | null = null;
 
     const stopProfileListener = () => {
+      if (unsubOwnName) {
+        unsubOwnName();
+        unsubOwnName = null;
+      }
       if (!unsubProfile) return;
       unsubProfile();
       unsubProfile = null;
@@ -59,6 +65,10 @@ export const useAuth = () => {
           AsyncStorage.removeItem(profileCacheKey(lastUid)).catch(() => {});
           lastUid = null;
         }
+        // Usernames are cached process-wide and keyed by uid, so without this
+        // the next account signed in on the device starts out reading the
+        // previous one's names.
+        clearUsernameCache();
         setUser(null);
         applyProfile(EMPTY_PROFILE);
         setIsLoading(false);
@@ -66,6 +76,13 @@ export const useAuth = () => {
       }
 
       lastUid = user.uid;
+
+      // Hold one listener on the signed-in user's own name for the life of the
+      // session. It keeps the shared username registry warm — so a message can
+      // be stamped with the right name without a round trip — and, because the
+      // registry is what every screen renders from, a rename made on another
+      // device is reflected here the moment it lands. No sign-out, no restart.
+      unsubOwnName = subscribeUsername(user.uid, () => {});
 
       // The session comes back from AsyncStorage persistence and is valid with
       // or without a network, so commit it BEFORE anything that can fail.

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LogOut, Settings, Award, CircleUserRound, Edit2, Check, UserPlus, BadgeCheck, Star, Bell, Trash2 } from 'lucide-react-native';
@@ -8,7 +8,14 @@ import { useAppStore } from '../hooks/useAppStore';
 import { auth } from '../services/firebase';
 import { useStories } from '../hooks/useStories';
 import { StoryViewer } from '../components/StoryViewer';
-import { fetchUsername, updateUsername, getMonthlyPointsKey } from '../services/userService';
+import {
+  updateUsername,
+  getMonthlyPointsKey,
+  inspectUsername,
+  USERNAME_MAX,
+  USERNAME_RULES,
+} from '../services/userService';
+import { useUsername } from '../hooks/useUsernames';
 import { deleteStory } from '../services/storyService';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
@@ -32,7 +39,10 @@ export const ProfileScreen = () => {
   const user = useAppStore((s) => s.user);
   const { stories } = useStories();
   const [isViewerVisible, setIsViewerVisible] = useState(false);
-  const [username, setUsername] = useState<string>('Loading...');
+  // Live: a rename made on another device (or the name assigned at sign-up)
+  // lands here without a restart, and the same value is what every other
+  // surface renders.
+  const username = useUsername(user?.uid) ?? 'Loading...';
   const [isEditingUsername, setIsEditingUsername] = useState(false);
   const [editedUsername, setEditedUsername] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -52,8 +62,6 @@ export const ProfileScreen = () => {
 
   useEffect(() => {
     if (user?.uid) {
-      fetchUsername(user.uid).then(name => setUsername(name));
-
       // Shown until the doc arrives, and kept if created_at is missing or still
       // pending (serverTimestamp resolves to null in the local snapshot).
       const authFallback = formatJoinDate(user.metadata?.creationTime);
@@ -163,25 +171,66 @@ export const ProfileScreen = () => {
     }
   };
 
+  // Checked on every keystroke so the rules are explained as they are hit,
+  // rather than the user discovering them from a rejected save (or, worse, from
+  // input that was silently tidied up behind their back).
+  const usernameCheck = useMemo(
+    () => (isEditingUsername ? inspectUsername(editedUsername) : null),
+    [isEditingUsername, editedUsername]
+  );
+
   const handleEditUsername = () => {
     setEditedUsername(username);
     setIsEditingUsername(true);
   };
 
   const handleSaveUsername = async () => {
-    if (!user?.uid || editedUsername.trim() === '') {
-      setIsEditingUsername(false);
+    if (!user?.uid) return;
+
+    // Was: silently close the editor and keep the old name. The user had no way
+    // to tell whether the rename had happened.
+    const check = inspectUsername(editedUsername);
+    if (check.error) {
+      Toast.show({
+        type: 'error',
+        text1: "Username not saved",
+        text2: check.error,
+      });
       return;
     }
     setIsSaving(true);
     try {
-      await updateUsername(user.uid, editedUsername.trim());
-      setUsername(editedUsername.trim());
-    } catch (error) {
-      console.error(error);
+      const result = await updateUsername(user.uid, editedUsername);
+      // No local setState: updateUsername publishes into the live registry, so
+      // this screen and every other surface re-render from the same source.
+      setIsEditingUsername(false);
+
+      if (!result.changed) {
+        Toast.show({ type: 'info', text1: 'That is already your username' });
+      } else if (result.adjusted) {
+        // Never let a saved name differ from what they typed without saying so.
+        Toast.show({
+          type: 'success',
+          text1: `Saved as "${result.username}"`,
+          text2: 'Extra spaces were removed.',
+        });
+      } else {
+        Toast.show({
+          type: 'success',
+          text1: 'Username updated',
+          text2: `You now appear as "${result.username}" everywhere, including in chats you have already posted in.`,
+        });
+      }
+    } catch (error: any) {
+      // Validation and "already taken" are user-fixable — keep the editor open
+      // with what they typed rather than silently discarding the change.
+      Toast.show({
+        type: 'error',
+        text1: "Couldn't save username",
+        text2: error?.message || 'Please try again.',
+      });
     } finally {
       setIsSaving(false);
-      setIsEditingUsername(false);
     }
   };
 
@@ -213,19 +262,40 @@ export const ProfileScreen = () => {
             <CircleUserRound color="#00FFCC" size={80} strokeWidth={1} />
           </TouchableOpacity>
           {isEditingUsername ? (
-            <View style={styles.editUsernameContainer}>
-              <TextInput
-                style={styles.usernameInput}
-                value={editedUsername}
-                onChangeText={setEditedUsername}
-                autoFocus
-                maxLength={30}
-                placeholder="Enter username"
-                placeholderTextColor="#888888"
-              />
-              <TouchableOpacity onPress={handleSaveUsername} disabled={isSaving} style={styles.saveButton}>
-                {isSaving ? <ActivityIndicator size="small" color="#00FFCC" /> : <Check color="#00FFCC" size={24} />}
-              </TouchableOpacity>
+            <View style={styles.editUsernameBlock}>
+              <View style={styles.editUsernameContainer}>
+                <TextInput
+                  style={styles.usernameInput}
+                  value={editedUsername}
+                  onChangeText={setEditedUsername}
+                  autoFocus
+                  // Deliberately above USERNAME_MAX: a hard stop at the limit
+                  // just makes the keyboard go dead with no explanation. Let
+                  // them overshoot and tell them by how much.
+                  maxLength={USERNAME_MAX + 15}
+                  placeholder="Enter username"
+                  placeholderTextColor="#888888"
+                />
+                <TouchableOpacity onPress={handleSaveUsername} disabled={isSaving} style={styles.saveButton}>
+                  {isSaving ? <ActivityIndicator size="small" color="#00FFCC" /> : <Check color="#00FFCC" size={24} />}
+                </TouchableOpacity>
+              </View>
+
+              {/* The rules, then what is currently wrong with (or will be
+                  changed about) what they typed. Always one line present, so
+                  nothing about the outcome is left to be guessed at. */}
+              <Text
+                style={[
+                  styles.usernameHint,
+                  usernameCheck?.error ? styles.usernameHintError : null,
+                  usernameCheck?.notice ? styles.usernameHintNotice : null,
+                ]}
+              >
+                {usernameCheck?.error ?? usernameCheck?.notice ?? USERNAME_RULES}
+              </Text>
+              <Text style={styles.usernameCounter}>
+                {`${usernameCheck?.normalized.length ?? 0}/${USERNAME_MAX}`}
+              </Text>
             </View>
           ) : (
             <View style={styles.usernameContainer}>
@@ -467,6 +537,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 4,
+  },
+  editUsernameBlock: {
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 24,
+  },
+  usernameHint: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#888888',
+    textAlign: 'center',
+  },
+  usernameHintError: {
+    color: '#FF5C7A',
+  },
+  usernameHintNotice: {
+    color: '#FFD700',
+  },
+  usernameCounter: {
+    marginTop: 4,
+    fontSize: 11,
+    color: '#666666',
   },
   usernameInput: {
     fontSize: 24,

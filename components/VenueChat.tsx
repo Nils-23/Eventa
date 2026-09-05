@@ -30,7 +30,8 @@ import { ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebas
 import { realtimeDB, firestore, storage } from '../services/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppStore } from '../hooks/useAppStore';
-import { fetchUsername, hideUser } from '../services/userService';
+import { requireUsername, hideUser } from '../services/userService';
+import { useUsernames } from '../hooks/useUsernames';
 import { SIM_PERSONAS, DEFAULT_SIM_PERSONA, getSimPersona, SimPersona } from '../services/simPersonas';
 import { checkAndUnlockAchievements, ACHIEVEMENTS } from '../services/achievementService';
 import { createReport } from '../services/reportService';
@@ -59,6 +60,8 @@ interface Message {
   reactions?: Record<string, Record<string, string>>; // emoji -> userId -> username
   replyTo?: {
     messageId: string;
+    /** Author of the quoted message, so the quote can show their live name. */
+    userId?: string;
     username: string;
     message: string;
   };
@@ -286,6 +289,21 @@ export const VenueChat: React.FC<VenueChatProps> = ({
   const hiddenUsers = useAppStore((s) => s.hiddenUsers);
   const setHiddenUsers = useAppStore((s) => s.setHiddenUsers);
   const isAdmin = useAppStore((s) => s.isAdmin);
+
+  // ─── Live author names ───────────────────────────────────────────────────
+  // The `username` on a message is a snapshot of what the sender was called
+  // when they sent it, and nothing ever rewrites it. Rendering that string is
+  // why a rename appeared to "undo itself": the profile showed the new name
+  // while every message in the room still showed the old one. Names are
+  // resolved live from the author's user document instead, and the stored
+  // string is kept only as the fallback for ids we cannot resolve.
+  const messageAuthorIds = useMemo(
+    () => messages.flatMap((m) => [m.user_id, m.replyTo?.userId, m.storyData?.user_id]),
+    [messages]
+  );
+  const liveNames = useUsernames(messageAuthorIds);
+  const displayName = (userId?: string | null, storedName?: string) =>
+    (userId ? liveNames[userId] : null) ?? storedName ?? 'Someone';
   // Restore the last persona the admin spoke as, so re-opening a chat (or the
   // app) resumes the same identity instead of silently reverting to slot 1.
   useEffect(() => {
@@ -466,7 +484,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({
       senderName = persona.name;
       senderBadge = null; // Simulated users don't get the admin's active badge
     } else {
-      senderName = await fetchUsername(user.uid);
+      senderName = await requireUsername(user.uid);
     }
 
     const chatRef = ref(realtimeDB, `venue_chats/${venueId}`);
@@ -483,7 +501,8 @@ export const VenueChat: React.FC<VenueChatProps> = ({
       ...(previousReplyTo ? {
         replyTo: {
           messageId: previousReplyTo.id,
-          username: previousReplyTo.username,
+          userId: previousReplyTo.user_id,
+          username: displayName(previousReplyTo.user_id, previousReplyTo.username),
           message: replyPreview(previousReplyTo)
         }
       } : {})
@@ -746,7 +765,9 @@ export const VenueChat: React.FC<VenueChatProps> = ({
   const toggleReaction = async (messageId: string, emoji: string) => {
     if (!user || !venueId) return;
     try {
-      const username = await fetchUsername(user.uid);
+      // Keyed by uid, so the stored name is only ever a label of last resort —
+      // every reader resolves the reactor's current name from the uid.
+      const username = await requireUsername(user.uid);
       const reactionRef = ref(realtimeDB, `venue_chats/${venueId}/${messageId}/reactions/${emoji}/${user.uid}`);
       
       const message = messages.find(m => m.id === messageId);
@@ -758,7 +779,14 @@ export const VenueChat: React.FC<VenueChatProps> = ({
         await set(reactionRef, username);
       }
     } catch (error) {
+      // Reactions used to fail in complete silence — the emoji simply never
+      // appeared and the user was left to work out why.
       console.warn("Failed to toggle reaction:", error);
+      Toast.show({
+        type: 'error',
+        text1: 'Reaction not saved',
+        text2: getFriendlyErrorMessage(error),
+      });
     }
   };
 
@@ -961,7 +989,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({
     return (
       <View style={[styles.replyBubbleHeader, isMe ? styles.myReplyHeader : styles.otherReplyHeader]}>
         <CornerUpLeft size={10} color="#AAA" style={{ marginRight: 4 }} />
-        <Text style={styles.replyHeaderUser} numberOfLines={1}>{message.replyTo.username}</Text>
+        <Text style={styles.replyHeaderUser} numberOfLines={1}>{displayName(message.replyTo.userId, message.replyTo.username)}</Text>
         <Text style={styles.replyHeaderText} numberOfLines={1}>{message.replyTo.message}</Text>
       </View>
     );
@@ -1028,7 +1056,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({
         <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
           <View style={[styles.usernameContainer, isMe ? { alignSelf: 'flex-end', marginRight: 4 } : { marginLeft: 4 }]}>
             {BadgeIcon ? <BadgeIcon color={badgeObj!.glowColor} size={12} style={{ marginRight: 4 }} /> : null}
-            <Text style={styles.username} numberOfLines={1} ellipsizeMode="tail">{isMe ? 'You' : item.username}</Text>
+            <Text style={styles.username} numberOfLines={1} ellipsizeMode="tail">{isMe ? 'You' : displayName(item.user_id, item.username)}</Text>
           </View>
           
           <TouchableOpacity
@@ -1253,7 +1281,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({
             <View style={styles.replyBar}>
               <View style={styles.replyBarVerticalLine} />
               <View style={styles.replyBarContent}>
-                <Text style={styles.replyBarUser}>Replying to {replyingTo.username}</Text>
+                <Text style={styles.replyBarUser}>Replying to {displayName(replyingTo.user_id, replyingTo.username)}</Text>
                 <Text style={styles.replyBarText} numberOfLines={1}>{replyPreview(replyingTo)}</Text>
               </View>
               <TouchableOpacity onPress={() => setReplyingTo(null)} style={styles.replyBarClose}>
@@ -1435,7 +1463,7 @@ export const VenueChat: React.FC<VenueChatProps> = ({
                         onPress={() => {
                           if (selectedMessageForReaction) {
                             const uid = selectedMessageForReaction.user_id;
-                            const uname = selectedMessageForReaction.username;
+                            const uname = displayName(uid, selectedMessageForReaction.username);
                             setSelectedMessageForReaction(null);
                             setTimeout(() => {
                               handleHideUserPrompt(uid, uname);

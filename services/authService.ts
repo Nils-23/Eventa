@@ -61,34 +61,58 @@ export const checkAndCreateUser = async (user: User) => {
 };
 
 /**
- * Creates a new user profile in Firestore after they agree to terms.
+ * Creates the user's profile after they agree to the terms — and, for an
+ * account that already has a document, tops up only what is missing.
+ *
+ * This used to be an unconditional `setDoc` of a fresh profile. Any second trip
+ * through it reset the account: a new random username and points back to zero.
+ * It is now idempotent by construction — an existing username or points value
+ * is never written over, so re-entry (a retried agreement, a profile that was
+ * created by another code path without a username) is harmless and, in the
+ * missing-username case, actively repairs the account instead of renaming it.
  */
 export const createUserProfile = async (user: User) => {
   try {
     const userRef = doc(firestore, 'users', user.uid);
-    const referredBy = await AsyncStorage.getItem('referredBy');
-    const deviceId = await AsyncStorage.getItem('deviceId');
+    const snap = await getDoc(userRef);
+    const existing = snap.exists() ? snap.data() : null;
+
     const userData: any = {
       user_id: user.uid,
-      username: generateRandomUsername(),
-      created_at: serverTimestamp(),
       last_active: serverTimestamp(),
-      points: 0,
-      hasAttendedFirstVenue: false,
       agreedToTerms: true,
       termsAgreementDate: serverTimestamp(),
     };
-    if (referredBy) {
-      userData.referredBy = referredBy;
+
+    // A username is assigned once, at the moment the account first lacks one.
+    if (!existing?.username) {
+      const username = generateRandomUsername();
+      userData.username = username;
+      // Mirrored lowercase so the uniqueness check on rename is
+      // case-insensitive from the first day of the account.
+      userData.usernameLower = username.toLowerCase();
+    } else if (!existing.usernameLower) {
+      // Backfill for accounts that predate the uniqueness check.
+      userData.usernameLower = String(existing.username).toLowerCase();
     }
-    if (deviceId) {
-      userData.deviceId = deviceId;
+
+    if (!existing) {
+      const referredBy = await AsyncStorage.getItem('referredBy');
+      const deviceId = await AsyncStorage.getItem('deviceId');
+      userData.created_at = serverTimestamp();
+      userData.points = 0;
+      userData.hasAttendedFirstVenue = false;
+      if (referredBy) userData.referredBy = referredBy;
+      if (deviceId) userData.deviceId = deviceId;
+
+      await setDoc(userRef, userData, { merge: true });
+      if (referredBy) await AsyncStorage.removeItem('referredBy');
+      console.log('New user profile created successfully after terms agreement!');
+      return;
     }
-    await setDoc(userRef, userData);
-    if (referredBy) {
-      await AsyncStorage.removeItem('referredBy');
-    }
-    console.log('New user profile created successfully after terms agreement!');
+
+    await setDoc(userRef, userData, { merge: true });
+    console.log('Existing profile kept; terms agreement recorded.');
   } catch (error) {
     console.error('Error in createUserProfile:', error);
     throw error;

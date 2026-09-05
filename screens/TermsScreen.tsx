@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, ShieldCheck, LogOut } from 'lucide-react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import { auth, firestore } from '../services/firebase';
 import { createUserProfile } from '../services/authService';
 import { useAppStore } from '../hooks/useAppStore';
@@ -42,24 +42,13 @@ export const TermsScreen = () => {
 
     setIsAgreeing(true);
     try {
-      const userDocRef = doc(firestore, 'users', currentUser.uid);
-      const userDoc = await getDoc(userDocRef);
-
-      if (userDoc.exists()) {
-        // Existing user - update document with agreement
-        await setDoc(
-          userDocRef,
-          {
-            agreedToTerms: true,
-            termsAgreementDate: serverTimestamp(),
-            last_active: serverTimestamp(),
-          },
-          { merge: true }
-        );
-      } else {
-        // New user - create profile document
-        await createUserProfile(currentUser);
-      }
+      // One idempotent call for both cases: it creates the profile for a new
+      // account and, for an existing one, records the agreement without
+      // touching the username or points. The branch that used to live here
+      // could only ever get this wrong — an existing document with no username
+      // (possible before profile creation was made the sole assignment point)
+      // took the "existing user" path and was left nameless forever.
+      await createUserProfile(currentUser);
 
       setHasAgreedToTerms(true);
       Toast.show({

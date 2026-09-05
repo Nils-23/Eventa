@@ -3818,3 +3818,27 @@ For each event: mark it as REMOVE if the date has already passed as of today, ma
 });
 
 
+
+// ---------------------------------------------------------------------------
+// 🧹 Account deletion cleanup
+//
+// The client deletes the Firebase Auth user first and its Firestore profile
+// second, because the old order (document first) left a signed-in session with
+// no profile whenever the auth delete failed — most often with
+// auth/requires-recent-login. The app then treated that user as brand new: it
+// routed them through the terms gate, which re-created the profile with a fresh
+// random username and points back at zero.
+//
+// With auth going first, the client's own document delete can lose its
+// credentials mid-flow, so this trigger is the guarantee that nothing is left
+// behind. It is idempotent — deleting an already-deleted document is a no-op.
+// ---------------------------------------------------------------------------
+exports.cleanupDeletedAccount = functions.auth.user().onDelete(async (user) => {
+  try {
+    await db.collection('users').doc(user.uid).delete();
+    console.log(`[cleanupDeletedAccount] Removed users/${user.uid}`);
+  } catch (err) {
+    console.error(`[cleanupDeletedAccount] Failed to remove users/${user.uid}:`, err.message);
+  }
+  return null;
+});

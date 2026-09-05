@@ -12,7 +12,7 @@ import { X, Check } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
 import { theme } from '../config/theme';
 import { useAppStore } from '../hooks/useAppStore';
-import { fetchUsername } from '../services/userService';
+import { requireUsername } from '../services/userService';
 import {
   ANSWER_LABELS,
   REVIEW_WINDOW_DAYS,
@@ -116,7 +116,7 @@ export const ReviewSheet: React.FC<ReviewSheetProps> = ({
     if (!user || !canSubmit) return;
     setIsSaving(true);
     try {
-      const username = await fetchUsername(user.uid);
+      const username = await requireUsername(user.uid);
       await submitReview({
         userId: user.uid,
         username,
@@ -131,7 +131,11 @@ export const ReviewSheet: React.FC<ReviewSheetProps> = ({
       onClose();
     } catch (err: any) {
       console.warn('[ReviewSheet] Submit failed:', err);
-      Toast.show({ type: 'error', text1: 'Could not save', text2: 'Try again in a moment.' });
+      Toast.show({
+        type: 'error',
+        text1: 'Could not save',
+        text2: err?.message || 'Try again in a moment.',
+      });
     } finally {
       setIsSaving(false);
     }

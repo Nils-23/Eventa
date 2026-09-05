@@ -82,12 +82,23 @@ export const SettingsScreen = () => {
     
     setIsDeleting(true);
     try {
-      // First delete user document from firestore
-      const userRef = doc(firestore, 'users', userObj.uid);
-      await deleteDoc(userRef);
-      
-      // Then delete from auth
+      // Auth first, document second — deliberately.
+      //
+      // Deleting the document first left a signed-in session whose profile was
+      // gone whenever the auth delete failed (auth/requires-recent-login, which
+      // is handled below, so it plainly does happen). useAuth then read a
+      // missing document, routed the user back through the terms gate, and the
+      // agreement re-created the profile from scratch: a brand new random
+      // username and points reset to zero. That was a real, silent rename.
+      // With this order a failed auth delete leaves the account fully intact.
       await userObj.delete();
+
+      const userRef = doc(firestore, 'users', userObj.uid);
+      await deleteDoc(userRef).catch((err) => {
+        // The account is already gone from auth; a leftover document is an
+        // admin cleanup problem, not something to fail the flow over.
+        console.warn('Account deleted, but its profile document remains:', err);
+      });
       
       Toast.show({ type: 'success', text1: 'Account Deleted', text2: 'Your account has been successfully deleted.' });
       // The auth listener in App.tsx will automatically navigate to Login
